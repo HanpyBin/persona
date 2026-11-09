@@ -178,6 +178,18 @@ type ModelRefusal struct {
 	Raw           string `json:"raw,omitempty"`
 }
 
+// ModelRestore is a pending "back to the configured model" (node session.restore_model, #2528): State
+// ModelRestoreNextStart says the session's idle headless process was closed (or none ran), so its next start asks for
+// To, the model the conversation is configured with as the node read it at At. Nothing about which model runs.
+type ModelRestore struct {
+	State string    `json:"state"`
+	To    string    `json:"to,omitempty"`
+	At    time.Time `json:"at"`
+}
+
+// ModelRestoreNextStart: the next start of the session's process uses the configured model.
+const ModelRestoreNextStart = "next_start"
+
 // MessageSource preserves an input's provenance without changing the model's role.
 // ConversationID is a stable session id, never a peer's display name (Item.From).
 type MessageSource struct {

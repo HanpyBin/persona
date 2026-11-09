@@ -297,6 +297,9 @@ func (n *Node) assistantSend(ctx context.Context, id, cwd, launcher, text string
 		id = p.id
 	}
 
+	// One at a time with restoreModel and compactions on this conversation's process (model_restore.go): a restore
+	// either sees the process this send made busy, or this send starts a new one after the restore closed it.
+	defer n.assistantLife.lock(id)()
 	n.mu.Lock()
 	p = n.procs[id]
 	n.mu.Unlock()
@@ -728,6 +731,7 @@ func (n *Node) assistantSessions() []proto.Session {
 				s.PermissionMode, s.Effort = n.currentModes(p.id, m)
 				setContext(&s, m)
 				s.ModelFallback = m.modelFallback
+				n.setModelRestore(&s, path, m)
 				untitled(&s, m)
 				if !busy {
 					s.UpdatedAt = lastUsed(m, st)

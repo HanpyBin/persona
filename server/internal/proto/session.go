@@ -248,6 +248,9 @@ type Session struct {
 	TurnErrorCode string `json:"turn_error_code,omitempty"`
 	// ModelFallback is the refusal fallback still active in this session, as the runtime recorded it.
 	ModelFallback *ModelRefusal `json:"model_fallback,omitempty"`
+	// ModelRestore: "back to the configured model" was asked for this session's refusal fallback (#2528) and no newer
+	// model evidence has come since. Not proof the configured model runs: only a newer reply says that.
+	ModelRestore *ModelRestore `json:"model_restore,omitempty"`
 	// Work is where the session stands in its work (docs/assistant/agent-work.md): working, blocked on a named precondition, or
 	// done, with a line saying what it waits for or what it concluded. Set by the hub; absent before the hub has
 	// triaged a stopped session's turn.
