@@ -1663,6 +1663,7 @@ export function HandoverDialog({
   const [mid, setMid] = useState(() => onlineMachines[0]?.id ?? "");
   const [cwd, setCwd] = useState("");
   const [launchers, setLaunchers] = useState<Launcher[]>([]);
+  const [launchersOf, setLaunchersOf] = useState("");
   const [launcher, setLauncher] = useState("");
 
   // For "existing":
@@ -1690,11 +1691,16 @@ export function HandoverDialog({
   useEffect(() => {
     if (!open || !mid) return;
     const controller = new AbortController();
+    setLaunchersOf("");
+    setLaunchers([]);
+    setLauncher("");
     api<{ launchers: Launcher[] }>(`/machines/${enc(mid)}/launchers`, { signal: controller.signal })
       .then((r) => {
+        if (controller.signal.aborted) return;
+        setLaunchersOf(mid);
         setLaunchers(r.launchers ?? []);
         // the first this computer can start now, not one its terminal can't run (#1643)
-        if (r.launchers?.length) setLauncher(initialLauncher(null, r.launchers));
+        setLauncher(r.launchers?.length ? initialLauncher(null, r.launchers) : "");
       })
       .catch(() => {});
     return () => controller.abort();
@@ -1703,7 +1709,9 @@ export function HandoverDialog({
   const previewCard = useMemo(() => {
     return formatTodoContext(todo.title, todo.notes);
   }, [todo]);
-  const pickedBlock = launcherBlock(launchers.find((l) => l.name === launcher));
+  const currentLaunchers = launchersOf === mid ? launchers : [];
+  const currentLauncher = launchersOf === mid ? launcher : "";
+  const pickedBlock = launcherBlock(currentLaunchers.find((l) => l.name === currentLauncher));
 
   const submitNew = async () => {
     if (!mid) return;
@@ -1713,8 +1721,8 @@ export function HandoverDialog({
       launchAgent({
         machineId: mid,
         cwd: cwd.trim(),
-        launcher,
-        agentType: launcherAgent(launcher, launchers),
+        launcher: currentLauncher,
+        agentType: launchersOf === mid ? launcherAgent(currentLauncher, currentLaunchers) : undefined,
         text: fullText,
         attachments: [],
         todoId: todo.id,
@@ -1811,15 +1819,15 @@ export function HandoverDialog({
               />
             </div>
 
-            {launchers.length > 0 && (
+            {currentLaunchers.length > 0 && (
               <div>
                 <label className="mb-1 block text-[12px] font-medium text-ink-2">{t("todos.launcher")}</label>
                 <select
-                  value={launcher}
+                  value={currentLauncher}
                   onChange={(e) => setLauncher(e.target.value)}
                   className="w-full rounded-control border border-line bg-canvas px-2.5 py-1.5 text-[13px] text-ink outline-none"
                 >
-                  {usableFirst(launchers).map((l) => {
+                  {usableFirst(currentLaunchers).map((l) => {
                     const block = launcherBlock(l);
                     // still a choice (a start that works clears it), with why, after the ones that can start (#1643)
                     return (

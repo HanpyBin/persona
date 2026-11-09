@@ -39,7 +39,9 @@ func knownLauncherAgentType(name string) string {
 		}
 	}
 	if _, ok := launcherCache.codex[name]; ok {
-		kind = "codex"
+		// Recognized argv owns the Codex driver even while an older wrapper probe remains cached.
+		launcherCache.Unlock()
+		return "codex"
 	}
 	launcherCache.Unlock()
 	probeCache.Lock()

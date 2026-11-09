@@ -50,8 +50,15 @@ func TestInlineStartAnswersWithTheCompatibleCLISession(t *testing.T) {
 }
 
 func TestInlineCodexWrapperAfterNodeRestartMatchesWarmStart(t *testing.T) {
-	for _, cold := range []bool{true, false} {
-		t.Run(map[bool]string{true: "cold", false: "warm"}[cold], func(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		cold, staleProbe bool
+	}{
+		{name: "cold", cold: true}, {name: "warm"},
+		{name: "cold with older Traex probe", cold: true, staleProbe: true},
+		{name: "warm with older Traex probe", staleProbe: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			n, _, cwd, commands := codexStartHerdr(t, 0)
 			home := filepath.Dir(cwd)
 			t.Setenv("SHELL", "/bin/zsh")
@@ -71,18 +78,27 @@ func TestInlineCodexWrapperAfterNodeRestartMatchesWarmStart(t *testing.T) {
 				launcherCache.list, launcherCache.settings, launcherCache.scripts = list, settings, scripts
 				launcherCache.Unlock()
 			})
-			if !cold {
+			if !tc.cold {
 				if _, err := n.launchers(context.Background()); err != nil {
 					t.Fatal(err)
 				}
 			} else if got := knownLauncherAgentType("example_wrapper"); got != "claude" {
 				t.Fatalf("fixture did not start with cold metadata: %s", got)
 			}
-			result, err := request(t, n, "session.start", map[string]any{"cwd": cwd, "launcher": "example_wrapper", "prompt": "Inspect the example"})
-			if err != nil {
-				t.Fatal(err)
+			if tc.staleProbe {
+				probedLaunchers(t, map[string]string{"example_wrapper": "traex"})
+				probeCache.Lock()
+				probeCache.at["example_wrapper"] = time.Now().Add(-2 * time.Minute) // Older than a refreshed shell list, still valid for a probe.
+				probeCache.Unlock()
 			}
-			session := decodeSessions(t, []any{result["session"]})[0]
+			params, _ := json.Marshal(map[string]any{"cwd": cwd, "launcher": "example_wrapper", "prompt": "Inspect the example"})
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			result, err := n.handle(ctx, "session.start", params)
+			if err != nil {
+				t.Fatalf("Codex wrapper picked the wrong driver: %v; typed=%v", err, *commands)
+			}
+			session := result.(map[string]any)["session"].(*proto.Session)
 			if session.Agent != "codex" || session.SessionID != startThread || session.Starting || len(*commands) != 1 || knownLauncherAgentType("example_wrapper") != "codex" {
 				t.Fatalf("wrapper acknowledgement = %+v, commands = %v", session, *commands)
 			}

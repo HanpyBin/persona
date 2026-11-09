@@ -20,9 +20,10 @@ vi.hoisted(() => {
 });
 
 let launchers: Launcher[] = [];
+let loadLaunchers: ((path: string) => Promise<{ launchers: Launcher[] }>) | undefined;
 vi.mock("../lib/api", async (orig) => ({
   ...(await orig<typeof import("../lib/api")>()),
-  api: async (path: string) => (path.endsWith("/launchers") ? { launchers } : {}),
+  api: async (path: string) => (path.endsWith("/launchers") ? loadLaunchers ? loadLaunchers(path) : { launchers } : {}),
 }));
 vi.mock("react-dom", async (original) => ({ ...(await original<typeof import("react-dom")>()), createPortal: (children: React.ReactNode) => children }));
 vi.mock("../lib/new-agent", async (original) => ({ ...(await original<typeof import("../lib/new-agent")>()), launchAgent: vi.fn() }));
@@ -42,13 +43,14 @@ const machines: Machine[] = [{ id: "mac", name: "Mac", online: true }];
 const todo = { id: "t1", title: "Release checklist", created_at: "2026-11-09T08:00:00Z", updated_at: "2026-11-09T08:00:00Z" };
 const select = () => [...document.querySelectorAll<HTMLSelectElement>("select")].find((s) => [...s.options].some((o) => o.value === "claude"))!;
 
-async function open() {
-  await act(async () => root.render(<HandoverDialog open todo={todo} machines={machines} onClose={() => {}} />));
+async function open(available = machines) {
+  await act(async () => root.render(<HandoverDialog open todo={todo} machines={available} onClose={() => {}} />));
   await flush();
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  loadLaunchers = undefined;
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -60,6 +62,34 @@ afterEach(async () => {
 });
 
 describe("handing a to-do to a new agent", () => {
+  const targets = [...machines, { id: "second", name: "Second computer", online: true }];
+  const switchMachine = async () => {
+    const select = [...document.querySelectorAll<HTMLSelectElement>("select")].find((s) => [...s.options].some((o) => o.value === "second"))!;
+    await act(async () => { select.value = "second"; select.dispatchEvent(new Event("change", { bubbles: true })); });
+    await flush();
+  };
+  const submit = async () => {
+    const button = [...document.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === t("todos.launch_and_hand"))!;
+    await act(async () => button.click());
+  };
+
+  it("never stamps the previous computer's kind while the selected computer is loading", async () => {
+    let answer!: (value: { launchers: Launcher[] }) => void;
+    loadLaunchers = async (path) => path.includes("/second/") ? new Promise((resolve) => { answer = resolve; }) : { launchers: [{ name: "work", agent: "traex" }] };
+    await open(targets); await switchMachine(); await submit();
+    expect(launchAgent).toHaveBeenCalledWith(expect.objectContaining({ machineId: "second", launcher: "", agentType: undefined }));
+    await act(async () => answer({ launchers: [{ name: "work", agent: "claude" }] }));
+  });
+
+  it("ignores an older computer's late launcher reply after the current reply", async () => {
+    let answer!: (value: { launchers: Launcher[] }) => void;
+    loadLaunchers = async (path) => path.includes("/second/") ? { launchers: [{ name: "work", agent: "claude" }] } : new Promise((resolve) => { answer = resolve; });
+    await open(targets); await switchMachine();
+    await act(async () => answer({ launchers: [{ name: "work", agent: "traex" }] }));
+    await flush(); await submit();
+    expect(launchAgent).toHaveBeenCalledWith(expect.objectContaining({ machineId: "second", launcher: "work", agentType: "claude" }));
+  });
+
   it("captures a configured wrapper's kind with the to-do's first message", async () => {
     launchers = [{ name: "example-wrapper", agent: "traex" }, { name: "claude", agent: "claude" }];
     await open();

@@ -14,6 +14,7 @@ assert.equal((await (await fetch(new URL("/api/v1/health", base), { signal: Abor
 const output = resolve(artifacts);
 await mkdir(output, { recursive: true });
 const machine = { id: "example-computer", name: "Example computer", online: true };
+const secondMachine = { id: "second-computer", name: "Second computer", online: true };
 const prompt = "Summarize the example project";
 const todo = { id: "example-todo", title: "Review the example project", created_at: "2026-01-01T10:00:00Z", updated_at: "2026-01-01T10:00:00Z" };
 const result = { status: "running", runs: [], screenshots: [] };
@@ -23,7 +24,7 @@ const deadline = setTimeout(() => void browser.close(), 240_000);
 async function open(lang, theme, mode = "inline", phone = false) {
   const labels = JSON.parse(await readFile(new URL(`../src/i18n/locales/${lang}/newagent.json`, import.meta.url)));
   const todos = JSON.parse(await readFile(new URL(`../src/i18n/locales/${lang}/todos.json`, import.meta.url)));
-  const run = { lang, theme, mode, phone, writes: [], errors: [], blocked: [], mockHellos: 0 };
+  const run = { lang, theme, mode, phone, writes: [], deferredReads: [], errors: [], blocked: [], mockHellos: 0 };
   result.runs.push(run);
   const context = await browser.newContext({ viewport: { width: phone ? 390 : 1280, height: 900 }, colorScheme: theme, serviceWorkers: "block" });
   await context.addInitScript(({ lang, theme }) => {
@@ -33,6 +34,9 @@ async function open(lang, theme, mode = "inline", phone = false) {
     localStorage.setItem("new.cwd.example-computer", "/code/example");
   }, { lang, theme });
   let started, first = "";
+  const switching = mode.startsWith("handoff-");
+  const machines = switching ? [machine, secondMachine] : [machine];
+  let releaseOld, releaseCurrent;
   const kind = mode === "claude" ? "claude" : mode === "legacy" ? "codex" : "traex";
   const launcher = mode === "legacy" ? "legacy-wrapper" : "example-wrapper";
   await context.route("**/*", async (route) => {
@@ -48,20 +52,25 @@ async function open(lang, theme, mode = "inline", phone = false) {
         if (mode === "unknown") return route.fulfill({ status: 502, json: { error: "Startup outcome unknown", delivered: "unknown" } });
         if (mode === "legacy" && body.async) return route.fulfill({ status: 409, json: { code: "codex_needs_prompt", error: "First message required", delivered: "none" } });
         first = body.prompt ?? "";
-        started = { machine_id: machine.id, session_id: "example-started", title: "Example project", agent: body.launcher === "backup-claude" ? "claude" : kind, launcher: body.launcher, cwd: "/code/example", status: "idle" };
+        started = { machine_id: body.machine_id, session_id: "example-started", title: "Example project", agent: body.machine_id === secondMachine.id || body.launcher === "backup-claude" ? "claude" : kind, launcher: body.launcher, cwd: "/code/example", status: "idle" };
         return route.fulfill({ json: { session: started } });
       }
       if (path.endsWith("/messages")) { first = body.text; return route.fulfill({ json: { ok: true } }); }
       assert.fail(`Unexpected write ${path}`);
     }
     if (path.includes("/model-config/purposes/")) return route.fulfill({ status: 404, json: { error: "Not configured" } });
-    if (path.endsWith("/launchers")) return route.fulfill({ json: { launchers: [{ name: launcher, ...(mode === "legacy" ? {} : { agent: kind }) }, { name: "backup-claude", agent: "claude" }] } });
+    if (path.endsWith("/launchers")) {
+      const second = path.includes(`/${secondMachine.id}/`);
+      if (switching && mode === "handoff-late" && !second) await new Promise((done) => { run.deferredReads.push("previous"); releaseOld = done; });
+      if (switching && mode === "handoff-loading" && second) await new Promise((done) => { run.deferredReads.push("current"); releaseCurrent = done; });
+      return route.fulfill({ json: { launchers: [{ name: launcher, ...(mode === "legacy" ? {} : { agent: second ? "claude" : kind }) }, { name: "backup-claude", agent: "claude" }] } });
+    }
     if (path.includes("/launchers/") && path.includes("/models")) return route.fulfill({ json: { agent: mode === "legacy" ? "claude" : kind, models: [] } });
     if (path.includes("/dirs")) return route.fulfill({ json: { path: "/code", entries: [{ name: "example", path: "/code/example" }] } });
     if (path.endsWith("/items")) return route.fulfill({ json: { items: first ? [{ id: "first-prompt", seq: 1, role: "user", kind: "text", text: first, at: "2026-01-01T10:00:00Z" }] : [], has_more: false, to_seq: first ? 1 : 0 } });
     const data = {
       "/sessions": { sessions: started ? [started] : [], total: started ? 1 : 0, has_more: false, revision: "fixture" },
-      "/machines": { machines: [machine] }, "/interactions": { interactions: [] },
+      "/machines": { machines }, "/interactions": { interactions: [] },
       "/assistant": { machine_id: machine.id, conversations: [] }, "/todos": { todos: [todo] },
       [`/todos/${todo.id}`]: { todo },
       "/mutes": { spaces: [], sessions: [], allowed: [] }, "/pins": { spaces: [], sessions: [], sections: [] },
@@ -77,7 +86,7 @@ async function open(lang, theme, mode = "inline", phone = false) {
       if (event.type !== "hello") return;
       assert.equal(event.server_version, "mock"); run.mockHellos++;
       socket.send(JSON.stringify({ type: "hello", server_version: "mock", protocol: 1, features: [], hub_name: "Example hub" }));
-      socket.send(JSON.stringify({ type: "machines", machines: [machine] }));
+      socket.send(JSON.stringify({ type: "machines", machines }));
     });
     socket.onMessage((message) => { const event = JSON.parse(String(message)); if (event.type === "app_ping") socket.send(JSON.stringify({ type: "pong", id: event.id })); });
   });
@@ -91,6 +100,7 @@ async function open(lang, theme, mode = "inline", phone = false) {
     const file = `${lang}-${theme}-${mode}${phone ? "-phone" : ""}-${state}.png`;
     await page.screenshot({ path: join(output, file) }); result.screenshots.push(file);
   };
+  if (switching) return { context, page, run, labels, todos, shot, releaseOld: () => releaseOld?.(), releaseCurrent: () => releaseCurrent?.() };
   await page.goto(new URL("/agents", base).href);
   await page.locator("main").getByRole("button", { name: labels.title, exact: true }).click();
   const dialog = page.getByRole("dialog");
@@ -152,8 +162,8 @@ try {
     assert.equal(x.run.writes[1].body.text, prompt);
     await finish(x);
   }
-  {
-    const x = await open("en", "dark", "handoff");
+  for (const lang of ["en", "zh-Hans", "ja"]) for (const theme of ["light", "dark"]) {
+    const x = await open(lang, theme, "handoff");
     await x.page.keyboard.press("Escape");
     await x.page.goto(new URL(`/todos/${todo.id}`, base).href);
     await x.page.getByRole("button", { name: x.todos.hand_over, exact: true }).click();
@@ -168,6 +178,31 @@ try {
     assert.equal(x.run.writes[0].body.todo_id, todo.id);
     assert.ok(x.run.writes[0].body.prompt.includes(todo.title) && x.run.writes[0].body.prompt.includes(prompt));
     assert.ok(!x.run.writes[0].body.async);
+    await finish(x);
+  }
+  for (const mode of ["handoff-loading", "handoff-late"]) {
+    const x = await open("en", "light", mode);
+    await x.page.goto(new URL(`/todos/${todo.id}`, base).href);
+    await x.page.getByRole("button", { name: x.todos.hand_over, exact: true }).click();
+    const dialog = x.page.getByRole("dialog");
+    if (mode === "handoff-loading") await dialog.locator('select option[value="example-wrapper"]').waitFor({ state: "attached" });
+    await dialog.locator("select").first().selectOption(secondMachine.id);
+    if (mode === "handoff-late") {
+      await dialog.locator('select option[value="example-wrapper"]').waitFor({ state: "attached" });
+      x.releaseOld();
+    }
+    await dialog.locator("textarea").fill(prompt);
+    await x.shot("selected-computer");
+    assert.deepEqual(x.run.deferredReads, [mode === "handoff-loading" ? "current" : "previous"]);
+    await dialog.getByRole("button", { name: x.todos.launch_and_hand, exact: true }).click();
+    await x.page.waitForURL("**/s/second-computer/example-started");
+    x.releaseCurrent();
+    assert.equal(x.run.writes.length, 2);
+    assert.equal(x.run.writes[0].body.machine_id, secondMachine.id);
+    assert.equal(x.run.writes[0].body.async, true);
+    assert.equal(x.run.writes[0].body.agent_type, undefined);
+    assert.equal(x.run.writes[0].body.launcher, mode === "handoff-loading" ? undefined : "example-wrapper");
+    assert.ok(x.run.writes[1].body.text.includes(todo.title) && x.run.writes[1].body.text.includes(prompt));
     await finish(x);
   }
   const x = await open("en", "dark", "inline", true);
