@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import plistlib
 import pty
 import select
 import subprocess
@@ -350,6 +351,27 @@ class PersonaInstallTests(unittest.TestCase):
             self.assertIn('# persona-hub release 1', (bin_dir / 'persona-hub').read_text())
             self.assertIn('# persona-manager release 3', (bin_dir / 'persona-manager').read_text())
             self.assertGreater((home / 'personad-calls').read_text().count('hub setup\n'), calls.count('hub setup\n'))
+
+    def test_a_binary_property_list_is_read_quietly(self):
+        # A vendor's launchd agent in binary form (not valid UTF-8) among the files checked for the program the release
+        # lacks: the check reads past it, in a UTF-8 locale too, and says nothing about it (macOS's awk would stop on it
+        # and print its bytes).
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            bin_dir = home / '.persona/bin'
+            self.assertEqual(self.run_install(home, programs=HUB_PROGRAMS).returncode, 0)
+            agents = home / 'Library/LaunchAgents'
+            agents.mkdir(parents=True)
+            vendor = plistlib.dumps({'Label': 'com.example.updater', 'ProgramArguments': ['/opt/example/updater', '--check'],
+                                     'RunAtLoad': True, 'StartInterval': 3600, 'KeepAlive': False, 'ProcessType': 'Background'},
+                                    fmt=plistlib.FMT_BINARY)
+            with self.assertRaises(UnicodeDecodeError):
+                vendor.decode('utf-8')
+            (agents / 'com.example.updater.plist').write_bytes(vendor)
+            result = self.run_install(home, programs=('persona-manager',), release='3', extra={'LC_ALL': 'C.UTF-8'})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(f'{bin_dir}/persona-hub stays as it was', result.stderr)
+            self.assertNotIn('awk', result.stderr)
 
     def test_a_release_without_a_program_a_service_runs(self):
         # A service runs the program the release lacks: nothing is installed (it would stay older than personad), and

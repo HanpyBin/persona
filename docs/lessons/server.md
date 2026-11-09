@@ -894,6 +894,14 @@ against disposable Git with an independent writer at the last read before remova
 - Measure the chain: start a real node in the hub package (same process, own HOME, `~/.claude` linked to the real config), connect with pipes like SSH, and timestamp every hop for real Claude
   in isolated herdr (`hub/cardlatency_live_test.go`). Reports all sharing the same fractional second (.57 s, .58 s) indicate per-second ticks, not events.
 
+## install.sh reads files it did not write with `LC_ALL=C` tools (2026-11-10, #2722)
+
+- `service_runs` scans every launchd property list in the LaunchAgents and LaunchDaemons folders, and vendors ship some in binary form. macOS's awk, in a
+  UTF-8 locale, stops at the first byte sequence that is not UTF-8 (`awk: towc: multibyte conversion failure on: '…'`, exit 2) and prints those raw bytes,
+  so every Mac install showed them, and `test_persona_install.py` crashed decoding its stderr. Linux awks read past such bytes, so CI never saw it. A text
+  tool run over files the script does not control gets `LC_ALL=C`; a substring match on paths is the same in bytes. The test fixture builds a binary plist
+  with `plistlib`; only a Mac fails without the fix.
+
 ## Deploy website Worker only through publish.sh (2026-11-03, #940)
 
 - The `site/` Worker also serves public personad (`/dl/`) and `install.sh`, absent from the repo: `publish.sh` adds them to a copy of `site/` before deployment.
