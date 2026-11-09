@@ -8,7 +8,7 @@ import type { Item, Session } from "../../lib/types";
 import { ChatLineView } from "./Lines";
 import { ModelFallbackCard } from "./ModelFallbackCard";
 
-const fallback = { subtype: "model_refusal_fallback", original_model: "primary-model", fallback_model: "fallback-model", scope: "session", raw: "{}" };
+const fallback = { subtype: "model_refusal_fallback", original_model: "primary-model", fallback_model: "fallback-model", scope: "session" };
 const base = { machine_id: "m", session_id: "s", state: "idle", model_fallback: fallback } as unknown as Session;
 const pending = { model_restore: { state: "next_start", to: "configured-model", at: "2026-11-09T00:00:00Z" } } as Partial<Session>;
 
@@ -53,36 +53,48 @@ describe("ModelFallbackCard", () => {
 });
 
 describe("a refusal notice", () => {
-  const raw = '{"type":"system","subtype":"model_refusal_fallback","content":"Upstream refused <this> request\\n  policy"}';
-  const refusal = { subtype: "model_refusal_fallback", original_model: "primary-x", fallback_model: "fallback-y", category: "cat-z", scope: "session", explanation: "Upstream refused", raw };
+  const MARKER = "HIDDEN-MARKER-2528-web";
+  const words = "Upstream refused <this> request\n  policy & more";
+  // what an older hub sent: the record's whole line as the notice's text and as model_refusal.raw
+  const line = `{"type":"system","subtype":"model_refusal_fallback","content":"x","syntheticHidden":{"nested":{"deeper":"${MARKER}"}}}`;
+  const refusal = { subtype: "model_refusal_fallback", original_model: "primary-x", fallback_model: "fallback-y", category: "cat-z", scope: "session", explanation: "Upstream refused", text: words };
   const items: Item[] = [
     { id: "u1", seq: 1, role: "user", kind: "text", text: "hi" } as Item,
     { id: "t1", seq: 2, role: "assistant", kind: "text", text: "working" } as Item,
-    { id: "r1", seq: 3, role: "system", kind: "notice", text: raw, model_refusal: refusal } as Item,
+    { id: "r1", seq: 3, role: "system", kind: "notice", text: words, model_refusal: refusal } as Item,
     { id: "t2", seq: 4, role: "assistant", kind: "text", text: "answer" } as Item,
   ];
+  const legacy = items.map((i) => (i.id === "r1" ? ({ ...i, text: line, model_refusal: { ...refusal, raw: line } } as unknown as Item) : i));
   const render = (its: Item[]) => {
     const line = chatLines(its).find((l) => l.kind === "notice")!;
     return renderToStaticMarkup(<ChatLineView line={line} mid="m" sid="s" expandFold={async () => {}} onRetry={() => {}} assistant={false} />);
   };
+  const escaped = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   it("is a line of its own, not folded into the work row", () => {
     const n = chatLines(items).find((l) => l.kind === "notice");
     expect(n?.kind === "notice" && n.item.id).toBe("r1");
   });
-  it("shows the original and fallback models, category, explanation and the raw record untouched", () => {
-    const html = render(items);
-    expect(html).toContain('data-testid="refusal-notice"');
-    expect(html).toContain("Claude Code 从 primary-x 自动改用 fallback-y");
-    expect(html).toContain("本会话之后的轮次可能继续用它");
-    expect(html).toContain("类别：cat-z");
-    expect(html).toContain("说明：Upstream refused");
-    const escaped = raw.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-    expect(html).toContain(escaped);
+  it("shows the original and fallback models, category, scope, explanation and the refusal's words untouched", () => {
+    for (const its of [items, legacy]) {
+      const html = render(its);
+      expect(html).toContain('data-testid="refusal-notice"');
+      expect(html).toContain("Claude Code 从 primary-x 自动改用 fallback-y");
+      expect(html).toContain("本会话之后的轮次可能继续用它");
+      expect(html).toContain("类别：cat-z");
+      expect(html).toContain("说明：Upstream refused");
+      expect(html).toContain("拒绝原文");
+      expect(html).toContain(escaped(words));
+    }
+  });
+  it("never shows the record's line an older hub sent, nor its hidden fields", () => {
+    const html = render(legacy);
+    expect(html).not.toContain(MARKER);
+    expect(html).not.toContain("syntheticHidden");
   });
   it("an unknown or blocked record claims no switch", () => {
-    const html = render(items.map((i) => (i.id === "r1" ? { ...i, model_refusal: { subtype: "model_refusal_future", raw: "future" } } : i)));
+    const html = render(items.map((i) => (i.id === "r1" ? { ...i, model_refusal: { subtype: "model_refusal_future", text: "future words" } } : i)));
     expect(html).toContain("记录里没有说改用了其他模型");
     expect(html).not.toContain("自动改用");
-    expect(html).toContain("future");
+    expect(html).toContain("future words");
   });
 });

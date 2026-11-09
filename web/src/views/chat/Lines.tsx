@@ -136,7 +136,7 @@ function LineNotice({ item }: { item: Item }) {
 }
 
 /** A Claude Code model_refusal_* record (#2528): the refused model, the one Claude Code switched to, the category and
- *  scope as recorded, and the record itself verbatim (never reworded). */
+ *  scope as recorded, and the refusal's own words verbatim (never reworded, never the record's line). */
 function RefusalNotice({ item }: { item: Item }) {
   const r = item.model_refusal!;
   const f = refusalFacts(r);
@@ -154,13 +154,13 @@ function RefusalNotice({ item }: { item: Item }) {
         {fallback && f.scope === "session" && <span>{t("chat-modelfallback.refusal_session")}</span>}
         {f.category && <span className="[overflow-wrap:anywhere]">{t("chat-modelfallback.refusal_category", { category: f.category })}</span>}
         {f.explanation && <span className="whitespace-pre-wrap">{t("chat-modelfallback.refusal_explanation", { text: f.explanation })}</span>}
-        {f.raw && (
-          <details className="min-w-0">
-            <summary className="cursor-pointer text-ink-3">{t("chat-modelfallback.refusal_raw")}</summary>
-            <span className="block font-mono text-[11.5px] whitespace-pre-wrap [overflow-wrap:anywhere]" data-testid="refusal-raw">
-              {f.raw}
+        {f.text && (
+          <span className="flex min-w-0 flex-col">
+            <span className="text-ink-3">{t("chat-modelfallback.refusal_text")}</span>
+            <span className="whitespace-pre-wrap [overflow-wrap:anywhere]" data-testid="refusal-text">
+              {f.text}
             </span>
-          </details>
+          </span>
         )}
       </span>
     </div>

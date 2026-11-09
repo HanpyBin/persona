@@ -24,7 +24,7 @@ const fallback = {
   category: "synthetic-policy",
   scope: "session",
   explanation: "Upstream refused the request",
-  raw: '{"type":"system","subtype":"model_refusal_fallback"}',
+  text: "Synthetic refusal words",
 };
 
 describe("fallbackView", () => {
@@ -80,16 +80,24 @@ describe("restoreModel", () => {
 });
 
 describe("refusalFacts", () => {
-  it("keeps every value as recorded and the raw record untouched", () => {
-    const raw = '{"x":"Upstream refused <this>\\n  policy"}\n';
-    expect(refusalFacts({ ...fallback, raw })).toEqual({
+  it("keeps every public value as recorded and the refusal's words untouched", () => {
+    const text = "Upstream refused <this>\n  policy";
+    expect(refusalFacts({ ...fallback, text })).toEqual({
       original: "primary-model",
       fallback: "fallback-model",
       category: "synthetic-policy",
       scope: "session",
       explanation: "Upstream refused the request",
-      raw,
+      text,
     });
-    expect(refusalFacts({ subtype: "model_refusal_future", raw: "  " })).toEqual({});
+    expect(refusalFacts({ subtype: "model_refusal_future", text: "  " })).toEqual({
+      original: undefined, fallback: undefined, category: undefined, scope: undefined, explanation: undefined, text: undefined,
+    });
+  });
+  it("reads nothing of what an older hub sent beyond the public fields", () => {
+    const MARKER = "HIDDEN-MARKER-2528-facts";
+    const old = { ...fallback, raw: `{"syntheticHidden":{"nested":"${MARKER}"}}`, extra: { deeper: MARKER } } as unknown as typeof fallback;
+    expect(JSON.stringify(refusalFacts(old))).not.toContain(MARKER);
+    expect(refusalFacts(old).text).toBe("Synthetic refusal words");
   });
 });

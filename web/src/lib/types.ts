@@ -513,8 +513,8 @@ export interface Item {
   supervisionUser?: boolean;
 }
 
-/** A Claude Code model_refusal_* record (server proto.ModelRefusal): values as recorded, unknown ones included; `raw`
- *  is the whole JSONL line. */
+/** A Claude Code model_refusal_* record (server proto.ModelRefusal) as the hub gives it: its known fields, values as
+ *  recorded (unknown ones included), and `text`, the refusal's own words. Never the record's line (#2528). */
 export interface ModelRefusal {
   subtype: string;
   original_model?: string;
@@ -522,7 +522,7 @@ export interface ModelRefusal {
   category?: string;
   scope?: string;
   explanation?: string;
-  raw?: string;
+  text?: string;
 }
 
 /** A pending "back to the configured model" (server proto.ModelRestore): "next_start" — the idle headless process was

@@ -7,6 +7,7 @@
 
 import { api, ApiError, errorText, sessionPath } from "./api";
 import { t } from "../i18n";
+import { publicRefusal } from "./refusal-public";
 import type { ModelRefusal, Session } from "./types";
 
 /** The turn_error_code of a turn that failed on the missing fallback model: the user's to act on, never "Continue". */
@@ -71,14 +72,16 @@ export function restoreErrorText(e: unknown): string {
   return errorText(e);
 }
 
-/** A refusal notice's facts in the order they are shown; the raw record comes last and untouched. */
-export function refusalFacts(r: ModelRefusal): { original?: string; fallback?: string; category?: string; scope?: string; explanation?: string; raw?: string } {
+/** A refusal notice's facts in the order they are shown: the public record only (lib/refusal-public.ts), the refusal's
+ *  words last and untouched. Whatever else an older hub sent (its "raw" line) is never read. */
+export function refusalFacts(r: ModelRefusal): { original?: string; fallback?: string; category?: string; scope?: string; explanation?: string; text?: string } {
+  const p = publicRefusal(r);
   return {
-    original: r.original_model || undefined,
-    fallback: r.fallback_model || undefined,
-    category: r.category || undefined,
-    scope: r.scope || undefined,
-    explanation: r.explanation || undefined,
-    raw: r.raw?.trim() ? r.raw : undefined,
+    original: p.original_model,
+    fallback: p.fallback_model,
+    category: p.category,
+    scope: p.scope,
+    explanation: p.explanation,
+    text: p.text?.trim() ? p.text : undefined,
   };
 }

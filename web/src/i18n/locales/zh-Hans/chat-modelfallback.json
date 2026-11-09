@@ -21,5 +21,5 @@
   "refusal_no_switch": "记录里没有说改用了其他模型",
   "refusal_category": "类别：{category}",
   "refusal_explanation": "说明：{text}",
-  "refusal_raw": "原文"
+  "refusal_text": "拒绝原文"
 }

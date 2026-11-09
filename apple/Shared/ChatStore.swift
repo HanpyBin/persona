@@ -1392,10 +1392,11 @@ nonisolated enum ChatCache {
     /// v12: relayed and automated assistant input retains additive source metadata.
     /// v13: cached tails count user questions, not automatic supervision; discard the old shallow tails.
     /// v14: injected supervision levels and folded promotion are retained, including client evidence on replaced folds.
+    /// v15: a refusal notice's text is the refusal's words, never the record's JSONL line older hubs sent (#2528): drop those copies.
     /// Bump it whenever the item structure or the text the hub gives an item changes.
-    static let folder = "chats-v14"
+    static let folder = "chats-v15"
     /// The folder before, removed on the first launch with this one.
-    private static let previous = "chats-v13"
+    private static let previous = "chats-v14"
 
     /// Once per launch, before the first copy is read or written (a static let runs once, on whichever thread asks first).
     private static let dropOlder: Void = {
