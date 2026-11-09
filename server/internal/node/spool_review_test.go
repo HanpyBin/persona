@@ -268,14 +268,14 @@ func TestReplayKeepsWhatCouldNotBeHandedOver(t *testing.T) {
 	if !replay() {
 		t.Fatal("a busy notification left nothing to retry")
 	}
-	if got := sp.load(); len(got) != 1 || got[0].ID != "n1" || got[0].Tries != 0 {
+	if got := mustLoad(t, sp); len(got) != 1 || got[0].ID != "n1" || got[0].Tries != 0 {
 		t.Fatalf("after a busy answer: %+v, want the notify kept untried (the Stop after it went on)", got)
 	}
 	busy = false
 	if !replay() {
 		t.Fatal("a refused notification left nothing to retry")
 	}
-	if got := sp.load(); len(got) != 1 || got[0].ID != "n1" || got[0].Tries != 1 {
+	if got := mustLoad(t, sp); len(got) != 1 || got[0].ID != "n1" || got[0].Tries != 1 {
 		t.Fatalf("after a refused notify: %+v, want it kept, tried once", got)
 	}
 	waitFor(t, "the Stop after it to go on (hook events keep their order)", func() bool { return count() == 1 })
@@ -285,7 +285,7 @@ func TestReplayKeepsWhatCouldNotBeHandedOver(t *testing.T) {
 	if replay() { // the last refusal drops it
 		t.Fatal("a dropped notification is retried")
 	}
-	if got := sp.load(); len(got) != 0 {
+	if got := mustLoad(t, sp); len(got) != 0 {
 		t.Fatalf("left: %+v", got)
 	}
 	refuse = false
@@ -294,7 +294,7 @@ func TestReplayKeepsWhatCouldNotBeHandedOver(t *testing.T) {
 	n.replayed, n.stateReady = make(chan struct{}), make(chan struct{})
 	close(n.stateReady)
 	n.replaySpool(ctx, sp)
-	if got := sp.load(); len(got) != 1 || got[0].Tries != 0 {
+	if got := mustLoad(t, sp); len(got) != 1 || got[0].Tries != 0 {
 		t.Fatalf("a replay on a gone connection: %+v", got)
 	}
 }
@@ -315,12 +315,12 @@ func TestReplayWaitsForTheSessionState(t *testing.T) {
 		t.Fatal("replayed before the state came")
 	default:
 	}
-	if got := sp.load(); len(got) != 1 {
+	if got := mustLoad(t, sp); len(got) != 1 {
 		t.Fatalf("kept %+v before the state came", got)
 	}
 	close(n.stateReady)
 	<-n.replayed
-	if got := sp.load(); len(got) != 0 {
+	if got := mustLoad(t, sp); len(got) != 0 {
 		t.Fatalf("left %+v: the state came, so the replay went through", got)
 	}
 	rec.mu.Lock()
@@ -356,7 +356,7 @@ func TestReplayHoldsUntilTheStateComes(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("the gate for new hooks waits for a held replay")
 	}
-	if got := sp.load(); len(got) != 3 || got[2].Tries != 0 {
+	if got := mustLoad(t, sp); len(got) != 3 || got[2].Tries != 0 {
 		t.Fatalf("held: kept %+v, want all three, untried", got)
 	}
 	// New hooks go ahead: one of the session that has kept events, on its pane, and one of another session that
@@ -390,7 +390,7 @@ func TestReplayHoldsUntilTheStateComes(t *testing.T) {
 	if pane != fresh {
 		t.Fatalf("pane w1:p2 is %s, want it left to the session a new hook bound", pane)
 	}
-	if left := sp.load(); len(left) != 0 {
+	if left := mustLoad(t, sp); len(left) != 0 {
 		t.Fatalf("left %+v", left)
 	}
 	n.ahead.note(live(quiet, "w1:p3")) // after the replay: nothing is ahead any more
@@ -408,7 +408,7 @@ func TestReplayHoldsUntilTheStateComes(t *testing.T) {
 	<-n.replayed
 	cancel()
 	<-done
-	if got := sp.load(); len(got) != 1 || got[0].ID != "h3" {
+	if got := mustLoad(t, sp); len(got) != 1 || got[0].ID != "h3" {
 		t.Fatalf("kept %+v after the connection ended", got)
 	}
 }
@@ -536,11 +536,11 @@ func TestStateRetriedOnTheConnectionReleasesTheReplay(t *testing.T) {
 	waitFor(t, "the state to be tried again", func() bool { mu.Lock(); defer mu.Unlock(); return loads >= 2 })
 	live(hook(moved, "UserPromptSubmit", "", nil))                                                          // a new turn of a session with a kept event
 	live(hook(asked, "PermissionRequest", "Bash", func(r *sockRequest) { permission(r); r.Resume = true })) // the kept permission asks again
-	if got := n.spool.load(); len(got) != 3 || got[0].Tries != 0 || got[2].Tries != 0 {
+	if got := mustLoad(t, n.spool); len(got) != 3 || got[0].Tries != 0 || got[2].Tries != 0 {
 		t.Fatalf("held: kept %+v", got)
 	}
 	close(release)
-	waitFor(t, "the replay and the retried notification", func() bool { return len(n.spool.load()) == 0 })
+	waitFor(t, "the replay and the retried notification", func() bool { return len(mustLoad(t, n.spool)) == 0 })
 	mu.Lock()
 	defer mu.Unlock()
 	if got := strings.Join(events, " "); got != "UserPromptSubmit/a/live PermissionRequest/b/kept" {
@@ -629,7 +629,7 @@ func TestReplayRetriesNotificationsOnTheSameConnection(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(10 * time.Second):
-		t.Fatalf("the retries did not end; left %+v", sp.load())
+		t.Fatalf("the retries did not end; left %+v", mustLoad(t, sp))
 	}
 	mu.Lock()
 	defer mu.Unlock()
@@ -639,7 +639,7 @@ func TestReplayRetriesNotificationsOnTheSameConnection(t *testing.T) {
 	if tries["never"] != spoolTriesMost {
 		t.Fatalf("an always-refused notification was tried %d times, want %d", tries["never"], spoolTriesMost)
 	}
-	if left := sp.load(); len(left) != 0 {
+	if left := mustLoad(t, sp); len(left) != 0 {
 		t.Fatalf("left in the spool: %+v", left)
 	}
 }
@@ -669,7 +669,7 @@ func TestReplayTimeoutAtTheDropCountsNoTry(t *testing.T) {
 	if r := n.replayNotify(ctx, sp, e); r != notifyGone {
 		t.Fatalf("outcome %d, want notifyGone", r)
 	}
-	if got := sp.load(); len(got) != 1 || got[0].Tries != 0 {
+	if got := mustLoad(t, sp); len(got) != 1 || got[0].Tries != 0 {
 		t.Fatalf("kept %+v, want it untried", got)
 	}
 }
@@ -714,7 +714,7 @@ func TestHubAwayWaitsForTheNextRound(t *testing.T) {
 		if got != want {
 			t.Fatalf("%s asked %q, want %q", what, got, want)
 		}
-		if left := sp.load(); len(left) != 2 || left[0].Tries != 0 || left[1].Tries != 0 {
+		if left := mustLoad(t, sp); len(left) != 2 || left[0].Tries != 0 || left[1].Tries != 0 {
 			t.Fatalf("%s: kept %+v, want both, untried", what, left)
 		}
 	}
@@ -773,7 +773,7 @@ func TestReplayTimeoutsAndDrops(t *testing.T) {
 	if took := time.Since(start); took > time.Second {
 		t.Fatalf("the replay took %s: one timeout should be all it waits", took)
 	}
-	got := sp.load()
+	got := mustLoad(t, sp)
 	if len(got) != 2 || got[0].ID != "n1" || got[0].Tries != 1 || got[1].ID != "n2" || got[1].Tries != 0 {
 		t.Fatalf("kept %+v: n1 tried once, n2 untried", got)
 	}
@@ -783,7 +783,7 @@ func TestReplayTimeoutsAndDrops(t *testing.T) {
 	_ = n2hW.Close()
 	n.replayed = make(chan struct{})
 	n.replaySpool(ctx, sp)
-	if got := sp.load(); len(got) != 2 || got[0].Tries != 1 || got[1].Tries != 0 {
+	if got := mustLoad(t, sp); len(got) != 2 || got[0].Tries != 1 || got[1].Tries != 0 {
 		t.Fatalf("a dropped connection counted a try: %+v", got)
 	}
 }
@@ -836,7 +836,7 @@ func TestRetryNotificationsEndsWithTheConnection(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the retries outlived their connection (in a call)")
 	}
-	if got := sp.load(); len(got) != 1 || got[0].Tries != 0 {
+	if got := mustLoad(t, sp); len(got) != 1 || got[0].Tries != 0 {
 		t.Fatalf("kept %+v, want it untried", got)
 	}
 }
@@ -881,7 +881,7 @@ func TestRetryRoundTimeoutAndAge(t *testing.T) {
 	if !n.retryNotificationsOnce(ctx, sp) {
 		t.Fatal("a round that timed out says nothing is left")
 	}
-	got := sp.load()
+	got := mustLoad(t, sp)
 	if len(got) != 2 || got[0].ID != "n1" || got[0].Tries != 1 || got[1].ID != "n2" || got[1].Tries != 0 {
 		t.Fatalf("kept %+v: the old one gone, n1 tried once, n2 untried", got)
 	}

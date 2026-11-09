@@ -51,15 +51,33 @@ type sessionState struct {
 
 func newState() *stateFile { return &stateFile{Sessions: map[string]sessionState{}} }
 
-// legacyState reads the pre-Postgres ~/.persona/sessions.json, if any.
-func legacyState(path string) map[string]sessionState {
+// legacyCorruptSuffix marks a quarantined pre-Postgres sessions.json that could not be parsed.
+const legacyCorruptSuffix = ".corrupt"
+
+// legacyState reads the pre-Postgres ~/.persona/sessions.json, if any. ok is false when the file is absent,
+// unreadable or unparseable. An unparseable file is quarantined (renamed with a .corrupt suffix and logged) so a
+// corrupt file is not re-read, and reported as empty, on every connection.
+func legacyState(logf func(string, ...any), path string) (sessions map[string]sessionState, ok bool) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			logf("legacy session state: read %s: %v", path, err)
+		}
+		return nil, false
+	}
 	var f struct {
 		Sessions map[string]sessionState `json:"sessions"`
 	}
-	if b, err := os.ReadFile(path); err == nil {
-		_ = json.Unmarshal(b, &f)
+	if err := json.Unmarshal(b, &f); err != nil {
+		quarantine := path + legacyCorruptSuffix
+		if rerr := os.Rename(path, quarantine); rerr != nil {
+			logf("legacy session state: unparseable %s (%v); quarantine as %s failed: %v", path, err, quarantine, rerr)
+		} else {
+			logf("legacy session state: unparseable %s (%v); quarantined as %s", path, err, quarantine)
+		}
+		return nil, false
 	}
-	return f.Sessions
+	return f.Sessions, true
 }
 
 // merge adds sessions loaded from the hub without overwriting ones touched since the node started.

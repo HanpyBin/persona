@@ -400,12 +400,23 @@ func (n *Node) loadState(ctx context.Context) bool {
 	}
 	n.state.mu.Unlock()
 	legacyPath := filepath.Join(n.dir, "sessions.json")
-	if legacy := legacyState(legacyPath); len(legacy) > 0 {
+	if legacy, ok := legacyState(n.logger.Printf, legacyPath); ok && len(legacy) > 0 {
+		// Rename only once every state.put reached the manager: a failed notify keeps the original file, so the next
+		// connection retries instead of losing data that never reached Postgres.
+		migrated := true
 		for id, v := range legacy {
-			_ = n.peer.Notify("state.put", map[string]any{"session_id": id, "state": v})
+			if err := n.peer.Notify("state.put", map[string]any{"session_id": id, "state": v}); err != nil {
+				n.logger.Printf("legacy session state: state.put for %s failed, keeping %s for a retry: %v", id, legacyPath, err)
+				migrated = false
+				break
+			}
 		}
-		n.state.merge(legacy)
-		_ = os.Rename(legacyPath, legacyPath+".migrated")
+		if migrated {
+			n.state.merge(legacy)
+			if err := os.Rename(legacyPath, legacyPath+".migrated"); err != nil {
+				n.logger.Printf("legacy session state: rename %s: %v", legacyPath, err)
+			}
+		}
 	}
 	return n.fetchState(ctx)
 }

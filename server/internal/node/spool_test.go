@@ -1,9 +1,11 @@
 package node
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -17,6 +19,24 @@ import (
 	"github.com/nwverse/persona/server/internal/rpc"
 )
 
+// mustLoad reads the spool, failing the test on a read or scanner error.
+func mustLoad(t *testing.T, sp *spool) []spoolEntry {
+	t.Helper()
+	entries, err := sp.load()
+	if err != nil {
+		t.Fatalf("load spool %s: %v", sp.path, err)
+	}
+	return entries
+}
+
+func entryIDs(entries []spoolEntry) []string {
+	ids := make([]string, 0, len(entries))
+	for _, e := range entries {
+		ids = append(ids, e.ID)
+	}
+	return ids
+}
+
 func TestSpoolKeepsOrderBoundsAndPersists(t *testing.T) {
 	defer func(n, b int) { spoolMost, spoolBytesMost = n, b }(spoolMost, spoolBytesMost)
 	spoolMost = 3
@@ -29,7 +49,7 @@ func TestSpoolKeepsOrderBoundsAndPersists(t *testing.T) {
 		}
 	}
 	var ids []string
-	for _, e := range openSpool(path).load() { // a new process reads what the last one kept
+	for _, e := range mustLoad(t, openSpool(path)) { // a new process reads what the last one kept
 		ids = append(ids, e.ID)
 	}
 	if strings.Join(ids, "") != "cde" {
@@ -42,10 +62,10 @@ func TestSpoolKeepsOrderBoundsAndPersists(t *testing.T) {
 	big := sockRequest{Kind: "hook", Input: json.RawMessage(`"` + strings.Repeat("x", 150) + `"`)}
 	_, _ = sp.add(spoolEntry{ID: "f", Kind: "hook", Request: big})
 	_, _ = sp.add(spoolEntry{ID: "g", Kind: "hook", Request: big})
-	if got := sp.load(); len(got) == 0 || got[len(got)-1].ID != "g" {
+	if got := mustLoad(t, sp); len(got) == 0 || got[len(got)-1].ID != "g" {
 		t.Fatalf("by size: %+v", got)
 	}
-	for _, e := range sp.load() {
+	for _, e := range mustLoad(t, sp) {
 		_ = sp.remove(e.ID)
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -119,7 +139,7 @@ func TestStandbyAnswers(t *testing.T) {
 	}
 
 	var kept []string
-	for _, e := range sb.sp.load() {
+	for _, e := range mustLoad(t, sb.sp) {
 		var in hookInput
 		_ = json.Unmarshal(e.Request.Input, &in)
 		kept = append(kept, e.Kind+":"+in.HookEventName+in.ToolName)
@@ -161,7 +181,7 @@ func TestStandbyOnTheSocket(t *testing.T) {
 	if out := nodeclient.Hook(ctx, hookReq("Stop", "", nil).Input, "w1:p1"); out != nil {
 		t.Fatalf("a Stop printed %s", out)
 	}
-	if n := len(openSpool(SpoolPath()).load()); n != 2 {
+	if n := len(mustLoad(t, openSpool(SpoolPath()))); n != 2 {
 		t.Fatalf("spooled %d, want the notification and the Stop", n)
 	}
 	sb.unwant()
@@ -262,7 +282,7 @@ func TestReplayHandsTheManagerWhatStandbyTookInOrderOnce(t *testing.T) {
 			t.Fatalf("spool ids %v: each once, never empty", ids)
 		}
 	}
-	if left := sp.load(); len(left) != 0 {
+	if left := mustLoad(t, sp); len(left) != 0 {
 		t.Fatalf("left in the spool: %+v", left)
 	}
 	n.replayed = make(chan struct{})
@@ -272,4 +292,105 @@ func TestReplayHandsTheManagerWhatStandbyTookInOrderOnce(t *testing.T) {
 		t.Fatalf("a second replay sent %v", rec.got)
 	}
 	rec.mu.Unlock()
+}
+
+// Truncated lines, invalid JSON and id-less entries are skipped but counted and logged; a line past the scanner's
+// budget is a scanner error returned with the entries parsed before it, never a silent empty spool.
+func TestSpoolSurfacesCorruptionAndReadFailures(t *testing.T) {
+	path := filepath.Join(t.TempDir(), spoolFile)
+	goodLine := func(id string) string {
+		b, err := json.Marshal(spoolEntry{ID: id, At: time.Now(), Kind: "hook"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	lines := []string{
+		goodLine("a"),
+		`{"id":"`, // truncated line
+		`{}`,       // parses, but has no id
+		"{not json",
+		goodLine("b"),
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	sp := openSpool(path).withLogger(func(f string, a ...any) { fmt.Fprintf(&logs, f+"\n", a...) })
+	entries, err := sp.load()
+	if err != nil {
+		t.Fatalf("bad lines are skipped, not a load failure: %v", err)
+	}
+	if ids := strings.Join(entryIDs(entries), ""); ids != "ab" {
+		t.Fatalf("kept %v, want a and b in order", ids)
+	}
+	if !strings.Contains(logs.String(), "skipping") || !strings.Contains(logs.String(), "3 unparseable") {
+		t.Fatalf("the bad lines were not logged:\n%s", logs.String())
+	}
+
+	// A line beyond the scanner budget stops the scan: the error comes back with what parsed before it.
+	huge := strings.Repeat("x", spoolBytesMost+2)
+	if err := os.WriteFile(path, []byte(goodLine("c")+"\n"+huge+"\n"+goodLine("d")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entries, err = sp.load()
+	if err == nil {
+		t.Fatal("a line past the scanner budget must be returned as an error, not hidden")
+	}
+	if len(entries) != 1 || entries[0].ID != "c" {
+		t.Fatalf("entries before the scanner failure: %+v", entries)
+	}
+}
+
+// An unreadable spool is an error every caller sees; a read-only directory makes the rewrite fail.
+func TestSpoolPermissionFaultsAreReturned(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission faults do not trigger for root")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, spoolFile)
+	sp := openSpool(path).withLogger(t.Logf)
+	if _, err := sp.add(spoolEntry{ID: "a", Kind: "hook"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+	if _, err := sp.load(); err == nil {
+		t.Fatal("load must surface an unreadable spool")
+	}
+	if _, err := sp.add(spoolEntry{ID: "b", Kind: "hook"}); err == nil {
+		t.Fatal("add must surface a read error instead of losing the kept entries")
+	}
+	if _, err := sp.failed("a"); err == nil {
+		t.Fatal("failed must surface a read error")
+	}
+	if err := sp.remove("a"); err == nil {
+		t.Fatal("remove must surface a read error")
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// The file reads again; a read-only directory makes the atomic rewrite fail.
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	if _, err := sp.add(spoolEntry{ID: "b", Kind: "hook"}); err == nil {
+		t.Fatal("add must surface a write error when the directory is read-only")
+	}
+}
+
+// A marshal failure is returned, not discarded, and leaves the spool untouched.
+func TestSpoolAddReturnsMarshalFailure(t *testing.T) {
+	sp := openSpool(filepath.Join(t.TempDir(), spoolFile)).withLogger(t.Logf)
+	_, err := sp.add(spoolEntry{ID: "x", Kind: "hook", Request: sockRequest{Input: json.RawMessage("{bad")}})
+	if err == nil {
+		t.Fatal("a marshal failure must be returned, not discarded")
+	}
+	if entries := mustLoad(t, sp); len(entries) != 0 {
+		t.Fatalf("nothing should have been written: %+v", entries)
+	}
 }

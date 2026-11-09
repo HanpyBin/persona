@@ -147,7 +147,7 @@ func Attach(ctx context.Context, newNode func() (*Node, error), extra <-chan net
 
 	keeper := newAssistantKeeper()
 	// No manager connected yet (or between connections): standby answers node.sock (spool.go).
-	sp := openSpool(SpoolPath())
+	sp := openSpool(SpoolPath()).withLogger(logf)
 	sb := newStandby(sp, logf)
 	sb.want()
 	defer sb.unwant()

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net"
 	"os"
 	"path/filepath"
@@ -80,35 +81,71 @@ type spoolEntry struct {
 // connections' Nodes replay it, one at a time (replayMu).
 type spool struct {
 	path     string
+	logf     func(string, ...any)
 	replayMu sync.Mutex
 }
 
 var spoolMu sync.Mutex // one spool file per process
 
-func openSpool(path string) *spool { return &spool{path: path} }
+func openSpool(path string) *spool {
+	return &spool{
+		path: path,
+		logf: func(f string, a ...any) { log.Printf("spool: "+f, a...) },
+	}
+}
 
-// load reads the entries; a line that does not parse is skipped.
-func (s *spool) load() []spoolEntry {
+// withLogger sends the spool's fault logs through logf (the resident node's structured logger).
+func (s *spool) withLogger(logf func(string, ...any)) *spool {
+	s.logf = logf
+	return s
+}
+
+// load reads the entries; a line that does not parse is counted and skipped, while a read or scanner failure is
+// returned instead of being hidden.
+func (s *spool) load() ([]spoolEntry, error) {
 	spoolMu.Lock()
 	defer spoolMu.Unlock()
 	return s.loadLocked()
 }
 
-func (s *spool) loadLocked() []spoolEntry {
+// loadLocked reads the file under spoolMu. A missing file is an empty spool; every other read failure, an
+// unparseable line and a scanner failure are logged and returned so entries never vanish silently.
+func (s *spool) loadLocked() (out []spoolEntry, err error) {
 	b, err := os.ReadFile(s.path)
 	if err != nil {
-		return nil
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		s.logf("read %s: %v", s.path, err)
+		return nil, err
 	}
-	var out []spoolEntry
+	var bad int
 	sc := bufio.NewScanner(bytes.NewReader(b))
 	sc.Buffer(make([]byte, 0, 64<<10), spoolBytesMost+1)
+	line := 0
 	for sc.Scan() {
+		line++
 		var e spoolEntry
-		if json.Unmarshal(sc.Bytes(), &e) == nil && e.ID != "" {
-			out = append(out, e)
+		if jerr := json.Unmarshal(sc.Bytes(), &e); jerr != nil {
+			bad++
+			s.logf("%s: skipping unparseable line %d: %v", s.path, line, jerr)
+			continue
 		}
+		if e.ID == "" {
+			bad++
+			s.logf("%s: skipping line %d with no id", s.path, line)
+			continue
+		}
+		out = append(out, e)
 	}
-	return out
+	if serr := sc.Err(); serr != nil {
+		s.logf("%s: scan stopped at line %d: %v", s.path, line+1, serr)
+		return out, serr
+	}
+	if bad > 0 {
+		s.logf("%s: skipped %d unparseable line(s), kept %d", s.path, bad, len(out))
+	}
+	return out, nil
 }
 
 // add appends e, dropping the oldest entries past the bounds. dropped is how many went.
@@ -122,11 +159,18 @@ func (s *spool) add(e spoolEntry) (dropped int, err error) {
 	if len(line) >= spoolBytesMost {
 		return 0, errors.New("too large to keep")
 	}
-	all := append(s.loadLocked(), e)
+	all, err := s.loadLocked()
+	if err != nil {
+		return 0, err
+	}
+	all = append(all, e)
 	lines := make([][]byte, 0, len(all))
 	size := 0
 	for _, x := range all {
-		b, _ := json.Marshal(x)
+		b, merr := json.Marshal(x)
+		if merr != nil {
+			return 0, merr
+		}
 		lines = append(lines, b)
 		size += len(b) + 1
 	}
@@ -142,15 +186,22 @@ func (s *spool) add(e spoolEntry) (dropped int, err error) {
 func (s *spool) failed(id string) (drop bool, err error) {
 	spoolMu.Lock()
 	defer spoolMu.Unlock()
+	entries, err := s.loadLocked()
+	if err != nil {
+		return false, err
+	}
 	var lines [][]byte
-	for _, x := range s.loadLocked() {
+	for _, x := range entries {
 		if x.ID == id {
 			if x.Tries++; x.Tries >= spoolTriesMost {
 				drop = true
 				continue
 			}
 		}
-		b, _ := json.Marshal(x)
+		b, merr := json.Marshal(x)
+		if merr != nil {
+			return drop, merr
+		}
 		lines = append(lines, b)
 	}
 	return drop, s.writeLocked(lines)
@@ -160,10 +211,17 @@ func (s *spool) failed(id string) (drop bool, err error) {
 func (s *spool) remove(id string) error {
 	spoolMu.Lock()
 	defer spoolMu.Unlock()
+	entries, err := s.loadLocked()
+	if err != nil {
+		return err
+	}
 	var lines [][]byte
-	for _, x := range s.loadLocked() {
+	for _, x := range entries {
 		if x.ID != id {
-			b, _ := json.Marshal(x)
+			b, merr := json.Marshal(x)
+			if merr != nil {
+				return merr
+			}
 			lines = append(lines, b)
 		}
 	}
@@ -517,13 +575,22 @@ func (n *Node) replaySpool(ctx context.Context, sp *spool) (retry bool) {
 	openGate := func() { once.Do(func() { close(n.replayed) }) }
 	defer openGate()
 	defer n.ahead.finish() // before the gate opens: hooks after it are not ahead
-	if len(sp.load()) == 0 {
+	first, err := sp.load()
+	if err != nil {
+		n.logger.Printf("spool: %v", err)
+		return false
+	}
+	if len(first) == 0 {
 		return false
 	}
 	select {
 	case <-n.stateReady:
 	case <-n.stateMissed:
-		n.logger.Printf("spool: the session state did not come from the manager; %d kept until it does", len(sp.load()))
+		kept, lerr := sp.load()
+		if lerr != nil {
+			n.logger.Printf("spool: %v", lerr)
+		}
+		n.logger.Printf("spool: the session state did not come from the manager; %d kept until it does", len(kept))
 		openGate()
 		select {
 		case <-n.stateReady:
@@ -542,7 +609,12 @@ func (n *Node) replaySpool(ctx context.Context, sp *spool) (retry bool) {
 			n.logger.Printf("spool: replayed %d taken while the manager was away (%d too old, %d behind new hooks: dropped)", sent, stale, ahead)
 		}
 	}()
-	for _, e := range sp.load() {
+	entries, lerr := sp.load()
+	if lerr != nil {
+		n.logger.Printf("spool: %v", lerr)
+		return false
+	}
+	for _, e := range entries {
 		if ctx.Err() != nil {
 			return false
 		}
@@ -741,7 +813,12 @@ func (n *Node) retryNotifications(ctx context.Context, sp *spool) {
 func (n *Node) retryNotificationsOnce(ctx context.Context, sp *spool) (again bool) {
 	sp.replayMu.Lock()
 	defer sp.replayMu.Unlock()
-	for _, e := range sp.load() {
+	entries, err := sp.load()
+	if err != nil {
+		n.logger.Printf("spool: %v", err)
+		return false
+	}
+	for _, e := range entries {
 		if e.Kind != "notify" {
 			continue // a hook entry left by a connection that dropped: the next connection's replay has it
 		}
