@@ -187,8 +187,10 @@ func TestSecretRunTimeoutKillsTheGroup(t *testing.T) {
 	if len(ans.Results) != 1 || !ans.Results[0].TimedOut || ans.Results[0].ExitCode != -1 {
 		t.Fatalf("results = %+v, want one timed out with exit -1", ans.Results)
 	}
-	child, err := strconv.Atoi(strings.TrimSpace(ans.Results[0].Output))
-	if err != nil {
+	// Combined stderr may append the shell's child-termination diagnostic after the fixture's first PID line.
+	pidLine, _, _ := strings.Cut(strings.TrimSpace(ans.Results[0].Output), "\n")
+	child, err := strconv.Atoi(pidLine)
+	if err != nil || child <= 0 {
 		t.Fatalf("output %q: %v", ans.Results[0].Output, err)
 	}
 	deadline := time.Now().Add(3 * time.Second)
