@@ -364,7 +364,7 @@ export function NewAgent({ open, onClose, preset }: { open: boolean; onClose: ()
       if (!current()) return;
       // The launch owns its previews; removing or unmounting the editable draft cannot revoke them.
       const sent = snapshot.attachments.map((a) => ({ ...a, url: a.url ? URL.createObjectURL(a.file) : undefined }));
-      launchAgent({ machineId: mid, cwd: dir, launcher, ...picks, permissionMode: permissionMode || undefined, host: opensIn, ultracode: ultra, text: snapshot.text, attachments: sent });
+      launchAgent({ machineId: mid, cwd: dir, launcher, agentType: agent, ...picks, permissionMode: permissionMode || undefined, host: opensIn, ultracode: ultra, text: snapshot.text, attachments: sent });
       const ids = new Set(snapshot.attachments.map((a) => a.id));
       releaseAttachments(attachmentsRef.current.filter((a) => ids.has(a.id)));
       attachmentsRef.current = attachmentsRef.current.filter((a) => !ids.has(a.id));
@@ -736,7 +736,7 @@ export function NewAgent({ open, onClose, preset }: { open: boolean; onClose: ()
             </Field>
           )}
 
-          <Field label={t("newagent.first_message_optional")}>
+          <Field label={t(agent === "claude" ? "newagent.first_message_optional" : "newagent.first_message")}>
             <div className={cx("flex flex-col gap-2 rounded-control bg-inset shadow-hairline focus-within:shadow-[0_0_0_1px_var(--line-strong)]", dragging && "outline-2 outline-accent")}
               onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); setDragging(true); } }}
               onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragging(false); }}
@@ -761,7 +761,7 @@ export function NewAgent({ open, onClose, preset }: { open: boolean; onClose: ()
               <div className="flex items-center gap-2 px-2 pb-2">
                 <input ref={fileInput} type="file" multiple hidden onChange={(e) => { if (e.currentTarget.files) addFiles(e.currentTarget.files); e.currentTarget.value = ""; }} />
                 <button type="button" aria-label={t("newagent.add_files")} title={t("newagent.add_files")} onClick={() => fileInput.current?.click()} className="flex size-7 shrink-0 items-center justify-center rounded-control text-ink-3 hover:bg-hover hover:text-ink"><Icon name="plus" size={16} stroke={2} /></button>
-                <span className="min-w-0 text-[11.5px] text-ink-3">{t("newagent.attach_hint")}</span>
+                <span className="min-w-0 text-[11.5px] text-ink-3">{t(agent === "claude" ? "newagent.attach_hint" : "lib-new-agent.launcher_no_attachments")}</span>
               </div>
             </div>
           </Field>

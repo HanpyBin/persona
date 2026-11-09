@@ -211,6 +211,7 @@ var rpcFailureKeys = map[string]string{
 	proto.CodeTerminalNotReady: "rpc-errors.terminal_not_ready",
 	"node_outdated":            "rpc-errors.node_outdated",
 	"readonly_unsupported":     "rpc-errors.readonly_unsupported",
+	"codex_needs_prompt":       "rpc-errors.codex_needs_prompt",
 	"assistant_in_doubt":       "rpc-errors.in_doubt",
 	// queued messages sent now (#6088)
 	"nothing_queued":       "rpc-errors.nothing_queued",

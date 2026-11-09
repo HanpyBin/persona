@@ -51,14 +51,14 @@ func (n *Node) start(ctx context.Context, cwd, launcher, prompt, resume, workspa
 	if err != nil {
 		return nil, err
 	}
+	argv, codex := n.codexLauncher(ctx, launcher) // Load the existing shell list before classifying a cold start.
 	kind := agentType
 	if kind == "" {
-		kind = launcherAgentType(launcher)
+		kind = knownLauncherAgentType(launcher)
 	}
 	if kind != "claude" && kind != "codex" && kind != traexAgent {
 		return nil, fmt.Errorf("unsupported agent type %q", kind)
 	}
-	argv, codex := n.codexLauncher(ctx, launcher)
 	if mode == "plan" {
 		if codex && kind != traexAgent {
 			if argv, err = n.codexReadonlyArgs(launcher, argv, mode); err != nil {

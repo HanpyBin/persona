@@ -36,6 +36,17 @@ func TestReadonlyStartRefusalLocalization(t *testing.T) {
 	}
 }
 
+func TestInlinePromptRefusalLocalizationPreservesOutcome(t *testing.T) {
+	for _, lang := range []i18n.Lang{i18n.En, i18n.ZhHans, i18n.Ja} {
+		err := &rpc.Error{Code: "codex_needs_prompt", Message: "Node diagnostic", Data: json.RawMessage(`{"delivered":"none"}`)}
+		recorder := httptest.NewRecorder()
+		body := call(t, langWriter{recorder, lang}, recorder, err)
+		if recorder.Code != http.StatusConflict || body["error"] != i18n.T(lang, "rpc-errors.codex_needs_prompt") || body["code"] != "codex_needs_prompt" || body["delivered"] != "none" {
+			t.Fatalf("%s refusal = %v", lang, body)
+		}
+	}
+}
+
 func call(t *testing.T, w http.ResponseWriter, rec *httptest.ResponseRecorder, err error) map[string]any {
 	t.Helper()
 	Call(w, err)

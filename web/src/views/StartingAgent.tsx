@@ -20,9 +20,9 @@ export function StartingAgent({ launch, onToggleSidebar }: { launch: AgentLaunch
   const retry = () => {
     if (launch.uncertain && !confirm(launch.session ? t("startingagent.resend_confirm") : t("startingagent.restart_confirm"))) return;
     if (launch.retryNeedsNewId) putLaunch({ ...launch, messageId: uuid(), retryNeedsNewId: false });
-    // the model and effort were picked for the launcher it had: another launcher starts with its own
+    // These picks belong to the submitted launcher. An explicit replacement negotiates its own kind and defaults.
     const other = launcher.trim() !== launch.launcher;
-    if (editable) putLaunch({ ...launch, text: text.trim(), launcher: launcher.trim(), outgoing: undefined, ...(other && { model: undefined, effort: undefined }) });
+    if (editable) putLaunch({ ...launch, text: text.trim(), launcher: launcher.trim(), outgoing: undefined, ...(other && { agentType: undefined, model: undefined, effort: undefined }) });
     void deliverLaunch(launch.id, launch.clearable);
   };
   const label = launch.phase === "creating" ? t("startingagent.creating") : launch.phase === "uploading" ? t("startingagent.uploading") : t("startingagent.sending");

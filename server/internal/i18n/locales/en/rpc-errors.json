@@ -22,5 +22,6 @@
   "peer_unreachable": "Couldn’t reach this Claude session’s message channel (it may have just restarted or quit). Try again shortly, or continue it on the computer.",
   "peer_too_long": "The message is too long for the message channel. Split it into shorter messages.",
   "peer_unconfirmed": "The message was handed to this Claude session, but it hasn’t taken it yet: it may be waiting for approval on the computer, or it was dropped as a repeat. Check on the computer before sending it again.",
-  "peer_command": "The message channel only delivers plain messages and doesn’t run slash commands. Type the command on the computer."
+  "peer_command": "The message channel only delivers plain messages and doesn’t run slash commands. Type the command on the computer.",
+  "codex_needs_prompt": "Start this launcher with its first message. Update the app if it cannot send the message with the start."
 }

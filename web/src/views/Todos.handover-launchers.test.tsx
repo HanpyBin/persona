@@ -25,8 +25,11 @@ vi.mock("../lib/api", async (orig) => ({
   api: async (path: string) => (path.endsWith("/launchers") ? { launchers } : {}),
 }));
 vi.mock("react-dom", async (original) => ({ ...(await original<typeof import("react-dom")>()), createPortal: (children: React.ReactNode) => children }));
+vi.mock("../lib/new-agent", async (original) => ({ ...(await original<typeof import("../lib/new-agent")>()), launchAgent: vi.fn() }));
 
 const { HandoverDialog } = await import("./Todos");
+const { launchAgent } = await import("../lib/new-agent");
+const { t } = await import("../i18n");
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -45,6 +48,7 @@ async function open() {
 }
 
 beforeEach(() => {
+  vi.clearAllMocks();
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -56,6 +60,18 @@ afterEach(async () => {
 });
 
 describe("handing a to-do to a new agent", () => {
+  it("captures a configured wrapper's kind with the to-do's first message", async () => {
+    launchers = [{ name: "example-wrapper", agent: "traex" }, { name: "claude", agent: "claude" }];
+    await open();
+    const submit = [...document.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === t("todos.launch_and_hand"))!;
+    await act(async () => submit.click());
+    expect(launchAgent).toHaveBeenCalledOnce();
+    expect(launchAgent).toHaveBeenCalledWith(expect.objectContaining({
+      machineId: "mac", launcher: "example-wrapper", agentType: "traex", todoId: "t1",
+      text: expect.stringContaining("Release checklist"), attachments: [],
+    }));
+  });
+
   it("starts with a launcher that can start, and lists a blocked one after the rest with why", async () => {
     launchers = [
       { name: "work_gw", health: { state: "blocked", kind: "not_in_terminal" } },

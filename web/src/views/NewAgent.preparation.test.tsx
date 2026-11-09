@@ -22,6 +22,7 @@ let mounted: boolean;
 let host: HTMLDivElement;
 let closes: number;
 let configured: boolean;
+let compatibleWrapper: boolean;
 let unauthorized: ReturnType<typeof vi.fn<() => void>>;
 const flush = () => act(async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); });
 const tick = (ms = 0) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
@@ -72,7 +73,7 @@ async function attach(name: string, image = false) {
 beforeEach(async () => {
   vi.useFakeTimers();
   vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
-  calls = []; pending = []; closes = 0; configured = false;
+  calls = []; pending = []; closes = 0; configured = false; compatibleWrapper = false;
   let preview = 0;
   vi.stubGlobal("URL", class extends URL {
     static createObjectURL = vi.fn(() => `blob:synthetic-preview-${++preview}`);
@@ -96,8 +97,8 @@ beforeEach(async () => {
     if (url.includes("/model-config/purposes/")) return configured
       ? json({ purpose: { id: "agent.new", name: "New agent", effective: { provider: "launcher.claude", model: "synthetic-model", effort: "high" } }, providers: [] })
       : json({ error: "not found" }, 404);
-    if (url.includes("/launchers/") && url.includes("/models")) return json({ agent: "claude", models: [{ id: "synthetic-model", name: "Synthetic model", efforts: ["low", "high"] }] });
-    if (url.endsWith("/launchers")) return json({ launchers: [{ name: "claude", agent: "claude" }] });
+    if (url.includes("/launchers/") && url.includes("/models")) return json(compatibleWrapper ? { agent: "traex", models: [] } : { agent: "claude", models: [{ id: "synthetic-model", name: "Synthetic model", efforts: ["low", "high"] }] });
+    if (url.endsWith("/launchers")) return json({ launchers: compatibleWrapper ? [{ name: "example-wrapper", agent: "traex" }] : [{ name: "claude", agent: "claude" }] });
     if (url.includes("/dirs?")) return json({ path: "/projects", entries: [] });
     if (url.endsWith("/worktree/status")) return json({ path: call.body!.cwd, dirty: 0, unmerged: 0 });
     if (url.endsWith("/worktree/add")) return new Promise<Response>((resolve, reject) => {
@@ -125,6 +126,22 @@ afterEach(async () => {
 });
 
 describe("New Agent preparation ownership", () => {
+  it("captures a selected wrapper's kind before delayed worktree preparation finishes", async () => {
+    await click("Close externally");
+    compatibleWrapper = true;
+    await click("Reopen start"); await flush();
+    await type("Inspect the example project");
+    expect(document.body.textContent).not.toContain(t("newagent.first_message_optional"));
+    expect(document.body.textContent).toContain(t("lib-new-agent.launcher_no_attachments"));
+    const request = await prepare();
+    compatibleWrapper = false; // A later roster cannot reclassify this submitted launch.
+    await answer(request);
+    expect(starts()).toHaveLength(1);
+    expect(starts()[0].body).toMatchObject({ agent_type: "traex", prompt: "Inspect the example project", cwd: worktree.path });
+    expect(starts()[0].body!.async).not.toBe(true);
+    expect(messages()).toHaveLength(0);
+  });
+
   it.each(["Cancel", "Escape", "outside", "external", "unmount"])("retires %s before an abort-ignoring success can create or send", async (dismissal) => {
     const request = await prepare();
     if (dismissal === "Cancel") await click(t("common.cancel"));

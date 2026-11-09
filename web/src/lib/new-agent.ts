@@ -8,6 +8,7 @@ import { currentPlatform, modName, type Platform } from "./shortcuts";
 import { href, navigate } from "./router";
 import { getState, putLaunch, upsertSession } from "./store";
 import { ultracodeErrorText, ultracodeRefused } from "./ultracode";
+import { takesEffort } from "./launcher-models";
 import type { Session } from "./types";
 
 export interface AgentLaunch {
@@ -15,6 +16,8 @@ export interface AgentLaunch {
   machineId: string;
   cwd: string;
   launcher: string;
+  /** Captured from the chosen launcher's metadata; absent on older local launches. */
+  agentType?: string;
   /** Picked in "New agent" for this start only (launcher-models.ts startPicks); none: the launcher's own. */
   model?: string;
   effort?: string;
@@ -39,7 +42,7 @@ export interface AgentLaunch {
   draft?: string;
 }
 
-export function launchAgent(input: Pick<AgentLaunch, "machineId" | "cwd" | "launcher" | "model" | "effort" | "permissionMode" | "host" | "ultracode" | "text" | "attachments" | "todoId">) {
+export function launchAgent(input: Pick<AgentLaunch, "machineId" | "cwd" | "launcher" | "agentType" | "model" | "effort" | "permissionMode" | "host" | "ultracode" | "text" | "attachments" | "todoId">) {
   const launch: AgentLaunch = { ...input, id: `local-${uuid()}`, phase: "creating", uploaded: {} };
   putLaunch(launch);
   navigate({ name: "session", mid: launch.machineId, sid: launch.id });
@@ -80,17 +83,30 @@ export async function deliverLaunch(id: string, clearDraft?: string) {
     if (imageBytes + new TextEncoder().encode(launch.text).byteLength > 31 * 1024 * 1024) throw new Error(t("lib-new-agent.attachments_too_large_start"));
     if (!launch.session) {
       let session: Session;
-      try {
+      const inline = Boolean(launch.agentType && launch.agentType !== "claude");
+      const startWithPrompt = async () => {
+        if (launch.attachments.length) throw new Error(t("lib-new-agent.launcher_no_attachments"));
+        if (!launch.text) throw new Error(t("lib-new-agent.launcher_needs_text"));
+        const supportsEffort = inline && takesEffort(launch.agentType!);
+        const r = await api<{ session: Session }>("/sessions", { method: "POST", signal: controller.signal, json: {
+          machine_id: launch.machineId, cwd: launch.cwd, launcher: launch.launcher || undefined,
+          agent_type: inline ? launch.agentType : undefined, model: launch.model || undefined,
+          effort: supportsEffort ? launch.effort || undefined : undefined,
+          permission_mode: supportsEffort ? launch.permissionMode || undefined : undefined,
+          host: launch.host || undefined, prompt: launch.text, todo_id: launch.todoId || undefined,
+          ultracode: inline && launch.ultracode === true ? true : undefined,
+        } });
+        update({ outgoing: { text: "", images: [] } }); // The start owns this first message; never send it again.
+        return r.session;
+      };
+      if (inline) session = await startWithPrompt();
+      else try {
         const r = await api<{ session: Session }>("/sessions", { method: "POST", signal: controller.signal, json: { machine_id: launch.machineId, cwd: launch.cwd, launcher: launch.launcher || undefined, model: launch.model || undefined, effort: launch.effort || undefined, permission_mode: launch.permissionMode || undefined, host: launch.host || undefined, ultracode: launch.ultracode === true ? true : undefined, async: true, name_hint: launch.text || undefined, todo_id: launch.todoId || undefined } });
         session = r.session;
       } catch (e) {
         if (!(e instanceof ApiError) || e.code !== "codex_needs_prompt") throw e;
-        if (launch.attachments.length) throw new Error(t("lib-new-agent.launcher_no_attachments"));
-        if (!launch.text) throw new Error(t("lib-new-agent.launcher_needs_text"));
-        // A Codex start takes the picked model but no effort.
-        const r = await api<{ session: Session }>("/sessions", { method: "POST", signal: controller.signal, json: { machine_id: launch.machineId, cwd: launch.cwd, launcher: launch.launcher || undefined, model: launch.model || undefined, host: launch.host || undefined, prompt: launch.text, todo_id: launch.todoId || undefined } });
-        session = r.session;
-        update({ outgoing: { text: "", images: [] } });
+        // Older local launches and nodes still negotiate the same safe, pre-dispatch refusal.
+        session = await startWithPrompt();
       }
       if (!getState().launches[id]) return;
       update({ session });

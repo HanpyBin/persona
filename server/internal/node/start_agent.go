@@ -27,6 +27,29 @@ func launcherAgentType(name string) string {
 	return "claude"
 }
 
+// knownLauncherAgentType also recognizes configured aliases and wrappers already listed or probed by this node.
+// Reading this metadata never starts a launcher; an unknown legacy alias retains Claude's existing fallback.
+func knownLauncherAgentType(name string) string {
+	kind := launcherAgentType(name)
+	launcherCache.Lock()
+	for _, launcher := range launcherCache.list {
+		if launcher.Name == name && launcher.Agent != "" {
+			kind = launcher.Agent
+			break
+		}
+	}
+	if _, ok := launcherCache.codex[name]; ok {
+		kind = "codex"
+	}
+	launcherCache.Unlock()
+	probeCache.Lock()
+	if detail, ok := probeCache.got[name]; ok && time.Since(probeCache.at[name]) < 10*time.Minute && detail.Error == "" && detail.Agent != "" {
+		kind = detail.Agent
+	}
+	probeCache.Unlock()
+	return kind
+}
+
 func typedLaunchers(list []proto.Launcher) []agentLauncher {
 	out := make([]agentLauncher, 0, len(list))
 	seen := map[string]bool{}

@@ -4,6 +4,7 @@ import { api, credentialOwner, enc, errorText, subscribeCredentialOwner } from "
 import { ago, clock, shortPath, stateOf, tabLabel, uuid } from "../lib/format";
 import { launchAgent } from "../lib/new-agent";
 import { initialLauncher, launcherBlock, usableFirst } from "../lib/launcher-health";
+import { launcherAgent } from "../lib/launcher-models";
 import { navigate } from "../lib/router";
 import { interactionAsk } from "../lib/inbox";
 import { usageLimitLabel } from "../lib/usage-limit";
@@ -1713,6 +1714,7 @@ export function HandoverDialog({
         machineId: mid,
         cwd: cwd.trim(),
         launcher,
+        agentType: launcherAgent(launcher, launchers),
         text: fullText,
         attachments: [],
         todoId: todo.id,

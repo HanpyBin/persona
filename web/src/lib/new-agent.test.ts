@@ -28,6 +28,80 @@ beforeEach(() => {
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
+describe("owned launcher classification", () => {
+  it.each(["traex", "configured-wrapper"])("starts %s with the first prompt instead of a later message", async (launcher) => {
+    const fetcher = vi.fn().mockResolvedValueOnce(response({ session: { ...session, agent: "traex" } })).mockResolvedValue(response({}));
+    vi.stubGlobal("fetch", fetcher);
+    const id = launchAgent({ ...input, launcher, agentType: "traex", text: "Summarize the example project" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getState().launches[id].phase).toBe("ready");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(fetcher.mock.calls[0][1].body)).toMatchObject({ agent_type: "traex", prompt: "Summarize the example project" });
+    expect(JSON.parse(fetcher.mock.calls[0][1].body).async).not.toBe(true);
+  });
+  it("retains the captured kind across a delayed delivery and retry", async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(response({ error: "Not connected", delivered: "none" }, 409))
+      .mockResolvedValueOnce(response({ session: { ...session, agent: "traex" } }));
+    vi.stubGlobal("fetch", fetcher);
+    const id = launchAgent({ ...input, launcher: "configured-wrapper", agentType: "traex", text: "Read the example" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getState().launches[id].phase).toBe("failed");
+    expect(getState().launches[id].agentType).toBe("traex");
+    await deliverLaunch(id);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls.map((call) => JSON.parse(call[1].body))).toEqual([
+      expect.objectContaining({ agent_type: "traex", prompt: "Read the example" }),
+      expect.objectContaining({ agent_type: "traex", prompt: "Read the example" }),
+    ]);
+  });
+  it("keeps typed Codex starts synchronous and omits Claude-only options", async () => {
+    const fetcher = vi.fn().mockResolvedValue(response({ session: { ...session, agent: "codex" } }));
+    vi.stubGlobal("fetch", fetcher);
+    launchAgent({ ...input, launcher: "configured-codex", agentType: "codex", model: "example-model", effort: "high", permissionMode: "plan", text: "Inspect the example" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({ machine_id: "desktop", cwd: input.cwd, launcher: "configured-codex", agent_type: "codex", model: "example-model", prompt: "Inspect the example" });
+  });
+  it("keeps typed Claude starts asynchronous and delivers the first message once", async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(response({ session })).mockResolvedValueOnce(response({}));
+    vi.stubGlobal("fetch", fetcher);
+    const selected = { ...input, agentType: "claude", text: "Inspect the example" };
+    launchAgent(selected);
+    selected.agentType = "traex";
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(fetcher.mock.calls[0][1].body)).toMatchObject({ async: true, name_hint: "Inspect the example" });
+    expect(JSON.parse(fetcher.mock.calls[1][1].body)).toMatchObject({ text: "Inspect the example" });
+  });
+  it("refuses unsupported synchronous attachments before a start or upload", async () => {
+    const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
+    const attachment = pickAttachment(new File(["example"], "example.txt", { type: "text/plain" }));
+    const id = launchAgent({ ...input, agentType: "traex", attachments: [attachment], text: "Read the attachment" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(getState().launches[id]).toMatchObject({ phase: "failed", uncertain: false, text: "Read the attachment" });
+    expect(getState().launches[id].attachments).toHaveLength(1);
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+  });
+  it("requires the inline first message before creating an agent", async () => {
+    const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
+    const id = launchAgent({ ...input, agentType: "traex", text: "" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(getState().launches[id].phase).toBe("failed");
+  });
+  it.each([new TypeError("Connection lost"), response({ error: "Outcome unknown", delivered: "unknown" }, 502)])("never retries an unknown inline startup or sends a second prompt", async (failure) => {
+    const fetcher = failure instanceof Error ? vi.fn().mockRejectedValueOnce(failure) : vi.fn().mockResolvedValueOnce(failure);
+    vi.stubGlobal("fetch", fetcher);
+    const id = launchAgent({ ...input, launcher: "traex", agentType: "traex", text: "Inspect the example" });
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(241_000);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(getState().launches[id]).toMatchObject({ phase: "failed", uncertain: true, text: "Inspect the example" });
+    expect(getState().launches[id].session).toBeUndefined();
+  });
+});
+
 describe("本地优先启动", () => {
   it("opens the local conversation before any request and submits the prompt only once", async () => {
     let resolveCreate!: (value: unknown) => void;

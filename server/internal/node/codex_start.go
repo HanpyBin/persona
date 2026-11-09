@@ -114,7 +114,7 @@ func codexOwnProcess(argv []string) string {
 // known.
 func (n *Node) startCodex(ctx context.Context, launch host.Launcher, cwd, launcher string, argv []string, prompt, ws, tabName, mode string) (*proto.Session, error) {
 	if strings.TrimSpace(prompt) == "" {
-		return nil, refusal("codex_needs_prompt", "新建 Codex 会话要连第一条消息一起发：Codex 收到第一条消息才建会话。", nil)
+		return nil, inlinePromptStartRefusal()
 	}
 	if codexOnRemote(argv) {
 		// A launcher on an explicit app-server (--remote) sends no directory unless told one.

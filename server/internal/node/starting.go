@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/rpc"
 )
@@ -173,6 +174,10 @@ func (n *Node) startAsync(id, cwd, launcher, prompt, workspaceID, mode, effort, 
 	return n.startAsyncIn("", id, cwd, launcher, prompt, workspaceID, mode, effort, tabName, options...)
 }
 
+func inlinePromptStartRefusal() error {
+	return refusal("codex_needs_prompt", i18n.T(i18n.Default, "rpc-errors.codex_needs_prompt"), nil)
+}
+
 // startAsyncIn is startAsync in host kind ("" : the default host, withStartHost).
 func (n *Node) startAsyncIn(kind, id, cwd, launcher, prompt, workspaceID, mode, effort, tabName string, options ...modelExecution) (*proto.Session, error) {
 	execution := executionOption(options)
@@ -197,10 +202,9 @@ func (n *Node) startAsyncIn(kind, id, cwd, launcher, prompt, workspaceID, mode, 
 	if err := n.codexFunctionLauncher(context.Background(), launcher, false); err != nil {
 		return nil, err
 	}
-	if _, ok := n.codexLauncher(context.Background(), launcher); ok {
-		// Codex picks its thread's id when it gets the first message: there is no id to answer with yet. The app
-		// starts a Codex with its first message and waits (codex_start.go).
-		return nil, refusal("codex_needs_prompt", "新建 Codex 会话要连第一条消息一起发（更新 App 后再试）。", nil)
+	if _, ok := n.codexLauncher(context.Background(), launcher); ok || knownLauncherAgentType(launcher) != "claude" {
+		// Only Claude owns an id before startup. Keep the refusal code older clients retry with an inline prompt.
+		return nil, inlinePromptStartRefusal()
 	}
 	now := time.Now().UTC()
 	r := &startRec{done: make(chan struct{}), session: proto.Session{
