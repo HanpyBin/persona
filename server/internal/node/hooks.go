@@ -320,6 +320,12 @@ func (n *Node) handleHook(ctx context.Context, req sockRequest) (any, error) {
 	if !req.Resume { // the event was reported on the first attempt
 		n.notifyHookEvent(in, stopSig, false)
 	}
+	// Every Bash call of every agent waits on this hook, and only the assistant's are gated: the others go on before
+	// the card's title is looked up (a re-read of the transcript's tail) and their claude is watched.
+	bashGate := in.HookEventName == "PreToolUse" && in.ToolName == "Bash"
+	if bashGate && !n.isAssistantSession(in.SessionID) {
+		return nil, nil
+	}
 
 	ix := proto.Interaction{
 		ID: interactionID(in, req.Attempt), SessionID: in.SessionID, Cwd: in.Cwd, CreatedAt: time.Now().UTC(),
@@ -355,10 +361,7 @@ func (n *Node) handleHook(ctx context.Context, req sockRequest) (any, error) {
 		}
 		return elicitationOutput(ix, res), nil
 
-	case in.HookEventName == "PreToolUse" && in.ToolName == "Bash":
-		if !n.isAssistantSession(in.SessionID) {
-			return nil, nil
-		}
+	case bashGate: // the assistant's (the others returned above)
 		return n.larkGate(ctx, in, ix)
 
 	case in.HookEventName == "PreToolUse" && in.ToolName == "AskUserQuestion":

@@ -26,7 +26,7 @@ func (h *cancelHub) counts() (asked, cancelled int) {
 	return len(h.asked), len(h.cancelled)
 }
 
-func withCancelHub(t *testing.T, n *Node) *cancelHub {
+func withCancelHub(t testing.TB, n *Node) *cancelHub {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	n2hR, n2hW := io.Pipe()
