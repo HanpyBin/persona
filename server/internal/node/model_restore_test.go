@@ -609,3 +609,21 @@ func TestRestoreModelWhileScanPending(t *testing.T) {
 		t.Fatal("closed while the transcript was unread")
 	}
 }
+
+// The list's read may be seconds old (metaMinInterval): a reply written since that ended the fallback is read again
+// under the lock, and nothing is closed for a fallback that is over.
+func TestRestoreModelReadsAgain(t *testing.T) {
+	e := newRestoreEnv(t, rsUser, rsRefusal, rsNotFound)
+	p, c := rsProc(rsID)
+	e.setProc(p)
+	if s := e.view(t); s.ModelFallback == nil {
+		t.Fatal("no fallback to begin with")
+	}
+	e.appendLines(t, rsReply("2026-11-09T01:10:00Z", "primary-model")) // within the interval of the read above
+	if _, err := e.n.restoreModel(context.Background(), rsID); codeOf(err) != restoreNothing {
+		t.Fatalf("err %v, want %s", err, restoreNothing)
+	}
+	if closes, _ := c.counts(); closes != 0 || e.proc() != p {
+		t.Fatal("closed for a fallback that is over")
+	}
+}
