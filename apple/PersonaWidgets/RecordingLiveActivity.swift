@@ -148,12 +148,30 @@ struct RecordingButtons: View {
     }
 }
 
-/// The Lock Screen (and the watch's Smart Stack): mark, name and what it is, the time; under them the buttons.
+/// The Lock Screen: mark, name and what it is, the time; under them the buttons. The watch's Smart Stack (`.small`) gets
+/// a glance: mark, name, time, no buttons (they wouldn't fit).
 struct RecordingLockScreen: View {
     var state: RecordingActivityAttributes.ContentState
     var id: String
+    @Environment(\.activityFamily) private var family
 
     var body: some View {
+        if family == .small { glance } else { full }
+    }
+
+    private var glance: some View {
+        HStack(spacing: IslandMetrics.rowGap) {
+            RecordingMark(phase: state.phase, size: IslandMetrics.face)
+            VStack(alignment: .leading, spacing: IslandMetrics.smallGap) {
+                Text(state.title).font(.footnote.weight(.semibold)).lineLimit(1)
+                RecordingTime(state: state).font(.footnote).foregroundStyle(state.phase == .recording ? Palette.recordingRed : .secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(IslandMetrics.rowGap)
+    }
+
+    private var full: some View {
         VStack(alignment: .leading, spacing: IslandMetrics.rowGap + IslandMetrics.gap) {
             HStack(spacing: IslandMetrics.rowGap + IslandMetrics.gap) {
                 RecordingMark(phase: state.phase, size: IslandMetrics.recordingMark)
@@ -172,10 +190,14 @@ struct RecordingLockScreen: View {
     }
 }
 
-/// The recording activity's symbols (the extension doesn't build `Theme.Icon`).
+/// The recording activity's symbols (the extension doesn't build `Theme.Icon`): the app's own for the same meanings.
 enum RecordingSymbol {
+    /// The app's recording symbol (`Theme.Icon.recording`): the Control's.
+    static let recordingAction = "waveform.circle"
+    /// On the red mark the disc is drawn already: the bare waveform.
     static let recording = "waveform"
     static let paused = "pause.fill"
-    static let bookmark = "bookmark"
+    /// The app's bookmark (`Theme.Icon.pin`).
+    static let bookmark = "pin"
     static let stop = "stop.fill"
 }

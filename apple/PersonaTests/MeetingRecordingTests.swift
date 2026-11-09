@@ -178,6 +178,10 @@ import Testing
         #expect(RecordingMinutesModel.state(minutes: nil, status: "pending", meeting: true, synced: true) == .writing)
         #expect(RecordingMinutesModel.state(minutes: nil, status: "failed", meeting: true, synced: true) == .failed)
         #expect(RecordingMinutesModel.state(minutes: nil, status: nil, meeting: true, synced: false) == .waitingForSync)
+        // Synced, and the hub says nothing: it writes no minutes (an older hub), not "writing" for ever.
+        #expect(RecordingMinutesModel.state(minutes: nil, status: nil, meeting: true, synced: true) == .unsupported)
+        // Ready with nothing to note is still ready.
+        #expect(RecordingMinutesModel.state(minutes: RecordingMinutes(), status: "ready", meeting: true, synced: true) == .ready(RecordingMinutes()))
         #expect(RecordingMinutesModel.state(minutes: nil, status: nil, meeting: false, synced: true) == .none)
         // A note the hub wrote minutes for anyway shows them.
         #expect(RecordingMinutesModel.state(minutes: m, status: nil, meeting: false, synced: true) == .ready(m))

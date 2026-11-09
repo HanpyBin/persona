@@ -77,6 +77,11 @@ final class RecordingTranscription {
                 library.change(id) { e in
                     if let i = e.segments.firstIndex(where: { $0.index == segment.index }) { e.segments[i].sentences = [] }
                 }
+                // Not saved (no space, deleted meanwhile): stop here rather than try the same segment for ever.
+                guard library.entry(id)?.segments.first(where: { $0.index == segment.index })?.sentences != nil else {
+                    errors[id] = library.error ?? String(localized: "The recording info wasn't saved. Keep the app installed and try again.")
+                    return
+                }
                 continue
             }
             do {

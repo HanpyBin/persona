@@ -49,7 +49,13 @@ final class RecordingCapture {
                 // Every engine posts it (dictation's, a voice call's): only this recording's own engine matters.
                 guard let self, self.state == .recording, self.writer?.owns(engine) == true else { return }
                 do { try self.writer?.restartAfterConfigurationChange() }
-                catch { self.error = String(localized: "The microphone changed, so recording paused"); self.writer?.pause(); self.state = .paused }
+                catch {
+                    // Often the route switching to a call before its interruption arrives: paused as by one, so the call's
+                    // end (or coming back to the app) picks it up again, and what came before is kept.
+                    self.error = String(localized: "The microphone changed, so recording paused")
+                    self.writer?.pause(); self.state = .paused; self.interrupted = true
+                    if let id = self.recordingID, let segment = self.writer?.cut() { self.save(segment, id: id) }
+                }
             }
         })
         observers.append(center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main) { @Sendable [weak self] _ in

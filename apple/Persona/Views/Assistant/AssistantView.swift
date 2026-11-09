@@ -152,7 +152,8 @@ struct AssistantView: View {
 
     /// Nothing pushed on the page: the sidebar's drag only works here (pushed pages have their own back swipe).
     private var atRoot: Bool {
-        var pushed = showProfile || showKnowledge || showRoutines || showTodos || openedExtension != nil || showHealth || !path.isEmpty
+        var pushed = showProfile || showKnowledge || showRoutines || showTodos || openedExtension != nil || showHealth || showRecordings
+            || !path.isEmpty
         #if DEBUG
         pushed = pushed || showAvatars
         #endif

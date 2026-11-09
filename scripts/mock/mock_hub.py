@@ -2165,7 +2165,8 @@ RECORDING_PUTS = [0]  # every PUT, stored or refused
 RECORDING_DAYS = int(os.environ.get("MOCK_RECORDING_DAYS", "14"))
 # Meeting minutes (#2710, docs/assistant/meeting-minutes.md): MOCK_RECORDING_MINUTES=ready writes them for a complete meeting
 # recording (`kind: meeting`) as soon as it is stored, from its own sentences; pending leaves them being written; failed says
-# writing them failed; POST /mock/recording_minutes {"mode": …} switches it for the next uploads (a UI test, one mock).
+# writing them failed; POST /mock/recording_minutes {"mode": …} switches it and forgets the recordings stored so far (a UI
+# test's fresh start on a shared mock).
 # POST /api/v1/recordings/{id}/minutes (write them again) counts in /mock/recordings ("minutes_asked").
 RECORDING_MINUTES = [os.environ.get("MOCK_RECORDING_MINUTES", "pending")]
 RECORDING_MINUTES_ASKED = []
@@ -2504,7 +2505,11 @@ def managers_route(h, method, p):
 def recordings_route(h, method, p):
     """The hub's recording sync, and its copy in the knowledge base (KB["recordings"])."""
     if p == "/mock/recording_minutes" and method == "POST":
+        # A fresh start for the next test on the same mock: what an earlier one stored (its minutes) is gone too.
         RECORDING_MINUTES[0] = json.loads(h.last_body or b"{}").get("mode", "pending")
+        RECORDINGS.clear(); RECORDING_MINUTES_ASKED.clear()
+        KB["recordings"] = []
+        for key in [k for k in KB_DETAIL if k[0] == "recordings"]: KB_DETAIL.pop(key)
         return h.send_json({"mode": RECORDING_MINUTES[0]}) or True
     if p == "/mock/recordings" and method == "GET":
         return h.send_json({"recordings": RECORDINGS, "deleted": sorted(RECORDINGS_DELETED), "puts": RECORDING_PUTS[0],

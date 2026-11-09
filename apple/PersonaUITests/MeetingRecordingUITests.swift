@@ -116,16 +116,23 @@ final class MeetingRecordingUITests: XCTestCase {
         // Uploaded, written by the hub, read again (every 15 s while it waits).
         let copy = app.buttons["minutes-copy"]
         XCTAssertTrue(copy.waitForExistence(timeout: 45), app.debugDescription)
-        for heading in ["纪要", "要点", "决定", "待办"] {
-            XCTAssertTrue(app.staticTexts[heading].firstMatch.exists, "no \(heading):\n\(app.debugDescription)")
-        }
-        XCTAssertTrue(app.staticTexts["张三 · 周五前"].exists, app.debugDescription)
+        XCTAssertTrue(app.staticTexts["纪要"].firstMatch.exists, app.debugDescription)
         XCTAssertTrue(app.buttons["minutes-share"].exists)
+        // Brought to the top of the screen for the picture: the minutes, then the transcript under them.
+        app.swipeUp()
+        try shot(app, "minutes")
+        // The sections below, scrolled into view one by one.
+        for text in ["要点", "决定", "待办", "张三 · 周五前", "未决问题"] {
+            let element = app.staticTexts[text].firstMatch
+            var swipes = 0
+            while !element.exists || !element.isHittable, swipes < 4 { app.swipeUp(); swipes += 1 }
+            XCTAssertTrue(element.exists, "no \(text):\n\(app.debugDescription)")
+        }
         // The meeting's fields went up with it.
         let body = try stored(hub, past) ?? ""
         XCTAssertTrue(body.contains("\"kind\":\"meeting\""), body)
         XCTAssertTrue(body.contains("\"attendees\":[\"张三\",\"李四\",\"王五\"]"), body)
-        try shot(app, "minutes")
+        try shot(app, "minutes-sections")
         // The open question was said at 1:26: its time shows that line, lit.
         let time = app.buttons.matching(identifier: "minutes-time").allElementsBoundByIndex.last
         XCTAssertNotNil(time)

@@ -29,9 +29,13 @@ import UserNotifications
         started = true
         RecordingActivity.shared.start()
         capture.onInterruptionNotResumed = { MeetingRecorder.notifyPaused() }
-        // A call that ended while the app was away (or never said so): coming back carries on.
+        // A call that ended while the app was away (or never said so): coming back carries on, unless another app's audio
+        // (a VoIP call without CallKit, still going) holds the route: taking the session would cut into that call.
         NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { @Sendable _ in
-            Task { @MainActor in RecordingCapture.shared.resumeAfterInterruption() }
+            Task { @MainActor in
+                guard !AVAudioSession.sharedInstance().isOtherAudioPlaying else { return }
+                RecordingCapture.shared.resumeAfterInterruption()
+            }
         }
     }
 
@@ -56,11 +60,14 @@ import UserNotifications
         }
         RecordingActivity.shared.refresh()
         Haptics.success()
-        if inForeground, meeting.eventID == nil, MeetingCalendar.canAsk, await MeetingCalendar.requestAccess(),
-           let found = await MeetingCalendar.meetingOffMain() {
-            RecordingLibrary.shared.change(id) { entry in
-                if entry.title.isEmpty { entry.title = found.title ?? "" }
-                entry.meeting = found
+        // Not awaited: an intent must not wait on the user answering the calendar prompt.
+        if inForeground, meeting.eventID == nil, MeetingCalendar.canAsk {
+            Task {
+                guard await MeetingCalendar.requestAccess(), let found = await MeetingCalendar.meetingOffMain() else { return }
+                RecordingLibrary.shared.change(id) { entry in
+                    if entry.title.isEmpty { entry.title = found.title ?? "" }
+                    entry.meeting = found
+                }
             }
         }
         return .started

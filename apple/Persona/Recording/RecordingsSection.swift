@@ -171,7 +171,7 @@ struct RecordingCaptureControls: View {
             Button {
                 Task { await MeetingRecorder.shared.startMeeting(inForeground: true, openPage: false) }
             } label: {
-                Label("Meeting Recording", systemImage: Theme.Icon.meeting)
+                Label("Meeting Recording", systemImage: Theme.Icon.recording)
                     .font(Theme.Font.bodyStrong)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity)
@@ -221,7 +221,7 @@ struct RecordingCaptureControls: View {
             Text(RecordingFormat.clock(capture.elapsed)).font(Theme.Font.title.monospacedDigit())
             Spacer()
             Text(capture.interrupted ? String(localized: "Paused by a call") : capture.state == .paused ? String(localized: "Paused") : String(localized: "Recording [Recordings Section 5254d3]"))
-                .font(Theme.Font.secondary).foregroundStyle(capture.interrupted ? Theme.caution : Theme.danger)
+                .font(Theme.Font.secondary).foregroundStyle(capture.interrupted ? Theme.cautionText : Theme.danger)
                 .accessibilityIdentifier("recording-now-state")
         }
         if capture.interrupted {
@@ -242,7 +242,7 @@ struct RecordingCaptureControls: View {
                 .themedButton().tint(Theme.danger).accessibilityIdentifier("recording-stop")
         }
         if let marks = entry?.marks, !marks.isEmpty {
-            Label(String(localized: "Bookmarks \(marks.map(RecordingFormat.clock).joined(separator: "、"))"), systemImage: Theme.Icon.pin)
+            Label(String(localized: "Bookmarks \(ListFormatter.localizedString(byJoining: marks.map(RecordingFormat.clock)))"), systemImage: Theme.Icon.pin)
                 .font(Theme.Font.caption).foregroundStyle(.secondary).lineLimit(1)
         }
         Text("Recording continues if you leave this page or lock the screen. Tap End when you're done.").font(Theme.Font.caption).foregroundStyle(.secondary)
@@ -312,7 +312,7 @@ struct RecordingDetailView: View {
         }
         .themedPage()
         // Each new revision (more text, the end) may bring or change the minutes; while they are on their way, ask again.
-        .task(id: library.entry(id)?.revision) { await followMinutes() }
+        .task(id: "\(library.entry(id)?.revision ?? 0)|\(minutes.round)") { await followMinutes() }
         .navigationTitle("Record [Recordings Section ef2821]")
         .navigationBarTitleDisplayMode(.inline)
         .confirmationDialog("Delete This Recording?", isPresented: $deleting, titleVisibility: .visible) {
@@ -337,7 +337,7 @@ struct RecordingDetailView: View {
                 }
                 .font(Theme.Font.secondary).foregroundStyle(.secondary).lineLimit(1)
                 if !entry.marks.isEmpty {
-                    Label(String(localized: "Bookmarks \(entry.marks.map(RecordingFormat.clock).joined(separator: "、"))"), systemImage: Theme.Icon.pin)
+                    Label(String(localized: "Bookmarks \(ListFormatter.localizedString(byJoining: entry.marks.map(RecordingFormat.clock)))"), systemImage: Theme.Icon.pin)
                         .font(Theme.Font.secondary).foregroundStyle(.secondary)
                 }
                 if transcription.current == id { ProgressView().tint(Theme.accent) }
@@ -355,7 +355,7 @@ struct RecordingDetailView: View {
                         Text(sentence.text).font(Theme.Font.body).textSelection(.enabled)
                     }
                     .id(RecordingDetailView.anchor(index))
-                    .listRowBackground(lit == index ? Theme.accent.opacity(0.14) : nil)
+                    .listRowBackground(lit == index ? Theme.accentTint : nil)
                     .accessibilityIdentifier(lit == index ? "recording-sentence-lit" : "recording-sentence")
                 }
             }

@@ -1,6 +1,52 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Nothing to note: no points, decisions or action items came up." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nothing to note: no points, decisions or action items came up."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "記録する内容はありません：要点・決定事項・ToDoは出ませんでした。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有需要记的：没有提到要点、决定或待办。"
+          }
+        }
+      }
+    },
+    "This hub doesn't write meeting minutes yet. They come after it's updated." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This hub doesn't write meeting minutes yet. They come after it's updated."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このhubはまだ議事録を作成できません。更新すると作成されます。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这台 hub 还不会整理会议纪要，更新后就有了。"
+          }
+        }
+      }
+    },
     "A call or another app paused the recording. Open Persona to continue it." : {
       "extractionState" : "manual",
       "localizations" : {

@@ -10,7 +10,7 @@ struct MeetingRecordingControl: ControlWidget {
     var body: some ControlWidgetConfiguration {
         StaticControlConfiguration(kind: Self.kind) {
             ControlWidgetButton(action: StartMeetingRecordingIntent()) {
-                Label("Record a Meeting", systemImage: RecordingSymbol.recording)
+                Label("Record a Meeting", systemImage: RecordingSymbol.recordingAction)
             }
         }
         .displayName("Record a Meeting")

@@ -108,7 +108,7 @@ struct PersonaShortcuts: AppShortcutsProvider {
                 "\(.applicationName), record the meeting",
             ],
             shortTitle: "Record a Meeting",
-            systemImageName: "waveform" // icon: App Shortcuts take only a literal
+            systemImageName: "waveform.circle" // icon: App Shortcuts take only a literal (Theme.Icon.recording)
         )
         #endif
     }

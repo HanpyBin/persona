@@ -18,10 +18,19 @@ struct StartMeetingRecordingIntent: AudioRecordingIntent {
     nonisolated func perform() async throws -> some IntentResult {
         #if !WIDGET_EXTENSION
         if await MeetingRecorder.needsForeground { try await continueInForeground(alwaysConfirm: false) }
-        await MeetingRecorder.shared.startMeeting(inForeground: MeetingRecorder.inForeground)
+        // Siri, Shortcuts and the Control say it didn't start (no space, the microphone held by a call), not "done".
+        if case .failed(let why) = await MeetingRecorder.shared.startMeeting(inForeground: MeetingRecorder.inForeground) {
+            throw RecordingIntentFailure(message: why)
+        }
         #endif
         return .result()
     }
+}
+
+/// Why a recording didn't start, as Siri and Shortcuts say it.
+nonisolated struct RecordingIntentFailure: LocalizedError {
+    var message: String
+    var errorDescription: String? { message }
 }
 
 /// The recording activity's Stop: from the Lock Screen too, without unlocking (as a voice memo's).

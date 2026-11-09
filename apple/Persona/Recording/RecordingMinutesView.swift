@@ -16,10 +16,14 @@ import UIKit
         case writing
         case ready(RecordingMinutes)
         case failed
+        /// A meeting, synced, and the hub says nothing about minutes: it doesn't write them yet (an older hub).
+        case unsupported
     }
 
     private(set) var state: State = .none
     private(set) var asking = false
+    /// Bumped by Try Again: the page's polling starts over (its task is keyed on it).
+    private(set) var round = 0
     @ObservationIgnored private let api: () -> APIClient?
 
     init(api: @escaping () -> APIClient? = { AppModel.shared.api }) { self.api = api }
@@ -45,6 +49,8 @@ import UIKit
             state = meeting ? .waitingForText : .none
             return
         }
+        // No speech recognized: nothing goes to the hub, so there is nothing to write minutes from.
+        guard RecordingSync.uploadable(entry) else { state = .none; return }
         guard let api = api(), !api.config.isDemo else { state = meeting ? .waitingForSync : .none; return }
         do {
             let answer: Answer = try await api.get("/api/v1/kb/recordings/\(entry.id.uuidString.lowercased())")
@@ -58,14 +64,15 @@ import UIKit
         }
     }
 
-    /// The hub's answer as a state: its minutes when it has some; else what `minutes_state` says; a meeting the hub
-    /// says nothing about yet (its text not there, or a hub from before minutes) waits for its text to get there.
+    /// The hub's answer as a state: its minutes (`ready`, even with nothing to note); else what `minutes_state` says. A
+    /// meeting it says nothing about waits for its text to get there, and once there is from a hub that writes no
+    /// minutes (the contract sets `pending` as soon as a meeting is stored).
     nonisolated static func state(minutes: RecordingMinutes?, status: String?, meeting: Bool, synced: Bool) -> State {
-        if let minutes, !minutes.isEmpty { return .ready(minutes) }
+        if let minutes, status == "ready" || !minutes.isEmpty { return .ready(minutes) }
         switch status {
         case "failed": return .failed
         case "pending": return .writing
-        default: return meeting ? (synced ? .writing : .waitingForSync) : .none
+        default: return meeting ? (synced ? .unsupported : .waitingForSync) : .none
         }
     }
 
@@ -77,9 +84,11 @@ import UIKit
         do {
             _ = try await api.request("POST", "/api/v1/recordings/\(id.uuidString.lowercased())/minutes")
             state = .writing
+            round += 1
         } catch let error as APIError where error.status == 409 {
             // The transcript isn't complete on the hub yet: the minutes come once it is.
             state = .waitingForSync
+            round += 1
         } catch {
             AppModel.shared.toast = Toast(String(localized: "Couldn't ask the hub for new minutes: \(error.localizedDescription)"), style: .error)
         }
@@ -111,6 +120,11 @@ struct RecordingMinutesSections: View {
             waiting(String(localized: "Minutes are written once the text reaches the hub."), busy: false)
         case .writing:
             waiting(String(localized: "The hub is turning the transcript into key points, decisions, action items and open questions."), busy: true)
+        case .unsupported:
+            Section("Minutes") {
+                Text("This hub doesn't write meeting minutes yet. They come after it's updated.")
+                    .font(Theme.Font.caption).foregroundStyle(.secondary)
+            }
         case .failed:
             Section("Minutes") {
                 Label("The minutes couldn't be written.", systemImage: Theme.Icon.error).foregroundStyle(Theme.danger)
@@ -161,6 +175,9 @@ struct RecordingMinutesSections: View {
             Text("Minutes")
         }
         .accessibilityIdentifier("minutes-section")
+        if minutes.isEmpty {
+            Section { Text("Nothing to note: no points, decisions or action items came up.").font(Theme.Font.secondary).foregroundStyle(.secondary) }
+        }
         items(String(localized: "Key Points"), Theme.Icon.keyPoint, minutes.points)
         items(String(localized: "Decisions"), Theme.Icon.decision, minutes.decisions)
         items(String(localized: "Action Items"), Theme.Icon.todo, minutes.actions)
