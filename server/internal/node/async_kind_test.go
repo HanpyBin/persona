@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -61,6 +62,11 @@ func TestInlineCodexWrapperAfterNodeRestartMatchesWarmStart(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			n, _, cwd, commands := codexStartHerdr(t, 0)
 			home := filepath.Dir(cwd)
+			t.Setenv("HOME", home)
+			t.Setenv("USERPROFILE", home)
+			if runtime.GOOS != "windows" {
+				t.Setenv("PATH", "/usr/bin:/bin") // Only the synthetic rc file and system utilities, not user wrapper scripts.
+			}
 			t.Setenv("SHELL", "/bin/zsh")
 			t.Setenv("ZDOTDIR", home)
 			for _, rc := range []string{".zshrc", ".bashrc"} {

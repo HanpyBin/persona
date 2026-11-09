@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./store", () => {
   const state = { launches: {} as Record<string, import("./new-agent").AgentLaunch> };
-  return { getState: () => state, putLaunch: (launch: import("./new-agent").AgentLaunch) => { state.launches[launch.id] = launch; }, upsertSession: vi.fn() };
+  return { getState: () => state, putLaunch: (launch: import("./new-agent").AgentLaunch) => { state.launches[launch.id] = launch; }, upsertSession: vi.fn(), isOpen: () => true, onHubEvent: () => () => {} };
 });
 vi.mock("./router", () => ({ href: (r: { mid: string; sid: string }) => `/s/${r.mid}/${r.sid}`, navigate: vi.fn() }));
 
@@ -10,6 +10,7 @@ import { acknowledgeLaunch, deliverLaunch, launchAgent, onOpenNewAgent, openNewA
 import { getState, upsertSession } from "./store";
 import { navigate } from "./router";
 import { pickAttachment } from "./attachments";
+import { OP_RETRY_MS } from "./ops";
 import { platformOf } from "./shortcuts";
 
 const session = { machine_id: "desktop", session_id: "remote-id", title: "示例", cwd: "/workspace/project", status: "idle" };
@@ -36,6 +37,7 @@ describe("owned launcher classification", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(getState().launches[id].phase).toBe("ready");
     expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher.mock.calls[0][1].headers.get("X-Persona-Op-Id")).toBe(getState().launches[id].startOpId);
     expect(JSON.parse(fetcher.mock.calls[0][1].body)).toMatchObject({ agent_type: "traex", prompt: "Summarize the example project" });
     expect(JSON.parse(fetcher.mock.calls[0][1].body).async).not.toBe(true);
   });
@@ -90,8 +92,8 @@ describe("owned launcher classification", () => {
     expect(fetcher).not.toHaveBeenCalled();
     expect(getState().launches[id].phase).toBe("failed");
   });
-  it.each([new TypeError("Connection lost"), response({ error: "Outcome unknown", delivered: "unknown" }, 502)])("never retries an unknown inline startup or sends a second prompt", async (failure) => {
-    const fetcher = failure instanceof Error ? vi.fn().mockRejectedValueOnce(failure) : vi.fn().mockResolvedValueOnce(failure);
+  it("never retries a definitively unknown inline startup or sends a second prompt", async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(response({ error: "Outcome unknown", delivered: "unknown" }, 502));
     vi.stubGlobal("fetch", fetcher);
     const id = launchAgent({ ...input, launcher: "traex", agentType: "traex", text: "Inspect the example" });
     await vi.advanceTimersByTimeAsync(0);
@@ -99,6 +101,25 @@ describe("owned launcher classification", () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(getState().launches[id]).toMatchObject({ phase: "failed", uncertain: true, text: "Inspect the example" });
     expect(getState().launches[id].session).toBeUndefined();
+  });
+  it("repeats a lost inline start with its captured kind, unchanged prompt and initial operation id", async () => {
+    const fetcher = vi.fn().mockRejectedValue(new TypeError("Connection lost"));
+    vi.stubGlobal("fetch", fetcher);
+    const id = launchAgent({ ...input, launcher: "configured-wrapper", agentType: "traex", text: "Inspect the example" });
+    const startOpId = getState().launches[id].startOpId;
+    const fallbackOpId = getState().launches[id].startPromptOpId;
+    await vi.advanceTimersByTimeAsync(OP_RETRY_MS + 5000);
+    expect(getState().launches[id]).toMatchObject({ phase: "failed", repeatOnly: true, uncertain: false, agentType: "traex", startOpId });
+    fetcher.mockResolvedValueOnce(response({ session: { ...session, agent: "traex" } }));
+    await deliverLaunch(id);
+    expect(getState().launches[id].phase).toBe("ready");
+    expect(fetcher.mock.calls.length).toBeGreaterThan(1);
+    for (const [url, init] of fetcher.mock.calls) {
+      expect(url).toBe("/api/v1/sessions");
+      expect(init.headers.get("X-Persona-Op-Id")).toBe(startOpId);
+      expect(init.headers.get("X-Persona-Op-Id")).not.toBe(fallbackOpId);
+      expect(JSON.parse(init.body)).toMatchObject({ agent_type: "traex", prompt: "Inspect the example" });
+    }
   });
 });
 
@@ -120,7 +141,7 @@ describe("本地优先启动", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(upsertSession).toHaveBeenCalledWith(session);
     expect(fetcher.mock.calls[1][0]).toBe("/api/v1/sessions/desktop/remote-id/messages");
-    expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ text: input.text, images: [], client_msg_id: id });
+    expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ text: input.text, images: [], client_msg_id: getState().launches[id].messageId });
     expect(getState().launches[id].phase).toBe("ready");
     expect(navigate).toHaveBeenCalledTimes(1);
   });
@@ -134,11 +155,11 @@ describe("本地优先启动", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(getState().launches[id].phase).toBe("ready");
     expect(fetcher.mock.calls[1][0]).toBe("/api/v1/machines/desktop/files?name=report.txt");
-    expect(JSON.parse(fetcher.mock.calls[2][1].body)).toEqual({ text: "看一下附件\n'/uploads/my report.txt'", images: [{ mime: "image/png", data: "AQID" }], client_msg_id: id });
+    expect(JSON.parse(fetcher.mock.calls[2][1].body)).toEqual({ text: "看一下附件\n'/uploads/my report.txt'", images: [{ mime: "image/png", data: "AQID" }], client_msg_id: getState().launches[id].messageId });
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:preview");
   });
 
-  it("keeps the real session, attachments and stable message id on send failure", async () => {
+  it("keeps the real session and attachments on a refused send, and retries under a new id", async () => {
     const image = pickAttachment(new File(["image"], "figure.png", { type: "image/png" }));
     const fetcher = vi.fn().mockResolvedValueOnce(response({ session })).mockResolvedValueOnce(response({ code: "input_draft", error: "draft", delivered: "none", clearable: "existing" }, 409)).mockResolvedValueOnce(response({}));
     vi.stubGlobal("fetch", fetcher);
@@ -147,9 +168,11 @@ describe("本地优先启动", () => {
     expect(getState().launches[id]).toMatchObject({ phase: "failed", session, clearable: "existing", uncertain: false });
     expect(getState().launches[id].attachments).toEqual([image]);
     expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+    const refused = fetcher.mock.calls[1][1].headers.get("X-Persona-Op-Id");
     await deliverLaunch(id, "existing");
     expect(fetcher.mock.calls.filter((c) => c[0] === "/api/v1/sessions")).toHaveLength(1);
-    expect(JSON.parse(fetcher.mock.calls[2][1].body)).toMatchObject({ client_msg_id: id, clear_draft: "existing" });
+    expect(fetcher.mock.calls[2][1].headers.get("X-Persona-Op-Id")).not.toBe(refused);
+    expect(JSON.parse(fetcher.mock.calls[2][1].body)).toMatchObject({ client_msg_id: fetcher.mock.calls[2][1].headers.get("X-Persona-Op-Id"), clear_draft: "existing" });
   });
 
   it("never navigates away from another conversation when startup finishes", async () => {
@@ -160,13 +183,37 @@ describe("本地优先启动", () => {
     expect(navigate).toHaveBeenCalledTimes(1);
   });
 
-  it("marks a lost create response uncertain without automatically creating again", async () => {
+  it("sends a create and a first message that died on the way again under the same op ids", async () => {
+    const fetcher = vi.fn().mockRejectedValueOnce(new TypeError("network")).mockResolvedValueOnce(response({ session })).mockRejectedValueOnce(new TypeError("network")).mockResolvedValueOnce(response({}));
+    vi.stubGlobal("fetch", fetcher);
+    const id = launchAgent(input);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(getState().launches[id]).toMatchObject({ phase: "ready", uncertain: false });
+    const ops = fetcher.mock.calls.map((c) => c[1].headers.get("X-Persona-Op-Id"));
+    expect(fetcher).toHaveBeenCalledTimes(4);
+    expect(ops[1]).toBe(ops[0]);
+    expect(ops[3]).toBe(ops[2]);
+    expect(ops[2]).toBe(getState().launches[id].messageId);
+  });
+
+  it("leaves a start that never got an answer retryable, unchanged and under its op id, without asking", async () => {
     const fetcher = vi.fn().mockRejectedValue(new TypeError("network"));
     vi.stubGlobal("fetch", fetcher);
     const id = launchAgent(input);
+    const startOpId = getState().launches[id].startOpId;
+    await vi.advanceTimersByTimeAsync(OP_RETRY_MS + 5000);
+    expect(getState().launches[id]).toMatchObject({ phase: "failed", uncertain: false, repeatOnly: true, startOpId });
+  });
+
+  it("asks only when the hub says it doesn't know, and a try after that is a new operation", async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(response({ state: "pending" }, 202)).mockResolvedValueOnce(response({ state: "unknown" }, 202));
+    vi.stubGlobal("fetch", fetcher);
+    const id = launchAgent(input);
+    const startOpId = getState().launches[id].startOpId;
     await vi.advanceTimersByTimeAsync(0);
+    expect(fetcher).toHaveBeenCalledTimes(2);
     expect(getState().launches[id]).toMatchObject({ phase: "failed", uncertain: true });
-    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(getState().launches[id].startOpId).not.toBe(startOpId);
   });
 
   it("clears optimistic images only after matching transcript content arrives", async () => {
@@ -185,7 +232,7 @@ describe("本地优先启动", () => {
     await vi.advanceTimersByTimeAsync(0);
     acknowledgeLaunch("desktop", "remote-id", { id: "u1", client_msg_id: "someone-else", text: input.text, images: [] });
     expect(getState().launches[id].outgoing).toBeDefined();
-    acknowledgeLaunch("desktop", "remote-id", { id: "u2", client_msg_id: id, text: "改过的字", images: [] });
+    acknowledgeLaunch("desktop", "remote-id", { id: "u2", client_msg_id: getState().launches[id].messageId, text: "改过的字", images: [] });
     expect(getState().launches[id].outgoing).toBeUndefined();
   });
 
@@ -202,9 +249,13 @@ describe("本地优先启动", () => {
     const fetcher = vi.fn().mockResolvedValueOnce(response({ error: "needs prompt", code: "codex_needs_prompt" }, 409)).mockResolvedValueOnce(response({ session: { ...session, agent: "codex" } }));
     vi.stubGlobal("fetch", fetcher);
     const id = launchAgent(input);
+    const { startOpId, startPromptOpId } = getState().launches[id];
     await vi.advanceTimersByTimeAsync(0);
     expect(getState().launches[id].phase).toBe("ready");
     expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls[0][1].headers.get("X-Persona-Op-Id")).toBe(startOpId);
+    expect(fetcher.mock.calls[1][1].headers.get("X-Persona-Op-Id")).toBe(startPromptOpId);
+    expect(startPromptOpId).not.toBe(startOpId);
     expect(JSON.parse(fetcher.mock.calls[1][1].body)).toMatchObject({ prompt: input.text });
   });
 
