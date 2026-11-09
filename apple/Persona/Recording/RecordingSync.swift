@@ -9,14 +9,12 @@ import UIKit
 nonisolated struct RecordingUpload: Encodable, Sendable {
     struct Bookmark: Encodable, Sendable { var at: Double; var label = "" }
     struct Segment: Encodable, Sendable { var start: Double; var end: Double; var text: String }
-    /// The phone's calendar event a meeting recording was named after (docs/assistant/meeting-minutes.md, #2710).
-    struct CalendarEvent: Encodable, Sendable {
-        var id: String?
+    /// The calendar event the device matched (docs/assistant/meeting-minutes.md「Field contract」): a hint for the hub, which
+    /// prefers its own `meetings` / `events`. No event id: the hub can't see this calendar.
+    struct CalendarHint: Encodable, Sendable {
         var title: String?
-        var start: Date?
-        var end: Date?
+        var attendees: [String]?
         var location: String?
-        var attendees: [String]
     }
     var revision: Int64
     var startedAt: Date
@@ -28,10 +26,10 @@ nonisolated struct RecordingUpload: Encodable, Sendable {
     var bookmarks: [Bookmark]
     var segments: [Segment]
     var complete: Bool
-    /// "meeting" for a meeting recording (the hub writes it minutes); absent for a note.
-    var kind: String?
-    /// Only when the phone found a calendar event on.
-    var calendar: CalendarEvent?
+    /// "meeting" (the hub writes it minutes) or "note".
+    var kind: String
+    /// Only when the device matched a calendar event.
+    var calendar: CalendarHint?
 
     enum CodingKeys: String, CodingKey {
         case revision, duration, language, device, title, bookmarks, segments, complete, kind, calendar
@@ -52,12 +50,10 @@ nonisolated struct RecordingUpload: Encodable, Sendable {
             return text.isEmpty ? nil : Segment(start: s.start, end: s.end, text: text)
         }
         complete = entry.transcribedAll
-        if let meeting = entry.meeting {
-            kind = "meeting"
-            if meeting.eventID != nil || meeting.title != nil {
-                calendar = CalendarEvent(id: meeting.eventID, title: meeting.title, start: meeting.start, end: meeting.end,
-                                    location: meeting.location, attendees: meeting.attendees)
-            }
+        kind = entry.isMeeting ? "meeting" : "note"
+        if let meeting = entry.meeting, meeting.eventID != nil || meeting.title != nil {
+            calendar = CalendarHint(title: meeting.title, attendees: meeting.attendees.isEmpty ? nil : meeting.attendees,
+                                    location: meeting.location)
         }
     }
 }

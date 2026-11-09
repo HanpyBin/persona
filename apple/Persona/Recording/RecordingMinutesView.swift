@@ -24,11 +24,15 @@ import UIKit
 
     init(api: @escaping () -> APIClient? = { AppModel.shared.api }) { self.api = api }
 
+    /// `detail.minutes`, and `detail.meta.minutes_state`: pending, ready, failed, or absent for a note.
     private struct Answer: Decodable {
+        struct Meta: Decodable {
+            var state: String?
+            enum CodingKeys: String, CodingKey { case state = "minutes_state" }
+        }
         struct Detail: Decodable {
             var minutes: RecordingMinutes?
-            var status: String?
-            enum CodingKeys: String, CodingKey { case minutes, status = "minutes_status" }
+            var meta: Meta?
         }
         var detail: Detail
     }
@@ -44,7 +48,7 @@ import UIKit
         guard let api = api(), !api.config.isDemo else { state = meeting ? .waitingForSync : .none; return }
         do {
             let answer: Answer = try await api.get("/api/v1/kb/recordings/\(entry.id.uuidString.lowercased())")
-            state = Self.state(minutes: answer.detail.minutes, status: answer.detail.status, meeting: meeting, synced: synced)
+            state = Self.state(minutes: answer.detail.minutes, status: answer.detail.meta?.state, meeting: meeting, synced: synced)
         } catch let error as APIError where error.status == 404 {
             state = meeting ? .waitingForSync : .none
         } catch {
@@ -54,14 +58,13 @@ import UIKit
         }
     }
 
-    /// The hub's answer as a state: its minutes when it has some; else what it says it is doing; a meeting it says
-    /// nothing about is being written (an older hub says nothing until they exist).
+    /// The hub's answer as a state: its minutes when it has some; else what `minutes_state` says; a meeting the hub
+    /// says nothing about yet (its text not there, or a hub from before minutes) waits for its text to get there.
     nonisolated static func state(minutes: RecordingMinutes?, status: String?, meeting: Bool, synced: Bool) -> State {
         if let minutes, !minutes.isEmpty { return .ready(minutes) }
         switch status {
         case "failed": return .failed
-        case "pending", "writing", "queued": return .writing
-        case "none": return .none
+        case "pending": return .writing
         default: return meeting ? (synced ? .writing : .waitingForSync) : .none
         }
     }
@@ -74,6 +77,9 @@ import UIKit
         do {
             _ = try await api.request("POST", "/api/v1/recordings/\(id.uuidString.lowercased())/minutes")
             state = .writing
+        } catch let error as APIError where error.status == 409 {
+            // The transcript isn't complete on the hub yet: the minutes come once it is.
+            state = .waitingForSync
         } catch {
             AppModel.shared.toast = Toast(String(localized: "Couldn't ask the hub for new minutes: \(error.localizedDescription)"), style: .error)
         }
@@ -88,7 +94,7 @@ import UIKit
     }
 }
 
-/// The minutes' sections in a recording's page: the topic, key points, decisions, action items and open questions, each
+/// The minutes' sections in a recording's page: when and where, who was there, key points, decisions, action items and open questions, each
 /// with the time it was said (a tap shows that line of the transcript); Copy and Share. Before they exist, what they wait for.
 struct RecordingMinutesSections: View {
     var entry: RecordingEntry
@@ -130,8 +136,12 @@ struct RecordingMinutesSections: View {
 
     @ViewBuilder private func ready(_ minutes: RecordingMinutes) -> some View {
         Section {
-            if let topic = minutes.topic, !topic.isEmpty {
-                Text(topic).font(Theme.Font.body).textSelection(.enabled)
+            if let title = minutes.title, !title.isEmpty, title != entry.displayTitle {
+                Text(title).font(Theme.Font.bodyStrong)
+            }
+            let line = [minutes.when, minutes.place].compactMap { $0?.isEmpty == false ? $0 : nil }.joined(separator: " · ")
+            if !line.isEmpty {
+                Label(line, systemImage: Theme.Icon.calendarEvent).font(Theme.Font.secondary).foregroundStyle(.secondary).lineLimit(2)
             }
             if !minutes.attendees.isEmpty {
                 Label(ListFormatter.localizedString(byJoining: minutes.attendees), systemImage: Theme.Icon.people)
@@ -151,9 +161,9 @@ struct RecordingMinutesSections: View {
             Text("Minutes")
         }
         .accessibilityIdentifier("minutes-section")
-        items(String(localized: "Key Points"), Theme.Icon.keyPoint, minutes.keyPoints)
+        items(String(localized: "Key Points"), Theme.Icon.keyPoint, minutes.points)
         items(String(localized: "Decisions"), Theme.Icon.decision, minutes.decisions)
-        items(String(localized: "Action Items"), Theme.Icon.todo, minutes.actionItems)
+        items(String(localized: "Action Items"), Theme.Icon.todo, minutes.actions)
         items(String(localized: "Open Questions"), Theme.Icon.openQuestion, minutes.openQuestions)
     }
 
@@ -171,9 +181,8 @@ struct RecordingMinutesSections: View {
                 .scaledFrame(width: Theme.Size.iconXS)
             VStack(alignment: .leading, spacing: Theme.Space.xxs) {
                 Text(item.text).font(Theme.Font.body).textSelection(.enabled)
-                let who = [item.owner, item.due].compactMap { $0?.isEmpty == false ? $0 : nil }
-                if !who.isEmpty {
-                    Text(who.joined(separator: " · ")).font(Theme.Font.caption).foregroundStyle(.secondary)
+                if let byline = RecordingMinutes.byline(item) {
+                    Text(byline).font(Theme.Font.caption).foregroundStyle(.secondary)
                 }
             }
             Spacer(minLength: Theme.Space.s)
@@ -189,12 +198,7 @@ struct RecordingMinutesSections: View {
     }
 
     private func text(_ minutes: RecordingMinutes) -> String {
-        var subtitle: String?
-        if let meeting = entry.meeting, let start = meeting.start, let end = meeting.end {
-            subtitle = [(start..<max(end, start)).formatted(.interval.month().day().hour().minute()), meeting.location]
-                .compactMap { $0 }.joined(separator: " · ")
-        }
-        return minutes.text(title: entry.displayTitle, subtitle: subtitle)
+        minutes.text(title: entry.displayTitle)
     }
 
     private func copy(_ minutes: RecordingMinutes) {

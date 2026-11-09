@@ -85,14 +85,15 @@ import Testing
         #expect(!note.isMeeting)
     }
 
-    /// The hub writes minutes for `kind: meeting`; the calendar's event goes with it when there was one (#2710).
+    /// The hub writes minutes for `kind: meeting`; the event the phone matched goes with it as a hint (title, attendees,
+    /// location, no id: docs/assistant/meeting-minutes.md「Field contract」).
     @Test func uploadMarksAMeeting() throws {
         func json(_ e: RecordingEntry) throws -> [String: Any] {
             try JSONSerialization.jsonObject(with: JSON.encoder.encode(RecordingUpload(e))) as! [String: Any]
         }
         var e = RecordingEntry(id: UUID(), createdAt: now, source: .phone, title: "Weekly")
         let note = try json(e)
-        #expect(note["kind"] == nil)
+        #expect(note["kind"] as? String == "note")
         #expect(note["calendar"] == nil)
         e.meeting = RecordingMeeting()
         let bare = try json(e)
@@ -101,10 +102,85 @@ import Testing
         e.meeting = RecordingMeeting(eventID: "e1", title: "Weekly", start: now, end: now.addingTimeInterval(3600), location: "Room 3",
                                      attendees: ["Alex", "Sam"])
         let calendar = try #require(try json(e)["calendar"] as? [String: Any])
-        #expect(calendar["id"] as? String == "e1")
         #expect(calendar["title"] as? String == "Weekly")
         #expect(calendar["attendees"] as? [String] == ["Alex", "Sam"])
-        #expect((calendar["start"] as? String)?.hasPrefix("2027-01-15T") == true)
+        #expect(calendar["location"] as? String == "Room 3")
+        #expect(calendar["id"] == nil)
+        #expect(calendar["start"] == nil)
+    }
+
+    /// A watch recording is a note until the phone matches it to a calendar event (on the phone, by when it started).
+    @Test func watchRecordingKindFollowsTheCalendar() throws {
+        var e = RecordingEntry(id: UUID(), createdAt: now, source: .watch)
+        #expect(RecordingUpload(e).kind == "note")
+        e.meeting = RecordingMeeting(eventID: "e1", title: "Standup")
+        e.title = "Standup"
+        let body = RecordingUpload(e)
+        #expect(body.kind == "meeting")
+        #expect(body.device == "watch")
+        #expect(body.calendar?.title == "Standup")
+    }
+
+    // MARK: Minutes
+
+    /// The contract's example, as the hub returns it in `detail.minutes`.
+    private let minutesJSON = """
+    {"title": "Design review", "when": "2026-11-10 14:00–15:10", "where": "Room 3", "attendees": ["Ada", "Bo"],
+     "points": [{"text": "The export path drops entries over 4 MB.", "at": 312.0, "who": "Ada"}],
+     "decisions": [{"text": "Ship the cap as-is for this release.", "at": 1504.5}],
+     "actions": [{"who": "Bo", "what": "Add the regression test.", "by": "Friday", "at": 2100.0}],
+     "open": [{"text": "Whether the cap should be per entry or per recording.", "at": 2408.0}]}
+    """
+
+    @Test func minutesDecodeTheContract() throws {
+        let m = try JSONDecoder().decode(RecordingMinutes.self, from: Data(minutesJSON.utf8))
+        #expect(m.title == "Design review")
+        #expect(m.place == "Room 3")
+        #expect(m.attendees == ["Ada", "Bo"])
+        #expect(m.points.first?.who == "Ada")
+        #expect(m.decisions.first?.at == 1504.5)
+        #expect(m.actions.first?.text == "Add the regression test.")
+        #expect(m.actions.first?.by == "Friday")
+        #expect(RecordingMinutes.byline(m.actions[0]) == "Bo · Friday")
+        #expect(m.openQuestions.count == 1)
+        #expect(!m.isEmpty)
+        // Sections left out are empty, not an error.
+        let sparse = try JSONDecoder().decode(RecordingMinutes.self, from: Data(#"{"points":[{"text":"x"}]}"#.utf8))
+        #expect(sparse.decisions.isEmpty)
+        #expect(sparse.points.first?.at == nil)
+    }
+
+    @Test func minutesTextHasEverySection() throws {
+        let m = try JSONDecoder().decode(RecordingMinutes.self, from: Data(minutesJSON.utf8))
+        let text = m.text(title: "fallback")
+        #expect(text.hasPrefix("# Design review\n2026-11-10 14:00–15:10 · Room 3"))
+        #expect(text.contains("- Add the regression test. (Bo · Friday) [35:00]"))
+        #expect(text.contains("[40:08]"))
+        #expect(RecordingMinutes(points: [.init(text: "a")]).text(title: "Weekly").hasPrefix("# Weekly"))
+    }
+
+    /// A time lands on the line said then (or just before), the first line before any.
+    @Test func timeFindsItsTranscriptLine() {
+        let lines = [RecordingSentence(start: 2, end: 10, text: "a"), RecordingSentence(start: 21, end: 30, text: "b"),
+                     RecordingSentence(start: 44, end: 50, text: "c")]
+        #expect(RecordingMinutes.sentenceIndex(at: 44, in: lines) == 2)
+        #expect(RecordingMinutes.sentenceIndex(at: 43.5, in: lines) == 2)
+        #expect(RecordingMinutes.sentenceIndex(at: 30, in: lines) == 1)
+        #expect(RecordingMinutes.sentenceIndex(at: 0, in: lines) == 0)
+        #expect(RecordingMinutes.sentenceIndex(at: 9_999, in: lines) == 2)
+        #expect(RecordingMinutes.sentenceIndex(at: 5, in: []) == nil)
+    }
+
+    /// `minutes_state` as the page shows it: being written (正在整理), failed, or not a meeting.
+    @Test func minutesStateFromTheHub() throws {
+        let m = try JSONDecoder().decode(RecordingMinutes.self, from: Data(minutesJSON.utf8))
+        #expect(RecordingMinutesModel.state(minutes: m, status: "ready", meeting: true, synced: true) == .ready(m))
+        #expect(RecordingMinutesModel.state(minutes: nil, status: "pending", meeting: true, synced: true) == .writing)
+        #expect(RecordingMinutesModel.state(minutes: nil, status: "failed", meeting: true, synced: true) == .failed)
+        #expect(RecordingMinutesModel.state(minutes: nil, status: nil, meeting: true, synced: false) == .waitingForSync)
+        #expect(RecordingMinutesModel.state(minutes: nil, status: nil, meeting: false, synced: true) == .none)
+        // A note the hub wrote minutes for anyway shows them.
+        #expect(RecordingMinutesModel.state(minutes: m, status: nil, meeting: false, synced: true) == .ready(m))
     }
 
     // MARK: The Live Activity

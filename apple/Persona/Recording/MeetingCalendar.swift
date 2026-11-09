@@ -57,7 +57,7 @@ nonisolated enum MeetingCalendar {
 }
 
 extension MeetingCalendar.Candidate {
-    init(_ event: EKEvent) {
+    nonisolated init(_ event: EKEvent) {
         let external = event.calendarItemExternalIdentifier
         id = (external?.isEmpty == false ? external : nil) ?? event.eventIdentifier
         title = (event.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -73,7 +73,7 @@ extension MeetingCalendar.Candidate {
 
 extension MeetingCalendar {
     /// Who was invited, by name: the organizer first, each once, at most 50.
-    static func names(organizer: String?, attendees: [String?]) -> [String] {
+    nonisolated static func names(organizer: String?, attendees: [String?]) -> [String] {
         var seen = Set<String>()
         return ([organizer] + attendees).compactMap { name -> String? in
             guard let name = name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty, seen.insert(name).inserted else { return nil }
@@ -84,7 +84,7 @@ extension MeetingCalendar {
 }
 
 extension RecordingMeeting {
-    init(_ event: MeetingCalendar.Candidate) {
+    nonisolated init(_ event: MeetingCalendar.Candidate) {
         self.init(eventID: event.id, title: event.title, start: event.start, end: event.end, location: event.location, attendees: event.attendees)
     }
 }

@@ -1,81 +1,77 @@
 import Foundation
 
-/// The hub's minutes of a meeting recording (#2710, docs/apple/recording.md「Minutes」): what it was about, the key points,
-/// decisions, action items and open questions, each pointing at when it was said, in seconds into the recording, so a tap
-/// lands on that line of the transcript. Decoded from `GET /api/v1/kb/recordings/{id}`'s `detail.minutes`; every field
-/// is optional, so a hub that adds one or leaves one out still shows the rest.
+/// The hub's minutes of a meeting recording (docs/assistant/meeting-minutes.md「Field contract」, #2710): when and where, who
+/// was there, the points discussed, the decisions, the action items (who, what, by when) and the open questions. Each item
+/// carries `at`, seconds from the recording's start (the transcript's clock), so a tap lands on that line. Decoded from
+/// `GET /api/v1/kb/recordings/{id}`'s `detail.minutes`; sections the hub leaves out are empty here.
 nonisolated struct RecordingMinutes: Codable, Hashable, Sendable {
+    /// A point, decision, action item or open question. An action item's text is its `what`.
     nonisolated struct Item: Codable, Hashable, Sendable {
         var text: String
-        /// Seconds into the recording where it was said; nil when it isn't one moment.
+        /// Seconds into the recording where it was said.
         var at: Double?
-        /// An action item's owner and due date, as said.
-        var owner: String?
-        var due: String?
+        /// Who said it (a point) or does it (an action item), only when the transcript or the calendar says so.
+        var who: String?
+        /// An action item's deadline, as said ("Friday").
+        var by: String?
 
-        init(text: String, at: Double? = nil, owner: String? = nil, due: String? = nil) {
-            self.text = text; self.at = at; self.owner = owner; self.due = due
+        init(text: String, at: Double? = nil, who: String? = nil, by: String? = nil) {
+            self.text = text; self.at = at; self.who = who; self.by = by
         }
 
-        enum CodingKeys: String, CodingKey { case text, at, refs, owner, due, task }
+        enum CodingKeys: String, CodingKey { case text, what, at, who, by }
 
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
-            text = try c.decodeIfPresent(String.self, forKey: .text) ?? c.decodeIfPresent(String.self, forKey: .task) ?? ""
-            // One moment (`at`), or the transcript times it cites (`refs`): the first is where a tap goes.
-            at = (try? c.decodeIfPresent(Double.self, forKey: .at)) ?? (try? c.decodeIfPresent([Double].self, forKey: .refs))?.first
-            owner = try c.decodeIfPresent(String.self, forKey: .owner)
-            due = try c.decodeIfPresent(String.self, forKey: .due)
+            text = try c.decodeIfPresent(String.self, forKey: .text) ?? c.decodeIfPresent(String.self, forKey: .what) ?? ""
+            at = try? c.decodeIfPresent(Double.self, forKey: .at)
+            who = try c.decodeIfPresent(String.self, forKey: .who)
+            by = try c.decodeIfPresent(String.self, forKey: .by)
         }
 
         func encode(to encoder: Encoder) throws {
             var c = encoder.container(keyedBy: CodingKeys.self)
             try c.encode(text, forKey: .text)
             try c.encodeIfPresent(at, forKey: .at)
-            try c.encodeIfPresent(owner, forKey: .owner)
-            try c.encodeIfPresent(due, forKey: .due)
+            try c.encodeIfPresent(who, forKey: .who)
+            try c.encodeIfPresent(by, forKey: .by)
         }
     }
 
     var title: String?
-    var topic: String?
+    /// "2026-11-10 14:00–15:10", as the hub writes it.
+    var when: String?
+    var place: String?
     var attendees: [String] = []
-    var keyPoints: [Item] = []
+    var points: [Item] = []
     var decisions: [Item] = []
-    var actionItems: [Item] = []
+    var actions: [Item] = []
     var openQuestions: [Item] = []
-    /// The hub's own rendering (what the web shows); Copy / Share send it when there is one.
-    var markdown: String?
-    /// The recording revision they were written from.
-    var revision: Int64?
 
-    init(title: String? = nil, topic: String? = nil, attendees: [String] = [], keyPoints: [Item] = [], decisions: [Item] = [],
-         actionItems: [Item] = [], openQuestions: [Item] = [], markdown: String? = nil, revision: Int64? = nil) {
-        self.title = title; self.topic = topic; self.attendees = attendees; self.keyPoints = keyPoints; self.decisions = decisions
-        self.actionItems = actionItems; self.openQuestions = openQuestions; self.markdown = markdown; self.revision = revision
+    init(title: String? = nil, when: String? = nil, place: String? = nil, attendees: [String] = [], points: [Item] = [],
+         decisions: [Item] = [], actions: [Item] = [], openQuestions: [Item] = []) {
+        self.title = title; self.when = when; self.place = place; self.attendees = attendees
+        self.points = points; self.decisions = decisions; self.actions = actions; self.openQuestions = openQuestions
     }
 
     enum CodingKeys: String, CodingKey {
-        case title, topic, attendees, decisions, markdown, revision
-        case keyPoints = "key_points", actionItems = "action_items", openQuestions = "open_questions"
+        case title, when, attendees, points, decisions, actions
+        case place = "where", openQuestions = "open"
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         title = try c.decodeIfPresent(String.self, forKey: .title)
-        topic = try c.decodeIfPresent(String.self, forKey: .topic)
+        when = try c.decodeIfPresent(String.self, forKey: .when)
+        place = try c.decodeIfPresent(String.self, forKey: .place)
         attendees = (try? c.decodeIfPresent([String].self, forKey: .attendees)) ?? []
-        keyPoints = try c.decodeIfPresent([Item].self, forKey: .keyPoints) ?? []
+        points = try c.decodeIfPresent([Item].self, forKey: .points) ?? []
         decisions = try c.decodeIfPresent([Item].self, forKey: .decisions) ?? []
-        actionItems = try c.decodeIfPresent([Item].self, forKey: .actionItems) ?? []
+        actions = try c.decodeIfPresent([Item].self, forKey: .actions) ?? []
         openQuestions = try c.decodeIfPresent([Item].self, forKey: .openQuestions) ?? []
-        markdown = try c.decodeIfPresent(String.self, forKey: .markdown)
-        revision = try c.decodeIfPresent(Int64.self, forKey: .revision)
     }
 
-    var isEmpty: Bool {
-        (topic ?? "").isEmpty && keyPoints.isEmpty && decisions.isEmpty && actionItems.isEmpty && openQuestions.isEmpty
-    }
+    var isEmpty: Bool { points.isEmpty && decisions.isEmpty && actions.isEmpty && openQuestions.isEmpty }
 
     /// The transcript line said at `seconds`: the last one that started by then (a second's grace: a point is often
     /// stamped as its sentence begins), else the first.
@@ -84,29 +80,31 @@ nonisolated struct RecordingMinutes: Codable, Hashable, Sendable {
         return sentences.lastIndex { $0.start <= seconds + 1 } ?? 0
     }
 
-    /// What Copy and Share send: the hub's Markdown when it wrote one, else this, rendered the same way (headed by the
-    /// recording's name and `subtitle`, the meeting's time and place).
-    func text(title fallback: String, subtitle: String?) -> String {
-        if let markdown, !markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return markdown }
-        var out = ["# " + (title?.isEmpty == false ? title! : fallback)]
-        if let subtitle, !subtitle.isEmpty { out.append(subtitle) }
+    /// An item's line under its text: who, by when.
+    static func byline(_ item: Item) -> String? {
+        let parts = [item.who, item.by].compactMap { $0?.isEmpty == false ? $0 : nil }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    /// What Copy and Share send: Markdown, headed by the title (the recording's name without one), then when and where.
+    func text(title fallback: String) -> String {
+        var out = ["# " + ((title?.isEmpty == false ? title : nil) ?? fallback)]
+        let line = [when, place].compactMap { $0?.isEmpty == false ? $0 : nil }.joined(separator: " · ")
+        if !line.isEmpty { out.append(line) }
         if !attendees.isEmpty { out.append(String(localized: "Attendees: \(ListFormatter.localizedString(byJoining: attendees))")) }
-        if let topic, !topic.isEmpty { out += ["", topic] }
         func section(_ heading: String, _ items: [Item]) {
             guard !items.isEmpty else { return }
             out += ["", "## " + heading]
             for item in items {
-                var line = "- "
-                if let owner = item.owner, !owner.isEmpty { line += owner + ": " }
-                line += item.text
-                if let due = item.due, !due.isEmpty { line += " · " + due }
-                if let at = item.at { line += " (" + RecordingFormat.clock(at) + ")" }
-                out.append(line)
+                var row = "- " + item.text
+                if let byline = Self.byline(item) { row += " (" + byline + ")" }
+                if let at = item.at { row += " [" + RecordingFormat.clock(at) + "]" }
+                out.append(row)
             }
         }
-        section(String(localized: "Key Points"), keyPoints)
+        section(String(localized: "Key Points"), points)
         section(String(localized: "Decisions"), decisions)
-        section(String(localized: "Action Items"), actionItems)
+        section(String(localized: "Action Items"), actions)
         section(String(localized: "Open Questions"), openQuestions)
         return out.joined(separator: "\n")
     }

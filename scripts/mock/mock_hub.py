@@ -2172,20 +2172,23 @@ RECORDING_MINUTES_ASKED = []
 
 
 def recording_minutes(body):
-    """Made-up minutes from a recording's own sentences: the first two are key points, those that decide / assign / leave
-    something open are decisions / action items / open questions. Each item cites its sentence's start (seconds)."""
+    """Made-up minutes in the contract's shape (docs/assistant/meeting-minutes.md) from a recording's own sentences: the
+    first two are points, those that decide / assign / leave something open are decisions / actions / open questions.
+    Each item's `at` is its sentence's start (seconds into the recording)."""
     segs = [x for x in body.get("segments", []) if x.get("text")]
-    item = lambda x: {"text": x["text"].rstrip("。"), "refs": [x["start"]]}
-    return {
-        "title": body.get("title") or None,
-        "topic": "录音入口改版的进展和下一步。",
-        "attendees": (body.get("calendar") or {}).get("attendees", []),
-        "key_points": [item(x) for x in segs[:2]],
+    cal = body.get("calendar") or {}
+    item = lambda x: {"text": x["text"].rstrip("。"), "at": x["start"]}
+    out = {
+        "title": cal.get("title") or body.get("title") or None,
+        "when": "2027-01-15 16:00–17:00",
+        "where": cal.get("location"),
+        "attendees": cal.get("attendees"),
+        "points": [item(x) for x in segs[:2]],
         "decisions": [item(x) for x in segs if "决定" in x["text"]],
-        "action_items": [dict(item(x), owner="张三", due="周五前") for x in segs if "负责" in x["text"]],
-        "open_questions": [item(x) for x in segs if "没定" in x["text"]],
-        "revision": body["revision"],
+        "actions": [{"who": "张三", "what": x["text"].rstrip("。"), "by": "周五前", "at": x["start"]} for x in segs if "负责" in x["text"]],
+        "open": [item(x) for x in segs if "没定" in x["text"]],
     }
+    return {k: v for k, v in out.items() if v}
 
 
 # The managers' roster (docs/assistant/managers.md): the hub's own assistant (the default), one on another computer, one offline,
@@ -2518,10 +2521,11 @@ def recordings_route(h, method, p):
         return h.send_json({"error": "录音 id 不对"}, 400) or True
     if p.endswith("/minutes") and method == "POST":
         if rid not in RECORDINGS: return h.send_json({"error": "没有这条录音"}, 404) or True
+        if not RECORDINGS[rid].get("complete"): return h.send_json({"error": "转写还没完成"}, 409) or True
         RECORDING_MINUTES_ASKED.append(rid)
         detail = KB_DETAIL.setdefault(("recordings", rid), {})
-        detail.pop("minutes", None); detail["minutes_status"] = "pending"
-        return h.send_json({"id": rid, "minutes_status": "pending"}, 202) or True
+        detail.pop("minutes", None); detail.setdefault("meta", {})["minutes_state"] = "pending"
+        return h.send_json({"state": "pending"}, 202) or True
     kb = KB.setdefault("recordings", [])
     if method == "DELETE":
         existed = rid in RECORDINGS
@@ -2545,9 +2549,10 @@ def recordings_route(h, method, p):
     kb[:] = [e for e in kb if e["id"] != rid] + [entry]
     detail = {"meta": {k: body.get(k) for k in ("started_at", "ended_at", "duration", "language", "device", "complete", "kind", "calendar")},
               "summary": text, "segments": body.get("segments", [])}
-    if body.get("kind") == "meeting" and body.get("complete"):
-        if RECORDING_MINUTES[0] == "ready": detail.update(minutes=recording_minutes(body), minutes_status="ready")
-        else: detail["minutes_status"] = RECORDING_MINUTES[0]
+    if body.get("kind") == "meeting":
+        ready = body.get("complete") and RECORDING_MINUTES[0] == "ready"
+        detail["meta"]["minutes_state"] = "ready" if ready else ("failed" if body.get("complete") and RECORDING_MINUTES[0] == "failed" else "pending")
+        if ready: detail["minutes"] = recording_minutes(body)
     KB_DETAIL[("recordings", rid)] = detail
     return h.send_json({"id": rid, "revision": body["revision"], "status": "stored"}) or True
 KB_DETAIL = {
