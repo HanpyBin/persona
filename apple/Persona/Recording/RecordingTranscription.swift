@@ -71,6 +71,14 @@ final class RecordingTranscription {
     private func process(_ id: UUID) async {
         while !Task.isCancelled, let entry = library.entry(id),
               let segment = entry.segments.first(where: { $0.sentences == nil }) {
+            // A segment whose audio is gone (a file the system removed, a broken transfer) has no text to give: it must
+            // not hold up the rest of a long recording, as it did when every later segment waited behind it.
+            if !FileManager.default.fileExists(atPath: library.audio(id, segment.index).path) {
+                library.change(id) { e in
+                    if let i = e.segments.firstIndex(where: { $0.index == segment.index }) { e.segments[i].sentences = [] }
+                }
+                continue
+            }
             do {
                 let raw = try await transcribe(library.audio(id, segment.index), Locale(identifier: entry.locale))
                 try Task.checkCancellation()

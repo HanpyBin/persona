@@ -9,6 +9,15 @@ import UIKit
 nonisolated struct RecordingUpload: Encodable, Sendable {
     struct Bookmark: Encodable, Sendable { var at: Double; var label = "" }
     struct Segment: Encodable, Sendable { var start: Double; var end: Double; var text: String }
+    /// The phone's calendar event a meeting recording was named after (docs/assistant/meeting-minutes.md, #2710).
+    struct CalendarEvent: Encodable, Sendable {
+        var id: String?
+        var title: String?
+        var start: Date?
+        var end: Date?
+        var location: String?
+        var attendees: [String]
+    }
     var revision: Int64
     var startedAt: Date
     var endedAt: Date?
@@ -19,9 +28,13 @@ nonisolated struct RecordingUpload: Encodable, Sendable {
     var bookmarks: [Bookmark]
     var segments: [Segment]
     var complete: Bool
+    /// "meeting" for a meeting recording (the hub writes it minutes); absent for a note.
+    var kind: String?
+    /// Only when the phone found a calendar event on.
+    var calendar: CalendarEvent?
 
     enum CodingKeys: String, CodingKey {
-        case revision, duration, language, device, title, bookmarks, segments, complete
+        case revision, duration, language, device, title, bookmarks, segments, complete, kind, calendar
         case startedAt = "started_at", endedAt = "ended_at"
     }
 
@@ -39,6 +52,13 @@ nonisolated struct RecordingUpload: Encodable, Sendable {
             return text.isEmpty ? nil : Segment(start: s.start, end: s.end, text: text)
         }
         complete = entry.transcribedAll
+        if let meeting = entry.meeting {
+            kind = "meeting"
+            if meeting.eventID != nil || meeting.title != nil {
+                calendar = CalendarEvent(id: meeting.eventID, title: meeting.title, start: meeting.start, end: meeting.end,
+                                    location: meeting.location, attendees: meeting.attendees)
+            }
+        }
     }
 }
 
