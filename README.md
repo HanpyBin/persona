@@ -54,7 +54,7 @@ You run a small hub on an always-on machine; your devices talk only to it, and i
 
 - **Just looking?** Install the [TestFlight beta](https://testflight.apple.com/join/vsjfy3hE) and tap **No Hub? Try the Demo**: no server or account needed.
 - **Your own setup:** one command installs the hub, then scan a QR code. See [Getting started](docs/operations/getting-started.md).
-- **From source:** [config](docs/operations/config.md) · [deploy](docs/server/server.md) · [contributing](CLAUDE.md)
+- **From source:** [config](docs/operations/config.md) · [deploy](docs/server/server.md) · [contributing](CONTRIBUTING.md) · [Agent guide](CLAUDE.md)
 
 ## Docs
 

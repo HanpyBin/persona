@@ -91,7 +91,8 @@ def current_docs():
 
 
 def doc_files():
-    files = [ROOT / name for name in ("CLAUDE.md", "README.md", "README.zh-CN.md", "THIRD_PARTY_NOTICES.md", "scripts/README.md")]
+    files = [ROOT / name for name in ("CLAUDE.md", "README.md", "README.zh-CN.md", "CONTRIBUTING.md", "SECURITY.md",
+                                      "CODE_OF_CONDUCT.md", "THIRD_PARTY_NOTICES.md", "scripts/README.md")]
     files += current_docs()
     files += module_docs()
     return [f for f in files if f.exists() and f.relative_to(ROOT).as_posix() not in SKIP_FILES]

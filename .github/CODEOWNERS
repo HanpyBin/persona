@@ -1,1 +1,21 @@
+# CODEOWNERS: "<path pattern> <owner...>". GitHub requests review from the
+# owners of the last matching pattern. Only public GitHub usernames or team
+# names belong here; do not list people without their consent.
+# Reference: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Repository-wide fallback: the sole owner known to the public repository so
+# far. Every change outside a more specific pattern below requests this review.
+* @chyroc
+
+# Module-level routing. Uncomment a line and replace the placeholder with the
+# real owning team or username once module owners exist; until then the
+# repository-wide fallback above applies.
+# /server/    @<server-owners>
+# /apple/     @<apple-owners>
+# /android/   @<android-owners>
+# /web/       @<web-owners>
+# /docs/      @<docs-owners>
+
+# Changes to the super rules require prior approval in a GitHub issue
+# (docs/SUPER_RULES.md); keep their explicit ownership on top of the fallback.
 /docs/SUPER_RULES.md @chyroc
