@@ -900,6 +900,9 @@ against disposable Git with an independent writer at the last read before remova
   Direct `wrangler deploy` inside `site/` (done during domain change) replaces all static assets, immediately making `/dl/*` and `/install.sh` 404 and breaking hub update checks / installation.
   Recovery: find the last release with `wrangler deployments list`, then `wrangler rollback <version>` (custom domains aren't versioned, so unaffected), restored in about 3 minutes.
 - For `site/`-only changes (domains, pages), use `SITE_ONLY=1 ./scripts/release/publish.sh`: reuse published production artifacts, no new release (#951).
+- Renaming the Worker (`name` in `site/wrangler.jsonc`) deploys a new Worker without the old one's secrets: the push relay answered 503 "push relay not configured"
+  for every hub without its own APNs key until the secrets were put on the new name (2026-11-07, #1263). Move the secrets first; `publish.sh` now fails a deploy
+  after which a relay that was healthy no longer is (`docs/operations/site.md`).
   Large-file downloads on this machine often reset connections, so curl uses `--retry-all-errors` (default `--retry` doesn't retry "Connection reset").
 - Decide what happens to the old domain: shipped Apps hardcode the push-relay address and deployed personad checks old-domain `/dl/` for updates.
   With only 301 redirects, POST (push relay) isn't resent unchanged and breaks; the user accepted this on 2026-11-05, redirecting the whole old domain with 301 (#2389, `docs/operations/site.md` ("Old domain")).
@@ -1431,6 +1434,14 @@ A connector that folds several notifications into one thread (GitHub CI failures
 - A message queued to many apps through a per-app transform (`compat.ProjectJSON`, which scans for legacy names) costs the transform once per app: a third of a push with two older apps. Transform once per kind of app (`queueProjected`). Delta apps in sync hold equal maps of what they have; hand a connecting app the map another holds when they are equal, and work out each push once per map (`broadcastSessions`).
 - An oracle test that compares output bytes cannot see whether a memo was used: the bytes are the same either way, so every test passed with the row memo or either hop's changed-row decoding turned off. Pin the reuse itself: the unchanged rows are pushed as the same slices, and each hop stays under an allocation ceiling far below a whole decode (`TestFleetSessionsOneChangedReusesRows`, `TestSessionsChangedOneChangedAllocations`). Bypass each memo once and check that a guard fails.
 
+## Hot paths: a fleet copied for three items, a list read token by token, every language kept for one (2026-11-10, #2699)
+
+- Live Activity's fleet copied each agent's session into its input and made an item (an id joined, a title and place clipped) for every agent, then kept three: 3.0 MB and 3,066 allocations per snapshot of 300 agents. Point at the decorated list (`fleetInput.Session`), key the maps by `[2]string` instead of a joined id, sort what would be shown and make items for the first `fleetMaxItems` only (0.50 MB, 56). Keep the old code as the oracle in the test file and compare both byte for byte on random fleets with ties, ids listed twice and cards on agents not listed (`TestFleetMatchesOracle`).
+- A transform that leaves almost every row as it is still scans the whole message each time: `compat.ProjectJSON` ran over every whole list sent to an older app. Work out once per row whether it would change anything (`compat.Projects`, kept with the row memo as `asIs`) and project the message only when a row would. That holds only because the message's own members are never projected; check it with a row for each name and text the projection rewrites, under a machine name that looks projectable too (`TestWholeListProjectedByRows`).
+- A general decoder pays for what a splitter does not need: `ScanSessionList` read the event token by token through `jsontext`, a quarter of a hop. A byte scanner with the same rules (exact unescaped `sessions` once, names given once, the same depth limit, invalid input left to `json.Unmarshal`) replaces it; keep `jsontext` as the oracle and fuzz both (`FuzzScanSessionList`, `TestScanSessionListDepth`).
+- A buffer sized from the first row grows several times for a list of 150: size a whole-list encode from the average length of the rows last sent (`Machine.rowLen`).
+- A catalog per language read as one keeps every language once any text is needed: the first `i18n.T` parsed and kept all three (1.2 MB live). Give each language its own `sync.OnceValue` (`i18n.catalogOf`): a process that speaks en keeps en, plus zh-Hans for a missing key and `Has` (0.38 to 0.76 MB). The reverse templates match every language, so they read the others without keeping them (`readCatalog`). Prove it in a process of its own, as other tests parse every language (`TestCatalogsParsedPerLanguage`).
+
 ## Transport source is not pane origin (#994)
 
 A `runtime` session can be an Orca native desktop chat, a CLI in a terminal pane, a botmux topic or an unhosted runtime. Classify pane/host origins from the metadata, with desktop markers taking precedence, and keep transport filtering separate. New query keys need an independent advertised capability because an old hub may silently ignore them and return the wrong membership. Count the full matching index revision, and bind the origin to frozen cursors and delta membership even when the transport and timestamp never change.
@@ -1450,3 +1461,28 @@ When decorating a large session list, reserve the timestamp snapshot by the smal
 A Hub-only receipt requires unchanged node versions. When the user explicitly enables automatic node updates, that condition would reject legitimate guarded transfers. Require matching verified packages and unchanged machine IDs, owners and UIDs instead; report each node's observed deployment state without treating Hub confirmation as fleet completion. Never send deployment requests from the publisher. Prefer the effective policy returned by the running Hub over its bootstrap file, and retain the strict unchanged-inventory check when the policy is off.
 
 After activating matching native and downloadable packages, reapply an enabled runtime node policy through its existing settings route so managers recheck the new pointer. A filesystem pointer change has no consumer watcher. Check the current policy first so an intervening disable is respected; a failed recheck must not produce a completed publication receipt.
+
+## Idle wakeups: a ticker per watch, a P per core, a fallback that never waits (2026-11-09, #2590)
+
+- A goroutine with a ticker of its own per watched session looks free, but every tick wakes the scheduler, and each tick opened, stat'ed and closed the transcript whether or not it grew. Two tickers per watch (250 ms transcript, 1 s status line) made 4 watched sessions at rest cost +260 ms of CPU and +9,150 context switches a minute over none. One ticker for every watch (`watchPump`), a stat before the open (`transcript.File.Changed`, and the same gate at the start of `refresh`), and goroutines only for work that can be slow (reading new lines, reading a screen) brought it to +60 ms and +2,420. What is left is mostly the 4 Hz tick itself: wakeups of the runtime's timer thread and sysmon, not work. Keep a guard per watch (`reading`, `live.reading`) so a slow parse or screen read skips that watch's ticks, as a busy ticker did, without holding up the others; and a lock taken on a tick must be a `TryLock` (a file being paged answers "changed").
+- An I/O-bound process does not need a P per core. `node --stdio` and `node --attach` cap GOMAXPROCS at 4 (64 on the measuring host): threads 28 to 12 and about 1.7 MB less anonymous memory with 4 watches, CPU within noise. Cap it with `runtime.GOMAXPROCS` at the entry rather than in the environment, so the agents and tools the node starts keep their own default, and only when the default is above the cap: an explicit value stops the runtime from following a container's CPU limit, so a smaller default is left alone. A `GOMAXPROCS` variable always wins.
+- A fallback that fails fast is still a process per call. With the herdr socket missing, every herdr call ran the CLI, which answered `server_not_running` in a few milliseconds, but the node asks about twice a second. Back off a fallback while it keeps giving the same "nothing there" answer, hand that answer back meanwhile so callers and logs see what they saw before, and reset on any success through either path.
+
+## A skip decided from two counters, and a test that swaps a served peer (2026-11-10, #2439)
+
+`sendSessions` skips a byte-identical list only when no `sessions.list` answer is pending and the epoch has not moved;
+an answer moves the epoch and then drops the pending count when it ends. Read the pending count first and the epoch
+second. Read the other way round, an answer that starts and ends between the two reads leaves the old epoch and a zero
+count, and the list is skipped behind an answer the manager may have taken instead. With a 20 µs pause injected between
+the reads, 199 of 200 runs skipped; with the order swapped, 0 of 200. Without the pause it never showed in 2 million
+runs, which is why only reasoning about the order, not a test, catches it.
+
+A test helper that has already started `go n.peer.Serve(...)` must not assign `n.peer` afterwards: the goroutine reads the
+field, so `-race` reports it, and it may end up serving the new peer too. Pass what the test needs (here a writer that
+records the node's lines) into the constructor, and serve the peer through a local variable. A rule test also needs
+steps that differ only in the guarded rule: revs followed by a list that differs anyway, or a `call` that waits for the
+pending count to drop, pass with the rule deleted.
+
+## Optional filesystem labels must not gate inventory (2026-11-10, #2750)
+
+A regular Git HEAD can block in open despite stat succeeding. Keep project labels outside authoritative session discovery, cap concurrent metadata readers, and deduplicate pending paths across cache refreshes. Return all discovered session identities and busy states even when labels are unavailable; never replace a failed session read with an empty idle inventory. Test with a HEAD whose read cannot complete until after the inventory response, and retain a synchronous negative control.
