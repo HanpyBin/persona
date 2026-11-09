@@ -134,6 +134,9 @@ and `hub.json`'s `public_url` is set to `https://<domain>/<prefix>` (the app and
   When writing new code: build `/api/…` URLs only through the functions above (or prepend `BASE`), use `href(route)` for in-site links, and never hard-code `"/xxx"`.
 - **The bundle uses relative paths** (`base: "./"` in `vite.config.ts`): `index.html` references `./assets/…`, and icons and the manifest use relative URLs too, all relative to `<base>`;
   reloading a deep path (`/<prefix>/s/<machine>/<session>`) works. `manifest.webmanifest`'s `start_url` / `scope` / icons / shortcuts are all relative (`id` stays `/`, so existing installs are unchanged).
+- **No external script ahead of the first paint**: the build inlines `public/compatibility-bootstrap.js` (the legacy theme copy) into both
+  `index.html` and `admin/index.html` (`compat-bootstrap.ts`, #2673). As a file it was a parser-blocking request the service worker passes on and
+  nothing caches, so every load waited on the hub, even when the worker served the kept shell offline. Keep new `<head>` scripts inline.
 - **No service worker under a subpath** (`lib/pwa.ts`): its rules and cache are written for the root path. The PWA can still be added to the home screen, just without the offline shell.
 - **The admin UI (`/admin`) is root-only**: it does not read the prefix and cannot be opened through a subpath. The admin UI restricts access by source address ([admin.md](../operations/admin.md)) and should not be exposed through a public proxy anyway;
   access the hub's port directly on the hub machine or the LAN.
