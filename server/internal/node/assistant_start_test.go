@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"os"
 	"os/exec"
@@ -150,6 +151,8 @@ func TestAssistantSendRestartsForNewInstructions(t *testing.T) {
 	fakeClaudeHome(t, "echo '{\"type\":\"system\",\"subtype\":\"init\"}'\nwhile read line; do echo '{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"ok\"}'; done\n")
 	n := codexTestNode(t)
 	withFakeHub(t, n)
+	pushes, pw := hubPushes(n)
+	t.Cleanup(func() { pw.Close() })
 	cwd := t.TempDir()
 	md := filepath.Join(cwd, "CLAUDE.md")
 	if err := os.WriteFile(md, []byte("stacked_bar"), 0o600); err != nil {
@@ -166,31 +169,34 @@ func TestAssistantSendRestartsForNewInstructions(t *testing.T) {
 		defer n.mu.Unlock()
 		return n.procs[id]
 	}
-	idle := func(p *assistantProc) {
+	idle := func() {
 		t.Helper()
-		deadline := time.Now().Add(5 * time.Second)
 		for {
-			p.mu.Lock()
-			busy := p.busy
-			p.mu.Unlock()
-			if !busy {
-				return
-			}
-			if time.Now().After(deadline) {
+			select {
+			case p := <-pushes:
+				if p.Event != "session.delta" {
+					continue
+				}
+				var d struct {
+					Text string `json:"text"`
+				}
+				if json.Unmarshal(p.Params, &d) == nil && d.Text == "" {
+					return
+				}
+			case <-time.After(5 * time.Second):
 				t.Fatal("the turn did not end")
 			}
-			time.Sleep(20 * time.Millisecond)
 		}
 	}
 	first := proc()
-	idle(first)
+	idle()
 	if _, err := n.assistantSend(ctx, id, "", "", "again", nil, "", ""); err != nil {
 		t.Fatal(err)
 	}
 	if proc() != first {
 		t.Fatal("restarted with the same CLAUDE.md")
 	}
-	idle(first)
+	idle()
 	if err := os.WriteFile(md, []byte("ring"), 0o600); err != nil {
 		t.Fatal(err)
 	}
