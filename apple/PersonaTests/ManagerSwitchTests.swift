@@ -399,14 +399,14 @@ struct ManagerSwitchTests {
         let hub = FakeHub()
         let model = try model(hub, roster: try Self.roster())
         model.applySessions([MachineRef(group: "", id: "box"): [try session("w1", manager: "m-1"), try session("a1", manager: "assistant")]])
-        model.selectAssistantManager("m-2") // 家里, offline
+        model.selectAssistantManager("m-2") // m-2, offline
         let switches = model.assistantSwitches
-        model.openAssistantConversation(SessionKey(machineID: "box", sessionID: "w1")) // 工作's, from a notification
+        model.openAssistantConversation(SessionKey(machineID: "box", sessionID: "w1")) // m-1's, from a notification
         hub.on("GET", "/api/v1/managers", json: #"""
         {"default":"assistant","managers":[{"id":"assistant","name":"助手","online":true,"default":true,"builtin":true},
           {"id":"m-1","name":"工作","online":true},{"id":"m-2","name":"家里","online":true}]}
         """#)
-        await model.refreshManagerRoster("") // 家里 back online: read again, not switched
+        await model.refreshManagerRoster("") // m-2 back online: read again, not switched
         #expect(model.assistantManagerID == "m-2" && model.assistantSwitches == switches)
         #expect(model.assistantCurrent?.sessionID == "w1", "工作's conversation stays through a re-read")
         model.selectAssistantManager(nil)
@@ -426,7 +426,7 @@ struct ManagerSwitchTests {
         func defaults() -> Int { hub.sent("GET", "/api/v1/assistant").filter { $0.headers[Self.header] == nil }.count }
         let folder = FileManager.default.temporaryDirectory.appending(path: "manager-switch-" + UUID().uuidString)
         AssistantPickStore.save(["": "m-1"], folder: folder)
-        let model = try model(hub, roster: nil, folder: folder) // a launch on 工作, its roster not read yet
+        let model = try model(hub, roster: nil, folder: folder) // a launch on m-1, its roster not read yet
         await model.refreshManagerRoster("")
         #expect(model.assistantManagerID == "m-1")
         await waitUntil { model.assistantByGroup[""] != nil }
@@ -436,7 +436,7 @@ struct ManagerSwitchTests {
         {"default":"assistant","managers":[{"id":"assistant","name":"助手","online":true,"default":true,"builtin":true},
           {"id":"m-1","name":"工作","online":true},{"id":"m-2","name":"家里","online":true}]}
         """#)
-        await model.refreshManagerRoster("") // the roster changed (家里 back), the default didn't
+        await model.refreshManagerRoster("") // the roster changed (m-2 back), the default didn't
         #expect(defaults() == after, "once in this run")
     }
 
