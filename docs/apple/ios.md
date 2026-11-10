@@ -1720,7 +1720,10 @@ is listed), and a hub that answers it has no roster filters nothing (`AppModel.r
   agents waiting are its own, and Done's history and day counts are read from it (`InboxStore.historyOwner`; the history is
   one manager's). They start over when another assistant becomes current, and a page of the one before doesn't land
   (`InboxStore.scopeChanged`). Pull to refresh asks the current assistant to collect. The Mac's list is the same
-  (`MacInboxState.sections`). A switch drops the selection, an item's page and the Muted and Rules sheets.
+  (`MacInboxState.sections`). The mailbox filters and New Email are the current assistant's mail accounts
+  (`InboxMailAccounts`, kept per assistant; a new mail keeps the manager it was started for, `ComposeDraft.manager`).
+  A switch drops the selection, an item's page, the Muted and Rules sheets, a mail being written and a source filter
+  (a mailbox or a connector of the one before would leave the list empty).
 - **To-dos**: `TodoItem.manager` decodes the merged list's stamp; the list, the calendar and the count are the current
   assistant's, a new to-do names it, and a change to one names the to-do's own manager whichever is current
   (`TodoStore.named`; its decisions and a briefing's Accept too). The list is always read merged.
@@ -1729,9 +1732,13 @@ is listed), and a hub that answers it has no roster filters nothing (`AppModel.r
   was opened for. Recordings are this device's own and are synced whichever assistant is current.
 - **Scheduled tasks**: the page keeps the client it first read with (`AssistantRoutinesModel`): pushed on the Persona page
   it closes with a switch, and where it stays (Settings) it starts over on the one current now (`restart`).
-- **Offline**: the hub's merged lists leave an offline manager's items out, so the inbox and the to-dos of an offline
-  current assistant say "<name> Is Offline" with when it last synced (`AssistantOfflineNotice`), not that there is nothing.
-  Its computers and sessions stay listed, offline, as the hub keeps them.
+- **Offline**: the hub's merged lists leave an offline manager's items out, so in place of their empty page the inbox
+  and the to-dos of an offline current assistant say "<name> Is Offline" with when it last synced and that the page
+  updates once it is back (`AssistantOfflineNotice`). Its computers and sessions stay listed, offline, as the hub keeps
+  them.
+- **What a conversation's feed offers** (a plan's Start or Don't Start, a briefing question's Handled) names the
+  conversation's own manager (`AppModel.feedManager`): those routes name no conversation, so the hub would take them
+  to the default.
 - **Counts**: the tab badges, the sidebar's Inbox and To-dos counts, the home page's Needs You and the main conversation's
   dock count the current assistant's (`AppModel.countBadges`, `InboxStore.actionCount`, `TodoStore.badgeCount`). The
   switcher shows beside every other assistant what waits there (`AssistantBadges`, `AppModel.assistantBadges`): its agents

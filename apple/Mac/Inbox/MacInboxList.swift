@@ -119,6 +119,9 @@ struct MacInboxList: View {
         .onChange(of: model.assistantSwitches) {
             state.selection = []
             state.source = ""
+            state.composing = nil
+            state.accounts = InboxMailAccounts.cached(model.assistantManagerID)
+            Task { await state.loadAccounts(model) }
         }
         .pageSearchable(text: $state.query, placement: .toolbar, prompt: String(localized: "Search Titles, Senders, and Content"))
         .pageToolbar { toolbar }
@@ -183,7 +186,7 @@ struct MacInboxList: View {
             .disabled(state.openInView.isEmpty)
             .help(String(localized: "Clean up all: \(state.cleanUpScope) (⇧⌘E)"))
             .accessibilityIdentifier("mac.inbox.cleanUpAll")
-            Button { state.composing = ComposeDraft(accountID: state.accounts.first?.id ?? "") } label: {
+            Button { state.composing = ComposeDraft(accountID: state.accounts.first?.id ?? "", manager: model.assistantManagerID) } label: {
                 Label("New Email", systemImage: Theme.Icon.compose)
             }
             .disabled(state.accounts.isEmpty)

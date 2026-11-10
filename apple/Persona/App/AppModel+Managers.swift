@@ -205,6 +205,22 @@ extension AppModel {
     /// and naming the default is harmless. The Rules and Muted lists name their stamp too.
     func itemManager(_ manager: String?) -> String? { managerRoster.map { $0.naming(manager) } ?? manager }
 
+    /// The manager a request about what a Persona conversation's feed offers names (a plan's Start or Don't Start, a
+    /// briefing question's Handled): the conversation's own, none for the default's. Those routes name no conversation,
+    /// so the hub would take them to the default manager whichever assistant the conversation is. By its listing, else
+    /// by what it was opened for (`assistantItemManagers`), else the current assistant, on whose page it shows.
+    func feedManager(of conversation: String, group: String) -> String? {
+        let roster = managerRosters[group]
+        func named(_ manager: String?) -> String? { roster.map { $0.naming(manager) } ?? manager }
+        if let listed = sessionsNow.first(where: { $0.assistant && $0.group == group && $0.sessionID == conversation }) {
+            return named(listed.manager)
+        }
+        if let opened = assistantItemManagers.first(where: { $0.key.group == group && $0.key.sessionID == conversation })?.value {
+            return named(opened)
+        }
+        return assistantPick(in: group)
+    }
+
     /// The manager of `machine` while a hub with several managers has that manager offline: the computer comes back
     /// with it, and Reconnect, which goes through it, can't work meanwhile. nil otherwise.
     func offlineManager(of machine: Machine?, group: String) -> HubManager? {

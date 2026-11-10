@@ -2,7 +2,28 @@ import BeautifulUI
 import SwiftUI
 
 @MainActor final class InboxAccountState: ObservableObject {
-    @Published var accounts = StateCache.load("mail-accounts", as: [MailAccount].self) ?? []
+    @Published var accounts = InboxMailAccounts.cached(AppModel.shared.assistantManagerID)
+}
+
+/// The mail accounts the inbox's filters and New Email offer: the current assistant's (each manager keeps its own
+/// sources, docs/assistant/managers.md "Pages"), kept for the next launch apart for each assistant; the default's
+/// under the name they always had.
+@MainActor enum InboxMailAccounts {
+    static func cacheName(_ manager: String?) -> String { manager.map { "mail-accounts." + $0 } ?? "mail-accounts" }
+
+    static func cached(_ manager: String?) -> [MailAccount] {
+        StateCache.load(cacheName(manager), as: [MailAccount].self) ?? []
+    }
+
+    /// The accounts of `manager` (nil: the default's) as the hub has them now, kept; nil when they can't be read, or
+    /// when another assistant became current meanwhile (they are not the page's any more).
+    static func read(_ model: AppModel) async -> [MailAccount]? {
+        let manager = model.assistantManagerID
+        guard let api = model.api?.manager(manager), let accounts = try? await api.mailAccounts(),
+              manager == model.assistantManagerID else { return nil }
+        StateCache.save(cacheName(manager), accounts)
+        return accounts
+    }
 }
 
 // MARK: - Inbox
@@ -127,7 +148,7 @@ struct InboxPage: View {
                         Menu {
                             cleanButton
                             Divider()
-                            Button { composing = ComposeDraft(accountID: accounts.first?.id ?? "") } label: { Label("New Email", systemImage: Theme.Icon.compose) }
+                            Button { composing = ComposeDraft(accountID: accounts.first?.id ?? "", manager: model.assistantManagerID) } label: { Label("New Email", systemImage: Theme.Icon.compose) }
                                 .disabled(accounts.isEmpty)
                             Button { showingMutes = true } label: { Label("Muted [Inbox Mutes View e5e468]", systemImage: Theme.Icon.mute) }
                             Button { showingRules = true } label: { Label("Rules [Inbox Policy]", systemImage: Theme.Icon.inboxRule) }
@@ -158,6 +179,9 @@ struct InboxPage: View {
                 // Done's groups load their first pages again, from its history.
                 .onChange(of: model.assistantSwitches) {
                     source = ""
+                    composing = nil
+                    accounts = InboxMailAccounts.cached(model.assistantManagerID)
+                    Task { await loadAccounts() }
                     picked = nil
                     autoLoaded = []
                     showingMutes = false
@@ -516,7 +540,7 @@ struct InboxPage: View {
         let waitingAgents = waitingAgents
         // The current assistant's alone where the hub has several: no manager headings (docs/assistant/managers.md "Pages").
         let share = InboxShare(byTier: kind == "agent" ? [:] : projection.byTier, agents: waitingAgents, done: projection.doneItems)
-        // Its merged list has nothing of an assistant that is offline: said so, not shown as an empty inbox.
+        // The hub's merged list has nothing of an assistant that is offline: said so in place of the empty inbox.
         let offline = model.assistantManagerOffline
         return ScrollViewReader { proxy in
         List {
@@ -551,7 +575,7 @@ struct InboxPage: View {
                 Label(error, systemImage: Theme.Icon.error).font(Theme.Font.caption).foregroundStyle(Theme.danger)
                     .themedRow()
             }
-            if let offline {
+            if openItems.isEmpty && waitingAgents.isEmpty && !store.loading, let offline {
                 AssistantOfflineNotice(manager: offline)
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
@@ -911,9 +935,8 @@ struct InboxPage: View {
     }
 
     private func loadAccounts() async {
-        guard let api = model.api, let a = try? await api.mailAccounts() else { return }
+        guard let a = await InboxMailAccounts.read(model) else { return }
         accounts = a
-        StateCache.save("mail-accounts", a)
     }
 }
 

@@ -138,7 +138,7 @@ final class MacInboxState {
     /// Sections shown open: tiers (action, working, fyi, noise) and "done". Collapsed and Done start closed, as on the
     /// iPhone.
     var folds = InboxFolds()
-    var accounts: [MailAccount] = StateCache.load("mail-accounts", as: [MailAccount].self) ?? []
+    var accounts: [MailAccount] = InboxMailAccounts.cached(AppModel.shared.assistantManagerID)
     /// The sheets the list opens: New Email, Manage Accounts, Edit on the AI Twin's draft, Hand to AI.
     var composing: ComposeDraft?
     var showAccounts = false
@@ -338,10 +338,10 @@ final class MacInboxState {
         }
     }
 
+    /// The current assistant's mail accounts (`InboxMailAccounts`), as the list is its inbox.
     func loadAccounts(_ model: AppModel) async {
-        guard let api = model.api, let a = try? await api.mailAccounts() else { return }
+        guard let a = await InboxMailAccounts.read(model) else { return }
         accounts = a
-        StateCache.save("mail-accounts", a)
         // A connector's id is not a mail account: it stays while the hub's list has not come yet (the cached one may
         // be from before), and while its items are there.
         if !source.isEmpty, source != "feishu", !a.contains(where: { $0.id == source }), store.listed,

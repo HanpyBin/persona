@@ -418,6 +418,35 @@ struct AssistantScopeTests {
         #expect(hub.requests.map { $0.headers["X-Persona-Manager"] } == ["m-1", "m-1", nil, nil])
     }
 
+    /// What a conversation's feed offers (a plan's Start, a briefing question's Handled) is asked of the conversation's
+    /// own manager: those routes name no conversation, so the hub would take them to the default.
+    @Test func whatAConversationsFeedOffersGoesToItsOwnManager() async throws {
+        let model = try model()
+        let chats = [try session("c-home", on: "server", manager: "assistant", assistant: true),
+                     try session("c-work", on: "MacBook", manager: "m-1", assistant: true),
+                     try session("c-bare", on: "server", manager: nil, assistant: true),
+                     try session("agent", on: "MacBook", manager: "m-1")]
+        model.applySessions(Dictionary(grouping: chats, by: \.machineRef))
+        #expect(model.feedManager(of: "c-work", group: "") == "m-1")
+        #expect(model.feedManager(of: "c-home", group: "") == nil && model.feedManager(of: "c-bare", group: "") == nil, "the default's: none named")
+        #expect(model.feedManager(of: "unlisted", group: "") == nil, "not listed, the default current: none")
+
+        model.selectAssistantManager("m-2")
+        #expect(model.feedManager(of: "c-work", group: "") == "m-1" && model.feedManager(of: "c-home", group: "") == nil,
+                "whichever assistant is current")
+        #expect(model.feedManager(of: "unlisted", group: "") == "m-2", "not listed yet: the page it shows on")
+        #expect(model.feedManager(of: "agent", group: "") == "m-2", "an agent's session is no conversation")
+        model.assistantItemManagers[SessionKey(group: "", machineID: "NAS", sessionID: "opened")] = "m-1"
+        #expect(model.feedManager(of: "opened", group: "") == "m-1", "opened from a notification as another assistant's")
+
+        let hub = FakeHub()
+        hub.on("POST", "/api/v1/later/lt_1/handled", json: #"{"ok":true}"#)
+        let actions = BriefActions(api: { _ in hub.client }, failed: { _ in }, taken: {}, named: { _ in nil },
+                                   feedManager: { conversation, group in model.feedManager(of: conversation, group: group) })
+        await actions.markHandled(BriefBody.Row(id: "lt_1", title: "?"), group: "", conversation: "c-work")
+        #expect(hub.sent("POST", "/api/v1/later/lt_1/handled").map { $0.headers["X-Persona-Manager"] } == ["m-1"])
+    }
+
     /// Scheduled Tasks left open while another assistant becomes current: what it writes still goes to the assistant
     /// whose tasks it shows, until it starts over on the new one.
     @Test func scheduledTasksWriteToTheAssistantTheyWereReadFrom() async throws {
