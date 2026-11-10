@@ -1640,6 +1640,16 @@ A worktree's display name and its Agents' conversation names are different comma
 
 HTTP failures live in `Shared/APIClient.swift`, not PersonaKit's model-response `APIErrorInfo`. Classify business codes before status or timeout wording. A background sync must pause on disabled/read-only configuration without discarding uploads or deletion intent; another local save cannot repair that configuration. Reopen/foreground can explicitly recheck. Do not continue writes after failed reconciliation, and do not acknowledge a remote deletion from an unsupported 404. Keep the list's pending-delete explanation durable across relaunch.
 
+## Rolling recording
+
+### Segment wall-clock start comes from the audio host time
+
+When the segment writer opens a new file, record the tap callback's host time and carry it out with the segment (`docs/apple/recording-rolling.md`). Do not back-compute from when the callback reaches the main thread: queueing and batched `stop()` saves would be wrong.
+
+### Watch holds unconfirmed rolling segments; bookmarked ones longer
+
+The watch only prunes by age. Segments the phone has not confirmed stay up to `undeliveredHours`; bookmarked ones stay `keptDays` so the phone can still mark them kept.
+
 ## Presenting from a popover's row, and identifiers that cover (2026-11-10, assistant switcher)
 
 - A popover row that opens an alert, a sheet or another page has to wait for the popover to be gone: UIKit refuses a
