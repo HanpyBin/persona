@@ -394,11 +394,10 @@ func TestStartFormPressOpensOneForm(t *testing.T) {
 	pressStartForm(t, s, "om_agents") // the same press again: a second tap, or the hub's resend
 	waitForForm(t, posts, "the start form was not posted")
 	// The swallowed press posts from no goroutine of its own, so nothing of it can land later either.
-	time.Sleep(50 * time.Millisecond)
 	select {
 	case <-posts:
 		t.Fatal("the duplicate press posted a second start form")
-	default:
+	case <-time.After(50 * time.Millisecond):
 	}
 
 	pressStartForm(t, s, "om_agents2")
