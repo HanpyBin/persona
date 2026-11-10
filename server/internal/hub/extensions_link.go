@@ -379,6 +379,11 @@ func (h *Hub) relayTo(w http.ResponseWriter, r *http.Request, admin bool, id str
 		rec = &keptRecorder{ResponseWriter: w, status: http.StatusOK}
 		w = rec
 	}
+	// What may change the manager's inbox, as in relayHTTP: before it goes, and when it is answered (inbox_answers.go).
+	changes := r.Method != http.MethodGet && r.Method != http.MethodHead
+	if changes {
+		h.inboxAnswers.changed(id)
+	}
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.Out.URL.Scheme, pr.Out.URL.Host = "http", "manager"
@@ -407,6 +412,9 @@ func (h *Hub) relayTo(w http.ResponseWriter, r *http.Request, admin bool, id str
 			pr.Out.Header["X-Forwarded-For"] = nil
 		},
 		ModifyResponse: func(res *http.Response) error {
+			if changes {
+				h.inboxAnswers.changed(id)
+			}
 			if apps, _ := computerAppsRoute(r); apps {
 				res.Header.Del(computerAppsOwnerHeader)
 				if guardedApps && res.StatusCode >= 200 && res.StatusCode < 300 {
@@ -420,6 +428,9 @@ func (h *Hub) relayTo(w http.ResponseWriter, r *http.Request, admin bool, id str
 		}, DisableKeepAlives: true, ResponseHeaderTimeout: 5 * time.Minute},
 		FlushInterval: -1,
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			if changes {
+				h.inboxAnswers.changed(id)
+			}
 			if errors.Is(err, errBusOffline) || h.busConnOf(id) == nil {
 				writeErrCode(w, http.StatusServiceUnavailable, assistantwire.CodeAssistantOffline, errAssistantOffline)
 				return
@@ -482,11 +493,8 @@ func (k *keptRecorder) Write(p []byte) (int, error) {
 	return k.ResponseWriter.Write(p)
 }
 
-func (k *keptRecorder) Flush() {
-	if f, ok := k.ResponseWriter.(http.Flusher); ok {
-		f.Flush()
-	}
-}
+// Flush goes through http.ResponseController, as codeWriter.Flush does.
+func (k *keptRecorder) Flush() { _ = http.NewResponseController(k.ResponseWriter).Flush() }
 
 func (k *keptRecorder) Unwrap() http.ResponseWriter { return k.ResponseWriter }
 
