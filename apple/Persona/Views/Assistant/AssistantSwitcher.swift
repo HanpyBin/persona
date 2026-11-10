@@ -59,6 +59,7 @@ struct AssistantMonogram: View {
 /// and its state. A tap opens the list. `compact`: one line without the face, for a title bar's row (the Mac).
 struct AssistantSwitcherHeader: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.dynamicTypeSize) private var typeSize
     var manager: HubManager
     var nameFont: Font
     var compact = false
@@ -81,13 +82,14 @@ struct AssistantSwitcherHeader: View {
     var body: some View {
         Button { listShown.toggle() } label: {
             HStack(spacing: Theme.Space.m) {
-                if !compact {
+                // At the accessibility sizes the face gives its room to the name (the top bar keeps showing it).
+                if !compact && !typeSize.isAccessibilitySize {
                     PersonaAvatar(size: Theme.Size.avatar)
                         .overlay(alignment: .bottomTrailing) { managerDot(ManagersText.status(manager, now: .now).tone) }
                 }
                 VStack(alignment: .leading, spacing: Theme.Space.xxs) {
                     HStack(spacing: Theme.Space.xs) {
-                        Text(manager.name).font(nameFont).foregroundStyle(ink).lineLimit(1)
+                        Text(manager.name).font(nameFont).foregroundStyle(ink).lineLimit(1).minimumScaleFactor(0.7)
                         ThemedIcon(Theme.Icon.expand).font(Theme.Font.labelStrong).foregroundStyle(.secondary)
                     }
                     if !compact {
@@ -95,10 +97,11 @@ struct AssistantSwitcherHeader: View {
                     }
                 }
             }
+            // A finger's target at least (the Mac's one line keeps its title row's height).
+            .scaledFrame(minHeight: compact ? nil : Theme.Size.tapTarget)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        // A button that reads as one line (a button combines its children already; its label replaces theirs).
         .accessibilityLabel("\(manager.name), \(AssistantSwitcherText.line(manager, now: .now))")
         .accessibilityHint("Switches assistants")
         .accessibilityAddTraits(.isHeader)
@@ -176,6 +179,7 @@ struct AssistantSwitcherHeader: View {
 /// The hub's assistants as the switcher lists them, then New Assistant and Manage Assistants….
 private struct AssistantSwitcherList: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.dynamicTypeSize) private var typeSize
     var pick: (HubManager) -> Void
     var create: () -> Void
     var manage: () -> Void
@@ -202,9 +206,13 @@ private struct AssistantSwitcherList: View {
                 action(String(localized: "Manage Assistants…"), Theme.Icon.settings, tint: nil, id: "assistant-switcher-manage", run: manage)
             }
             .padding(Theme.Space.s)
-            .scaledFrame(width: Theme.Size.box300)
+            // As wide as the text needs (`scaledFrame`), but able to give: a popover wider than the screen is cut at both
+            // edges, so the screen's width wins at the largest text sizes.
+            .frame(idealWidth: width, maxWidth: width)
         }
     }
+
+    private var width: CGFloat { Theme.Size.box300 * Theme.sizeScale(typeSize) }
 
     private func row(_ m: HubManager, roster: ManagerRoster, current: Bool, now: Date) -> some View {
         let isDefault = m.id == roster.defaultID && m.installing == nil

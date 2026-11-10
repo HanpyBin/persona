@@ -53,6 +53,9 @@ final class AssistantSwitcherUITests: XCTestCase {
         app.launchArguments = ["-pairURL", pair, "-tab", "assistant", "-app.tab", "assistant", "-openAssistantSidebar", "YES",
                                "-openAssistantManager", "assistant"]
         app.launchPinned()
+        // A fresh install asks for notifications first, and the app waits inactive (no roster) until it is answered.
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        for label in ["允许", "Allow"] where springboard.buttons[label].waitForExistence(timeout: 2) { springboard.buttons[label].tap() }
         // The drawer's identifier can cover its header's on a phone (`drawerSettingsButton`): the default's name then.
         let header = app.buttons.matching(NSPredicate(format: "identifier == %@ OR (identifier == %@ AND label BEGINSWITH %@)",
                                                       "assistant-switcher", "assistant-sidebar", "助手")).firstMatch

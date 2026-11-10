@@ -271,6 +271,16 @@ struct ManagerSwitchTests {
         #expect(AssistantPickStore.load(folder: folder).isEmpty)
     }
 
+    /// A hub that answers the roster with a plain 404 (from before managers, or put back to one) has none: the roster
+    /// kept from the last launch goes, and the sidebar's header is Persona's name again.
+    @Test func aHubWithoutARosterDropsTheOneKeptFromTheLastLaunch() async throws {
+        let old = FakeHub() // no roster route: 404 with no code, as such a hub's router answers
+        let model = try model(old, roster: try Self.roster()) // as the snapshot leaves it
+        #expect(model.currentAssistant?.id == "assistant")
+        await model.refreshManagerRoster("")
+        #expect(model.managerRoster == nil && model.currentAssistant == nil, "none from this hub: no switcher")
+    }
+
     @Test func thePickStaysOnItsManagerWhenTheDefaultMoves() async throws {
         let saved = UserDefaults.standard.object(forKey: "assistant.current")
         defer { UserDefaults.standard.set(saved, forKey: "assistant.current") }
