@@ -92,10 +92,11 @@ final class MeetingRecordingUITests: XCTestCase {
         sleep(2)
         XCUIDevice.shared.perform(NSSelectorFromString("pressLockButton"))
         sleep(3)
-        // The system's first question about Live Activities; its Allow is not one of the activity's buttons here.
+        // The system's first question about Live Activities (Allow / Always Allow): the activity's own buttons are
+        // Bookmark and Stop, so its Allow is the system's.
         for label in ["Allow", "允许", "Always Allow", "始终允许"] {
             let b = springboard.buttons[label].firstMatch
-            if b.exists, !springboard.buttons.matching(NSPredicate(format: "label CONTAINS %@", "书签")).firstMatch.exists { b.tap(); sleep(2) }
+            if b.exists { b.tap(); sleep(2) }
         }
         try screen("lock-\(phase)")
         let stop = springboard.buttons.matching(NSPredicate(format: "label CONTAINS %@ OR label CONTAINS %@", "停止", "Stop")).firstMatch

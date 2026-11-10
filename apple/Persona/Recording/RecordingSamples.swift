@@ -34,7 +34,11 @@ enum RecordingSamples {
     /// the hub, or still being written). Both recordings are made up.
     static func showMeetingIfAsked() {
         #if os(iOS)
-        guard let mode = UserDefaults.standard.string(forKey: "showMeetingSample") else { return }
+        guard let mode = UserDefaults.standard.string(forKey: "showMeetingSample") else {
+            // A run without them: an earlier run's made-up meetings go, so other tests see only their own recordings.
+            for id in [liveMeeting, pastMeeting] where RecordingLibrary.shared.entry(id) != nil { try? RecordingLibrary.shared.remove(id) }
+            return
+        }
         let start = Date(timeIntervalSince1970: 1_800_003_600)
         let meeting = RecordingMeeting(eventID: "sample-weekly", title: "产品周会", start: start, end: start.addingTimeInterval(3600),
                                        location: "3 楼会议室", attendees: ["张三", "李四", "王五"])

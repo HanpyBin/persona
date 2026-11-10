@@ -23,24 +23,24 @@ struct RecordingLiveActivity: Widget {
                     RecordingMark(phase: state.phase, size: IslandMetrics.expandedFace)
                         .padding(.leading, IslandMetrics.edge)
                 }
+                // The time in the corner, wide enough for "1:23:45": beside a title in the center region it was cut to "…".
                 DynamicIslandExpandedRegion(.trailing) {
                     RecordingTime(state: state)
                         .font(.title3.weight(.semibold))
                         .foregroundStyle(state.phase == .recording ? Palette.recordingRed : .white)
+                        .frame(minWidth: IslandMetrics.recordingExpandedTimerWidth, alignment: .trailing)
                         .padding(.trailing, IslandMetrics.edge)
                 }
-                DynamicIslandExpandedRegion(.center) {
-                    VStack(alignment: .leading, spacing: IslandMetrics.gap) {
-                        Text(state.title).font(.headline).lineLimit(1)
-                        RecordingSubtitle(state: state).font(.caption).foregroundStyle(.white.opacity(0.7)).lineLimit(1)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .environment(\.locale, LanguageStore.drawingLocale)
-                }
                 DynamicIslandExpandedRegion(.bottom) {
-                    RecordingButtons(id: id, onDark: true)
-                        .padding(.top, IslandMetrics.rowGap)
-                        .environment(\.locale, LanguageStore.drawingLocale)
+                    VStack(alignment: .leading, spacing: IslandMetrics.rowGap) {
+                        VStack(alignment: .leading, spacing: IslandMetrics.smallGap) {
+                            Text(state.title).font(.headline).lineLimit(1)
+                            RecordingSubtitle(state: state).font(.caption).foregroundStyle(.white.opacity(0.7)).lineLimit(1)
+                        }
+                        .padding(.horizontal, IslandMetrics.gap)
+                        RecordingButtons(id: id, onDark: true)
+                    }
+                    .environment(\.locale, LanguageStore.drawingLocale)
                 }
             } compactLeading: {
                 IslandWidth { _ in

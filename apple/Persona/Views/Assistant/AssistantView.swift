@@ -283,7 +283,12 @@ struct AssistantView: View {
             // from the knowledge base, even when its conversation is the one already open.
             // A start error belongs to the home page it failed on: another conversation (from any menu, the Mac's
             // ⇧⌘N, a quick action) leaves it behind.
-            .onChange(of: model.assistantCurrent) { backToRoot() }
+            .onChange(of: model.assistantCurrent) { old, new in
+                // The app picking the main conversation by itself once the hub answers (none was open) is not the user
+                // opening one: Recordings, opened by a Control or the home screen's menu at launch, stays.
+                if showRecordings, old == nil, new == model.assistantMain { return }
+                backToRoot()
+            }
             .onChange(of: model.assistantManagerID) { starterLauncher = nil } // a launcher of the manager shown before
             .onChange(of: model.assistantReveal) { backToRoot(); activeDrawer.close() }
             #if DEBUG

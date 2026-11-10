@@ -174,7 +174,6 @@ struct RecordingMinutesSections: View {
         } header: {
             Text("Minutes")
         }
-        .accessibilityIdentifier("minutes-section")
         if minutes.isEmpty {
             Section { Text("Nothing to note: no points, decisions or action items came up.").font(Theme.Font.secondary).foregroundStyle(.secondary) }
         }
