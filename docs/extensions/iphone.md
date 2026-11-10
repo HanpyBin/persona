@@ -127,6 +127,10 @@ answer on.
   `iphone.pair` / `iphone.forget` / `iphone.cancel` `{device}` → `IPhone`. Through `plugin.node.call` to the built-in
   program `iphone` (methods `status`, `call`, `pair`, `forget`, `cancel`) on a node that lists it, by these names otherwise.
   `op: status` is the node's own answer; `look` and `do` go to block D's package.
+  The node passes `confirm` to the core as `Request.Confirm`, and the core's `Response` into `IPhoneResult` as it is:
+  `approval_summary` is the core's `Approval` object (`proto.IPhoneApproval` mirrors it field for field) and
+  `approval_id` its id. A resume is op `do` with only `approved` (no `args`); the core's "nothing was sent" for a resume
+  it no longer holds stays an `*rpc.Error` with `sent: no` and the core's message.
 
 ## Notes and their languages
 
