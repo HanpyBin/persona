@@ -222,7 +222,7 @@ final class MacInboxState {
         let byTier: [InboxItem.Tier: [InboxItem]] = kind == "agent" ? [:] : Dictionary(grouping: partition[false] ?? [], by: \.triage)
         let done = (partition[true] ?? []).sorted { ($0.doneAt ?? .distantPast) > ($1.doneAt ?? .distantPast) }
         let agents = waitingAgents(model)
-        let tiers = InboxItem.Tier.allCases.compactMap { tier -> (tier: InboxItem.Tier, items: [InboxItem], agents: [Interaction])? in
+        let tiers = InboxItem.Tier.allCases.compactMap { tier -> (InboxItem.Tier, [InboxItem], [Interaction])? in
             let items = byTier[tier] ?? []
             let a = tier == .action ? agents : []
             return items.isEmpty && a.isEmpty ? nil : (tier, items, a)
@@ -255,11 +255,11 @@ final class MacInboxState {
     /// The rows in the order the list shows them (closed sections left out): for moving the selection on.
     func visibleOrder(_ model: AppModel) -> [MacInboxSelection] {
         var out: [MacInboxSelection] = []
-        let sections = sections(model)
-        for t in sections.tiers where folds.isOpen(t.tier.rawValue) {
+        let shown = sections(model)
+        for t in shown.tiers where folds.isOpen(t.tier.rawValue) {
             out += t.agents.map { .agent($0.id) } + t.items.map { .item($0.key) }
         }
-        if folds.isOpen("done") { out += sections.done.map { .item($0.key) } }
+        if folds.isOpen("done") { out += shown.done.map { .item($0.key) } }
         return out
     }
 

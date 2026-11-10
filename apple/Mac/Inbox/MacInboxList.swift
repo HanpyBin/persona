@@ -114,8 +114,12 @@ struct MacInboxList: View {
         .onChange(of: model.pendingInteractions) { _, interactions in
             state.pruneStale(items: store.items, interactions: interactions)
         }
-        // Another assistant is current: what was selected is the one before's, no longer in the list.
-        .onChange(of: model.assistantSwitches) { state.selection = [] }
+        // Another assistant is current: what was selected is the one before's, no longer in the list, and a source
+        // picked there (a mailbox, a connector) would leave this one's list empty.
+        .onChange(of: model.assistantSwitches) {
+            state.selection = []
+            state.source = ""
+        }
         .pageSearchable(text: $state.query, placement: .toolbar, prompt: String(localized: "Search Titles, Senders, and Content"))
         .pageToolbar { toolbar }
         .sheet(isPresented: $state.showAccounts, onDismiss: { Task { await state.loadAccounts(model) } }) {

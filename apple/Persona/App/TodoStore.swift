@@ -188,7 +188,7 @@ final class TodoStore {
         let owner = managers.scope()?.current
         guard let api = (injected ?? AppModel.shared.api)?.manager(managers.naming(owner)) else { throw APIError(status: 0, message: String(localized: "Not connected to a hub [Todo Store 04f822]")) }
         let targetGeneration = generation
-        let created = stamped(try await api.createTodo(title: title, notes: notes, due: due), as: owner)
+        let created = try await stamped(api.createTodo(title: title, notes: notes, due: due), as: owner)
         guard generation == targetGeneration else { return created }
         mutationRevision += 1
         var updated = todos
@@ -201,7 +201,7 @@ final class TodoStore {
         guard let api = client(for: id, injected) else { throw APIError(status: 0, message: String(localized: "Not connected to a hub [Todo Store 04f822]")) }
         let targetGeneration = generation
         let owner = byID[id]?.manager
-        let res = stamped(try await api.updateTodo(id: id, title: title, notes: notes, done: done), as: owner)
+        let res = try await stamped(api.updateTodo(id: id, title: title, notes: notes, done: done), as: owner)
         guard generation == targetGeneration else { return res }
         mutationRevision += 1
         var updated = todos
@@ -220,7 +220,7 @@ final class TodoStore {
         guard let api = client(for: id, injected) else { throw APIError(status: 0, message: String(localized: "Not connected to a hub [Todo Store 04f822]")) }
         let targetGeneration = generation
         let owner = byID[id]?.manager
-        let res = stamped(try await api.updateTodoPlan(id: id, change), as: owner)
+        let res = try await stamped(api.updateTodoPlan(id: id, change), as: owner)
         guard generation == targetGeneration else { return res }
         mutationRevision += 1
         var updated = todos

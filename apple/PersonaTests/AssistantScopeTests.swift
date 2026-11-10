@@ -203,7 +203,10 @@ struct AssistantScopeTests {
         return hub
     }
 
-    private func pages(_ hub: FakeHub) -> [LocalRequest] { hub.sent("GET", "/api/v1/sessions").filter { $0.query["counts"] == nil } }
+    /// The list's own requests: not its counts, nor the read of every manager's sessions in Needs You for the switcher.
+    private func pages(_ hub: FakeHub) -> [LocalRequest] {
+        hub.sent("GET", "/api/v1/sessions").filter { $0.query["counts"] == nil && $0.query["state"] != "needs_you" }
+    }
 
     @Test func aHubThatFiltersIsAskedForTheCurrentAssistantsSessions() async throws {
         let hub = pagedHub()
@@ -421,7 +424,7 @@ struct AssistantScopeTests {
         let hub = FakeHub()
         hub.on("GET", "/api/v1/assistant/tasks") { req in
             let id = req.headers["X-Persona-Manager"] ?? "assistant"
-            return Data(#"{"tasks":[{"id":"t-\#(id)","title":"\#(id)","prompt":"p","repeat":"daily","time":"09:00","enabled":true}]}"#.utf8)
+            return Data(#"{"tasks":[{"id":"t-\#(id)","title":"\#(id)","prompt":"p","repeat":"daily","time":"09:00","weekdays":[1,2,3,4,5],"enabled":true}]}"#.utf8)
         }
         hub.on("GET", "/api/v1/assistant/runs", json: #"{"runs":[]}"#)
         hub.on("DELETE", "/api/v1/assistant/tasks/t-m-1", json: #"{"ok":true}"#)

@@ -99,8 +99,6 @@ nonisolated struct InboxShare {
     var agents: [Interaction]
     /// Its done items in the list's order (a page sorts them only while the section is open).
     var done: [InboxItem]
-    /// What waits in it: open items and waiting agents.
-    var openCount: Int { byTier.values.reduce(agents.count) { $0 + $1.count } }
 }
 
 /// Which inbox sections are open: Needs You, In Progress and FYI start open, Collapsed and Done closed. Only what the

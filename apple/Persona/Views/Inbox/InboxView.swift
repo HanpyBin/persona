@@ -154,8 +154,10 @@ struct InboxPage: View {
                 }
                 // Another assistant is current: the list is its inbox now. What was picked, opened or asked of the one
                 // before goes (an item's page, the Muted and Rules lists, a rule's sheet: they read it and would write to
-                // it), and Done's groups load their first pages again, from its history.
+                // it), a source filter too (a mailbox or a connector of the one before would leave the list empty), and
+                // Done's groups load their first pages again, from its history.
                 .onChange(of: model.assistantSwitches) {
+                    source = ""
                     picked = nil
                     autoLoaded = []
                     showingMutes = false
@@ -169,6 +171,10 @@ struct InboxPage: View {
                 .task {
                     store.reload()
                     await loadAccounts()
+                    // A source kept from another time that no chip stands for now (a connector of another assistant's
+                    // items): the list would be empty with nothing to turn off.
+                    if !source.isEmpty, source != "feishu", store.listed, !accounts.contains(where: { $0.id == source }),
+                       !connectorSources.contains(where: { $0.id == source }) { source = "" }
                     #if DEBUG
                     // `-showInboxMutes YES`: the Muted list (screenshots).
                     if UserDefaults.standard.bool(forKey: "showInboxMutes") { showingMutes = true }

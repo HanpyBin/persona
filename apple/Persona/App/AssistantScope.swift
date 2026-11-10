@@ -62,9 +62,11 @@ nonisolated enum AssistantBadges {
     /// pending card or in Needs You, once however many cards it has; a pending card on no session by itself.
     /// - `sessions`: the hub's sessions the app knows to be in Needs You or not (`AppModel.countBadges`). Persona's own
     ///   conversations count by their cards only, as the Agents list leaves them out.
-    /// - `counts`: whether an agent counts at all (not quiet, not muted), by its key and its row when `sessions` has it.
+    /// - `known`: a card's session when `sessions` doesn't have it (they may be only the ones in Needs You): whose the
+    ///   card is when it names no manager, and whether it counts.
+    /// - `counts`: whether an agent counts at all (not quiet, not muted), by its key and its row when there is one.
     static func waiting(roster: ManagerRoster, group: String, sessions: [Session], interactions: some Sequence<Interaction>,
-                        counts: (SessionKey, Session?) -> Bool) -> [String: Int] {
+                        known: (SessionKey) -> Session? = { _ in nil }, counts: (SessionKey, Session?) -> Bool) -> [String: Int] {
         var bySession: [SessionKey: Session] = [:]
         for s in sessions where s.group == group && bySession[s.key] == nil { bySession[s.key] = s }
         var agents: [String: Set<SessionKey>] = [:]
@@ -75,7 +77,7 @@ nonisolated enum AssistantBadges {
                 continue
             }
             let key = ix.sessionKey
-            let session = bySession[key]
+            let session = bySession[key] ?? known(key)
             guard counts(key, session) else { continue }
             agents[roster.owner(ix.manager ?? session?.manager), default: []].insert(key)
         }

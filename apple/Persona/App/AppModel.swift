@@ -3010,8 +3010,8 @@ final class AppModel {
     private func waitingAgents() -> [String: Int] {
         guard let group = hub?.group, let roster = managerRosters[group], roster.isMulti else { return [:] }
         let rows = needsYou.flatMap { $0.group == group ? $0.rows : nil } ?? allSessions
-        return AssistantBadges.waiting(roster: roster, group: group, sessions: rows, interactions: interactions.values) { key, row in
-            let session = row ?? sessionIndex[key]
+        return AssistantBadges.waiting(roster: roster, group: group, sessions: rows, interactions: interactions.values,
+                                       known: { sessionIndex[$0] }) { key, session in
             switch TabBadges.place(key, session: session, quiet: session?.quiet == true || isQuiet(key), mutes: pinsStore(key.group)?.mutes) {
             case .assistant, .agents: return true
             case .quiet, .muted: return false
