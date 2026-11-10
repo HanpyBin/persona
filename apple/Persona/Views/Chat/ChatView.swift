@@ -3737,7 +3737,7 @@ struct ChatView: View {
         }
         #if os(iOS)
         // Forward (#3807): the pressed message as a forward, to the picker.
-        menu.forward = { [model, key, weak menu] bar in
+        menu.forward = { [model, key, weak menu = menu] bar in
             guard let menu else { return }
             menu.forwarding = Self.forwardDraft(bar, key: key, model: model, menu: menu)
         }

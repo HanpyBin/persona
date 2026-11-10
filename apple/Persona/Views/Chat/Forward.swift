@@ -245,7 +245,10 @@ struct ForwardMemory {
     }
 
     var sessions: [SessionKey] {
-        targets.compactMap { if case .session(let k) = $0 { k } else { nil } }
+        targets.compactMap { target -> SessionKey? in
+            if case .session(let k) = target { return k }
+            return nil
+        }
     }
 
     func remember(_ target: ForwardTarget) {

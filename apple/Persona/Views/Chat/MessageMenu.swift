@@ -448,8 +448,6 @@ struct MessageActionBar: View {
     static func rewinds(id: String, isUser: Bool, menu: MessageMenu) -> Bool {
         isUser && menu.rewind != nil && menu.rewindBlock() != nil && Rewind.entry(of: id) != nil
     }
-    /// A reply ends in ⋯ with Branch to New Chat when the session can fork and the reply is a Claude transcript line of its
-    /// own (`<uuid>#<n>`).
     /// Forward in Share's place (#3807): on iPhone and iPad, for a message in the transcript of a chat that forwards.
     static func forwards(menu: MessageMenu, pending: Bool) -> Bool {
         #if os(iOS)
@@ -459,6 +457,8 @@ struct MessageActionBar: View {
         #endif
     }
 
+    /// A reply ends in ⋯ with Branch to New Chat when the session can fork and the reply is a Claude transcript line of its
+    /// own (`<uuid>#<n>`).
     static func forks(id: String, isUser: Bool, menu: MessageMenu) -> Bool {
         guard !isUser, menu.fork != nil, menu.canFork(), let line = id.split(separator: "#").first, id.contains("#") else { return false }
         return UUID(uuidString: String(line)) != nil
