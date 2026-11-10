@@ -12,6 +12,7 @@ import (
 	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/identity"
 	"github.com/nwverse/persona/server/internal/proto"
+	"github.com/nwverse/persona/server/internal/rpc"
 	"github.com/nwverse/persona/server/internal/transcript"
 )
 
@@ -182,9 +183,18 @@ func (s *Service) publishList(machine string) []proto.Session {
 	}
 	f.shown[machine] = awaitingReply(list)
 	f.shownMu.Unlock()
-	s.hub.Tell(assistantwire.EventFleetSessions, json.RawMessage(b))
+	s.hub.Tell(assistantwire.EventFleetSessions, marshaled(b))
 	s.liveChanged(false)
 	return list
+}
+
+// marshaled is json.Marshal's bytes as the hub is told them: the bus puts them into its line as they are instead of
+// checking and copying a computer's whole list twice more. Nil (they did not encode) goes as before: null.
+func marshaled(b []byte) any {
+	if b == nil {
+		return json.RawMessage(nil)
+	}
+	return rpc.Marshaled(b)
 }
 
 // awaitingReply are the rows of list the reply reminders can pick (replyWaits' first check), copied: only those are read

@@ -107,7 +107,7 @@ func (s *Service) tellLive(st FleetState) {
 	if same {
 		return
 	}
-	if s.hub.Tell(assistantwire.EventFleetLive, json.RawMessage(b)) == nil {
+	if s.hub.Tell(assistantwire.EventFleetLive, marshaled(b)) == nil {
 		l.mu.Lock()
 		l.sent = string(b)
 		l.mu.Unlock()
