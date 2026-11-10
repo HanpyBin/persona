@@ -1868,6 +1868,8 @@ def assistant_state(space="", archived=False):
         out.update(agent_tasks=cfg["agent_tasks"], archive_closed_days=cfg["archive_closed_days"])
     if cfg["notes"] is not None:
         out["notes"] = cfg["notes"]
+    if isinstance(cfg.get("timezone_picked"), bool):  # once a client said so, as the hub (#1855)
+        out["timezone_picked"] = cfg["timezone_picked"]
     if cfg["main"]:
         out["main"] = cfg["main"]
     if MEETING_ATTENDANCE:  # only from a hub that attends meetings (meeting-minutes.md "Attendance fields")
@@ -17491,9 +17493,14 @@ class H(BaseHTTPRequestHandler):
                 if not any(m["id"] == body["machine_id"] for m in MACHINES):
                     return self.send_json({"error": "unknown machine"}, 400)
                 ASSISTANT_CONFIG["machine_id"] = body["machine_id"]
-            for key in ("launcher", "timezone"):
-                if body.get(key):
-                    ASSISTANT_CONFIG[key] = body[key]
+            if body.get("launcher"):
+                ASSISTANT_CONFIG["launcher"] = body["launcher"]
+            # as the hub (#1855): a zone sent without timezone_picked is a device's own sync, left out while one was picked
+            picked = body.get("timezone_picked")
+            if body.get("timezone") and (isinstance(picked, bool) or ASSISTANT_CONFIG.get("timezone_picked") is not True):
+                ASSISTANT_CONFIG["timezone"] = body["timezone"]
+            if isinstance(picked, bool):
+                ASSISTANT_CONFIG["timezone_picked"] = picked
             if body.get("notes") is not None:
                 ASSISTANT_CONFIG["notes"] = body["notes"]
             if body.get("main"):
