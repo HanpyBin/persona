@@ -85,6 +85,18 @@ func iphoneMac(t *testing.T, h *Manager, id string, devices []proto.IPhoneDevice
 	}
 }
 
+// lastIPhoneCall is the last iphone.call the node got (a refresh's iphone.status may land after it).
+func lastIPhoneCall(t *testing.T, calls []phoneCallSeen) phoneCallSeen {
+	t.Helper()
+	for i := len(calls) - 1; i >= 0; i-- {
+		if calls[i].Method == "iphone.call" {
+			return calls[i]
+		}
+	}
+	t.Fatal("no iphone.call")
+	return phoneCallSeen{}
+}
+
 func shownIPhone(t *testing.T, h *Manager, m *Machine) *proto.IPhone {
 	t.Helper()
 	x, ok := h.report().Machines[m.cfg.ID]
@@ -181,8 +193,7 @@ func TestIPhoneExtension(t *testing.T) {
 	if res.IsError || len(res.Content) != 2 || res.Content[1].Type != "image" || !strings.Contains(res.Content[0].Text, "Settings") {
 		t.Fatalf("%+v", res)
 	}
-	calls := seen()
-	last := calls[len(calls)-1]
+	last := lastIPhoneCall(t, seen())
 	var args map[string]any
 	_ = json.Unmarshal(last.Call.Args, &args)
 	if last.Call.Device != "dev-a1" || last.Call.Op != "look" || last.Call.Session != "persona-conv1234" || args["query"] != "set" || args["screenshot"] != true {
@@ -416,8 +427,7 @@ func TestIPhoneCallFailures(t *testing.T) {
 	if !res.IsError || !strings.Contains(res.Content[0].Text, "look at its screen with iphone_look") {
 		t.Fatalf("%+v", res)
 	}
-	calls := seen()
-	if got := calls[len(calls)-1].Call.TimeoutMS; got != 120000 {
+	if got := lastIPhoneCall(t, seen()).Call.TimeoutMS; got != 120000 {
 		t.Fatalf("the node's time is clamped to 120 s: %d", got)
 	}
 
@@ -510,8 +520,7 @@ func TestIPhoneEdges(t *testing.T) {
 	if res := h.callIPhoneTool(ctx, "c", "iphone_look", json.RawMessage(`{"phone": "dev-c3"}`)); res.IsError {
 		t.Fatalf("by id: %+v", res)
 	}
-	calls := seen()
-	if last := calls[len(calls)-1]; last.Call.Device != "dev-c3" {
+	if last := lastIPhoneCall(t, seen()); last.Call.Device != "dev-c3" {
 		t.Fatalf("%+v", last)
 	}
 
@@ -536,5 +545,46 @@ func TestIPhoneEdges(t *testing.T) {
 	}
 	if phones := h.iphone().Phones; slices.Contains(phones, "dev-a1") || !slices.Contains(phones, "dev-c3") {
 		t.Fatalf("on again, without the one taken back: %v", phones)
+	}
+}
+
+// The iPhones that consented change only through PUT /api/v1/iphone/consent: the general settings route (full token,
+// as the CLI's personad extension config uses) and the assistant's settings card keep what is stored, and the
+// settings form does not show the field.
+func TestIPhonePhonesOnlyFromTheConsent(t *testing.T) {
+	h, _ := extensionTestHub(t)
+	ctx := context.Background()
+	mux := h.routes()
+	if err := h.extensions.reg.SetEnabled(ctx, iphoneExtensionID, true, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.extensions.reg.SetConfig(ctx, iphoneExtensionID, json.RawMessage(`{"machines": ["mac"], "phones": ["dev-a1"]}`), "test"); err != nil {
+		t.Fatal(err)
+	}
+	phones := func() []string { return h.iphone().Phones }
+	for _, body := range []string{
+		`{"config": {"machines": ["mac"], "phones": ["dev-a1", "dev-evil"], "confirm": true}}`, // adding one
+		`{"config": {"machines": ["mac"], "phones": []}}`,                                      // taking one away
+		`{"config": {"machines": ["mac"]}}`,                                                    // leaving it out (a form without it)
+	} {
+		code, out := call(t, mux, "PUT", "/api/v1/extensions/iphone/-/config", h.cfg.Token, body)
+		if code != 200 || strings.Join(phones(), ",") != "dev-a1" {
+			t.Fatalf("%s: %d %v → %v", body, code, out, phones())
+		}
+		if strings.Contains(body, "confirm") && !h.iphone().Confirm {
+			t.Fatal("the other fields are saved as sent")
+		}
+	}
+
+	// The assistant's settings card refuses the field outright.
+	res, err := h.toolPersonaSettings(ctx, "server", "s1", json.RawMessage(`{"action":"set","key":"extension.iphone","value":{"phones":["dev-evil"]}}`))
+	if err == nil || !strings.Contains(err.Error(), "own consent") || strings.Join(phones(), ",") != "dev-a1" {
+		t.Fatalf("%q %v → %v", res, err, phones())
+	}
+
+	// Not in the form any client draws.
+	raw, _ := json.Marshal(h.extensions.detail(ctx, h.extensions.reg.Get(iphoneExtensionID)).Form)
+	if strings.Contains(string(raw), `"phones"`) || !strings.Contains(string(raw), `"machines"`) {
+		t.Fatalf("form: %s", raw)
 	}
 }

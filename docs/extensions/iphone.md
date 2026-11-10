@@ -33,6 +33,9 @@ Three things, all needed before the assistant can touch an iPhone:
    Only the user's own signed-in apps can give it (a master token or an extension's token gets 403). The hub cannot tell
    which of the user's devices sent it (an app cannot prove it is a given iPhone), so the switch is offered only in the
    app on an iPhone, for the iPhone it identifies as itself (below). Taking it back works even while the extension is off.
+   `phones` is in the extension's schema only so it can be stored: the settings form does not show it, the general
+   settings route (`PUT /api/v1/extensions/iphone/-/config`, and `personad extension config` through it) keeps the stored
+   value whatever it is sent, and the assistant's settings card refuses it. Only the consent route changes it.
 
 An iPhone is **allowed** when a computer that reaches it is on and its id is in `phones`. The assistant's tools appear only while
 some iPhone is allowed, and only allowed iPhones can be named. Everything else fails closed: an iPhone the app could not

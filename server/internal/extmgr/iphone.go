@@ -7,6 +7,7 @@ package extmgr
 // machines carry no IPhone. Like the extensions cua and ego (computer.go, browser.go), whose switch it shares.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -84,6 +85,43 @@ func (h *Manager) iphone() iphoneSettings {
 	s := iphoneSettings{On: true}
 	_ = json.Unmarshal(h.extensions.reg.Config(p), &s)
 	return s
+}
+
+// iphonePhonesField is the settings field of the iPhones that consented. Only PUT /api/v1/iphone/consent changes it
+// (from the user's own signed-in app); the general settings routes keep what is stored (keepIPhonePhones) and the
+// settings form does not show it, so nothing else can consent for an iPhone.
+const iphonePhonesField = "phones"
+
+// keepIPhonePhones is raw, a whole new configuration of extension p, with the iPhone extension's phones put back to
+// what is stored; any other extension's raw as it is.
+func (h *Manager) keepIPhonePhones(p *extension.Extension, raw json.RawMessage) (json.RawMessage, error) {
+	if p == nil || p.Record.ID != iphoneExtensionID {
+		return raw, nil
+	}
+	next := map[string]json.RawMessage{}
+	if len(bytes.TrimSpace(raw)) > 0 {
+		if err := json.Unmarshal(raw, &next); err != nil || next == nil {
+			return raw, nil // not an object: the schema check refuses it as it is
+		}
+	}
+	stored := map[string]json.RawMessage{}
+	_ = json.Unmarshal(h.extensions.reg.Config(p), &stored)
+	if v, ok := stored[iphonePhonesField]; ok {
+		next[iphonePhonesField] = v
+	} else {
+		delete(next, iphonePhonesField)
+	}
+	return json.Marshal(next)
+}
+
+// withoutIPhonePhones is the iPhone extension's settings form without phones (only each iPhone's own app changes it).
+func withoutIPhonePhones(p *extension.Extension, form *extension.Schema) *extension.Schema {
+	if p == nil || p.Record.ID != iphoneExtensionID || form == nil {
+		return form
+	}
+	out := *form
+	out.Fields = slices.DeleteFunc(slices.Clone(form.Fields), func(f extension.Field) bool { return f.Name == iphonePhonesField })
+	return &out
 }
 
 // iphoneOf is m's proto.Machine.IPhone: nil unless the extension is on and m is a system the bridge runs on; else the
