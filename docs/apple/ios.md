@@ -1667,11 +1667,13 @@ group's. With one installed manager, or a hub without a roster, nothing below sh
 [managers.md](../assistant/managers.md) "Clients": the interface calls a manager an **assistant**, and one of them is the
 **current assistant**, picked in the sidebar's header (`AssistantSwitcherHeader`, `Views/Assistant/AssistantSwitcher.swift`; iPhone,
 iPad and the Mac, where the header is one line in the title bar's row). The header shows the Persona face chosen in Appearance
-with the state's dot, the current assistant's name with an arrow, and "Online · <host>" / "Offline · last synced …". It opens a
-popover (`AssistantSwitcherList`): one row per manager, the installed ones (the default first, then roster order) and then those
-still installing, each with a monogram in its color (`AssistantSwitcherText.hue`: the default's is `Theme.ai`, any other's the sum
-of its id's UTF-8 bytes modulo five over blue, green, orange, pink, indigo, the same on every client), its state line, a Default
-chip and a check on the current one; an offline one is dimmed and can still be picked. Under them **New Assistant** (asks for a
+with the state's dot at its foot, the current assistant's name with an arrow, and "Online · <host>" / "Offline · last synced …".
+It opens a popover (`AssistantSwitcherList`): one row per manager, the installed ones (the default first, then roster order) and
+then those still installing, each with its first letter on a disc in its color (`AssistantSwitcherText.hue`: the default's is
+`Theme.ai`, any other's the sum of its id's UTF-8 bytes modulo five over blue, green, orange, pink, indigo, the same on every
+client; the letter in the page's color) and the state's dot at the disc's foot, its state line, a Default chip and a check on the
+current one; an offline row is dimmed as a whole and can still be picked. The dot (`AssistantStateDot`) is green online, gray
+offline and orange while installing, ringed in the page's color; Settings › Assistants keeps its dot beside the words. Under them **New Assistant** (asks for a
 name, then the install code sheet of Settings › Assistants) and **Manage Assistants…** (Settings › Assistants). A row still
 installing opens its install code: the one this header made while it lasts, else a new one (`ManagersModel.showCode`; the hub
 keeps no code to show again). What the list presents (the name alert, the code sheet, Settings) waits until the popover is

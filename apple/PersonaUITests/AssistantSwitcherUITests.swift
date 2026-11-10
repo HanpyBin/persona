@@ -2,9 +2,10 @@ import XCTest
 
 /// The sidebar's assistant switcher (docs/assistant/managers.md "Clients"): what its list presents once it has gone away.
 /// New Assistant asks for a name and then shows the install code, Manage Assistants… opens Settings › Assistants, and a
-/// row still installing shows its install code. Against scripts/mock/mock_hub.py (three installed managers and one
-/// installing by default): `TEST_RUNNER_PERSONA_SWITCHER_HUB=http://127.0.0.1:<port>`. `TEST_RUNNER_PERSONA_SHOTS=<dir>`
-/// keeps the screens, named by `TEST_RUNNER_PERSONA_SHOTS_APPEARANCE` (light / dark).
+/// row still installing shows its install code; at the largest text size both actions can still be tapped. Against
+/// scripts/mock/mock_hub.py (three installed managers and one installing by default):
+/// `TEST_RUNNER_PERSONA_SWITCHER_HUB=http://127.0.0.1:<port>`. `TEST_RUNNER_PERSONA_SHOTS=<dir>` keeps the screens, named by
+/// `TEST_RUNNER_PERSONA_SHOTS_APPEARANCE` (light / dark).
 final class AssistantSwitcherUITests: XCTestCase {
     private var env: [String: String] { ProcessInfo.processInfo.environment }
     private var hub = ""
@@ -44,14 +45,28 @@ final class AssistantSwitcherUITests: XCTestCase {
         shot(app, "switcher-installing-code")
     }
 
+    /// At the largest text size New Assistant and Manage Assistants… are still whole and can be tapped: the rows scroll
+    /// above them.
+    @MainActor func testAtTheLargestTextSizeBothActionsCanBeTapped() throws {
+        let app = openList(["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"])
+        let create = element(app, "assistant-switcher-new"), manage = element(app, "assistant-switcher-manage")
+        for _ in 0..<4 where !(create.isHittable && manage.isHittable) { element(app, "assistant-switcher-list").swipeUp() }
+        XCTAssertTrue(create.isHittable && manage.isHittable, "an action out of reach:\n\(app.debugDescription)")
+        let window = app.windows.firstMatch.frame
+        XCTAssertTrue(window.contains(create.frame) && window.contains(manage.frame), "an action cut off by the screen")
+        shot(app, "switcher-ax-actions")
+        manage.tap()
+        XCTAssertTrue(element(app, "managers.row.m-3fa21c").waitForExistence(timeout: 10), "Settings › Assistants did not open:\n\(app.debugDescription)")
+    }
+
     // MARK: -
 
     /// The Persona page's sidebar out, on the default assistant, with the switcher's list open.
-    @MainActor private func openList() -> XCUIApplication {
+    @MainActor private func openList(_ extra: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
         let pair = "persona://pair?url=" + hub.addingPercentEncoding(withAllowedCharacters: .alphanumerics)! + "&token=mock"
         app.launchArguments = ["-pairURL", pair, "-tab", "assistant", "-app.tab", "assistant", "-openAssistantSidebar", "YES",
-                               "-openAssistantManager", "assistant"]
+                               "-openAssistantManager", "assistant"] + extra
         app.launchPinned()
         // A fresh install asks for notifications first, and the app waits inactive (no roster) until it is answered.
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")

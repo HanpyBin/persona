@@ -41,7 +41,8 @@ enum AssistantSwitcherText {
     }
 }
 
-/// An assistant's avatar in the switcher's list: its name's first letter on a disc in its color, with its state's dot.
+/// An assistant's avatar in the switcher's list: its name's first letter on a disc in its color, with its state's dot at
+/// the disc's foot, as on every client (the letter in the page's color, so it reads on the disc in both appearances).
 struct AssistantMonogram: View {
     var manager: HubManager
     var defaultID: String
@@ -51,11 +52,34 @@ struct AssistantMonogram: View {
     var body: some View {
         let color = AssistantSwitcherText.color(manager, defaultID: defaultID)
         // The disc grows with the text as the rows do (`scaledFrame`); its letter stops growing first, so it stays inside.
-        Monogram(name: manager.name, size: Theme.Size.wellL * Theme.sizeScale(typeSize), fill: color.opacity(0.15), ink: color,
+        Monogram(name: manager.name, size: Theme.Size.wellL * Theme.sizeScale(typeSize), fill: color, ink: Theme.pageBackground,
                  font: Theme.Font.bodyStrong)
             .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-            .overlay(alignment: .bottomTrailing) { managerDot(ManagersText.status(manager, now: now).tone) }
+            .overlay(alignment: .bottomTrailing) { AssistantStateDot(tone: ManagersText.status(manager, now: now).tone) }
             .accessibilityHidden(true)
+    }
+}
+
+/// An assistant's state at the foot of its avatar (the Persona face in the header, a row's disc): green online, gray
+/// offline, orange while it is still being installed, ringed in the page's color so it stands apart from the avatar.
+/// Settings › Assistants keeps `managerDot` beside its words.
+struct AssistantStateDot: View {
+    var tone: ManagersText.Tone
+
+    var body: some View {
+        Circle()
+            .fill(Self.color(tone))
+            .overlay(Circle().strokeBorder(Theme.pageBackground, lineWidth: Theme.Size.lineMedium))
+            .scaledFrame(width: Theme.Size.dotXL, height: Theme.Size.dotXL)
+            .accessibilityHidden(true)
+    }
+
+    static func color(_ tone: ManagersText.Tone) -> Color {
+        switch tone {
+        case .online: Theme.positive
+        case .installing: Theme.Hue.orange
+        case .offline: Theme.Hue.gray
+        }
     }
 }
 
@@ -89,7 +113,7 @@ struct AssistantSwitcherHeader: View {
                 // At the accessibility sizes the face gives its room to the name (the top bar keeps showing it).
                 if !compact && !typeSize.isAccessibilitySize {
                     PersonaAvatar(size: Theme.Size.avatar)
-                        .overlay(alignment: .bottomTrailing) { managerDot(ManagersText.status(manager, now: .now).tone) }
+                        .overlay(alignment: .bottomTrailing) { AssistantStateDot(tone: ManagersText.status(manager, now: .now).tone) }
                 }
                 VStack(alignment: .leading, spacing: Theme.Space.xxs) {
                     HStack(spacing: Theme.Space.xs) {
