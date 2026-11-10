@@ -7,7 +7,7 @@ phone and no VPN on it. It is the built-in extension **`iphone`**, parallel to `
 
 | Block | Issue | What |
 | --- | --- | --- |
-| A | #3452 | The device bridge (RemotePairing) and its wire schema (block A's own doc) |
+| A | #3452 | The device bridge (RemotePairing) and its wire schema ([iphone-bridge.md](iphone-bridge.md)) |
 | B | #3452 | Pairing and sessions: the pairing record, finding the iPhone again, reconnecting without replaying input ([iphone-pairing.md](iphone-pairing.md)) |
 | C | #3450 | The node's built-in program `iphone`: `iphone.status`, handing `iphone.call` to D, pair / forget / cancel |
 | D | #3452 | The content: element numbers, reading the screen, timeouts, human-like input, which steps need approval |
