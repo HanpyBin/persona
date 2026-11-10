@@ -540,17 +540,27 @@ func TestMinutesRemade(t *testing.T) {
 	}
 }
 
-// A part the model takes too long for counts as a failure, so it can't hold the queue for ever.
+// A part the model takes too long for counts as a timeout, so it can't hold the queue for ever: failed after
+// minutesTimeoutTries of them, each waited out.
 func TestMinutesCallTimeoutCounts(t *testing.T) {
 	model := &funcModel{f: func(int, string, string) (string, error) { return "", context.DeadlineExceeded }}
 	e := goldenEngine(t, model)
 	now := time.Now()
+	advance := fakeMinutesClock(t, now)
 	putRecording(t, e, recID, meetingUpload(1, now.Add(-time.Hour), "一句"), now)
-	for range minutesTries {
+	for i := range minutesTimeoutTries {
 		e.WriteMinutes(context.Background(), 2)
+		want := MinutesPending
+		if i == minutesTimeoutTries-1 {
+			want = MinutesFailed
+		}
+		if r := recordingNow(t, e, recID); r.MinutesState != want || r.MinutesTimeouts != i+1 || r.MinutesFails != 0 {
+			t.Fatalf("timeout %d: %q timeouts %d fails %d", i+1, r.MinutesState, r.MinutesTimeouts, r.MinutesFails)
+		}
+		advance(minutesBackoffMax)
 	}
-	if r := recordingNow(t, e, recID); r.MinutesState != MinutesFailed {
-		t.Fatalf("%q after %d timeouts", r.MinutesState, minutesTries)
+	if len(model.calls) != minutesTimeoutTries {
+		t.Fatalf("%d calls for %d timeouts", len(model.calls), minutesTimeoutTries)
 	}
 }
 

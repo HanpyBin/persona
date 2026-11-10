@@ -86,7 +86,7 @@ const (
 	minutesOneCall     = 16000 // runes of transcript read in one call; longer ones go in chunks
 	minutesChunk       = 12000
 	minutesMaxChunks   = 40
-	minutesCallTimeout = 3 * time.Minute
+	minutesCallTimeout = 6 * time.Minute  // a slow model's call; a timeout backs off (minutes_retry.go)
 	minutesJobTimeout  = 45 * time.Minute // all the calls of one recording: the knowledge-base round waits for them
 	minutesMaxItems    = 100
 	minutesTextRunes   = 400
@@ -103,14 +103,15 @@ func (r *Recording) isMeeting() bool {
 }
 
 // planMinutes sets MinutesState from the rest: pending until minutes of the current revision are written, failed after
-// minutesTries unusable answers for it; minutes of an older revision keep showing meanwhile.
+// minutesTries unusable answers or minutesTimeoutTries timeouts for it; minutes of an older revision keep showing
+// meanwhile.
 func (r *Recording) planMinutes() {
 	switch {
 	case !r.isMeeting():
 		r.MinutesState = "" // minutes made while it was one stay readable; nothing more is made
 	case r.MinutesRev > 0 && r.MinutesRev >= r.Revision:
 		r.MinutesState = MinutesReady
-	case r.MinutesFailRev == r.Revision && r.MinutesFails >= minutesTries:
+	case r.MinutesFailRev == r.Revision && (r.MinutesFails >= minutesTries || r.MinutesTimeouts >= minutesTimeoutTries):
 		r.MinutesState = MinutesFailed
 	default:
 		r.MinutesState = MinutesPending
@@ -184,7 +185,8 @@ func (e *Engine) AskMinutes(rawID string) error {
 	if !r.Complete || r.Chars == 0 {
 		return ErrRecordingIncomplete
 	}
-	r.MinutesAsked, r.MinutesRev, r.MinutesFails, r.MinutesFailRev, r.MatchedRev = true, 0, 0, 0, 0
+	r.MinutesAsked, r.MinutesRev, r.MatchedRev = true, 0, 0
+	r.resetMinutesTries()
 	r.MinutesAsks++
 	r.planMinutes()
 	return st.putEntity(KindRecording, r.ID, r, &r.Tagging, false)
@@ -245,8 +247,9 @@ func (e *Engine) WriteMinutes(ctx context.Context, max int) int {
 		return 0
 	}
 	var todo []*Recording
+	now := minutesNow()
 	for _, r := range e.Store.Recordings() {
-		if r.Complete && r.Chars > 0 && r.MinutesState == MinutesPending {
+		if r.Complete && r.Chars > 0 && r.MinutesState == MinutesPending && !r.minutesWaiting(now) {
 			todo = append(todo, r)
 		}
 	}
@@ -264,9 +267,11 @@ func (e *Engine) WriteMinutes(ctx context.Context, max int) int {
 			continue
 		}
 		e.logf("recording %s: minutes: %v", r.ID, err)
-		// A call that ran out its own time counts too: a part too slow for the model would otherwise come first
-		// in every round, for ever.
-		if !unusableAnswer(err) && !(errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil) {
+		if callTimedOut(ctx, err) {
+			e.minutesTimedOut(r.ID, r.Revision) // waits a while; the others still get their turn
+			continue
+		}
+		if !unusableAnswer(err) {
 			break // the model is paused or unreachable: the others would fail alike; still pending next round
 		}
 		e.minutesFailed(r.ID, r.Revision)
@@ -293,7 +298,8 @@ func (e *Engine) minutesFailed(id string, rev int64) {
 		return
 	}
 	if r.MinutesFailRev != rev {
-		r.MinutesFailRev, r.MinutesFails = rev, 0
+		r.resetMinutesTries()
+		r.MinutesFailRev = rev
 	}
 	r.MinutesFails++
 	r.planMinutes()
@@ -924,7 +930,8 @@ func (e *Engine) storeMinutes(ctx context.Context, r *Recording, m *Minutes) err
 		st.recMu.Unlock()
 		return err
 	}
-	cur.MinutesVersion, cur.MinutesFails, cur.MinutesFailRev = m.Version, 0, 0
+	cur.MinutesVersion = m.Version
+	cur.resetMinutesTries()
 	if cur.MinutesAsks == r.MinutesAsks { // else the user asked again meanwhile: made again at the next round
 		cur.MinutesRev = r.Revision
 	}
