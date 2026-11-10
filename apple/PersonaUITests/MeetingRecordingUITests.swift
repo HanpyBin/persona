@@ -147,7 +147,7 @@ final class MeetingRecordingUITests: XCTestCase {
         try shot(app, "minutes-jump")
     }
 
-    /// Not written yet: says the hub is writing them (正在整理).
+    /// Not written yet: says the hub is writing them.
     @MainActor func testMinutesBeingWritten() throws {
         let hub = try mockHub()
         try minutesMode(hub, "pending")

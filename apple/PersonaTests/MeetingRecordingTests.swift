@@ -171,7 +171,7 @@ import Testing
         #expect(RecordingMinutes.sentenceIndex(at: 5, in: []) == nil)
     }
 
-    /// `minutes_state` as the page shows it: being written (正在整理), failed, or not a meeting.
+    /// `minutes_state` as the page shows it: being written, failed, or not a meeting.
     @Test func minutesStateFromTheHub() throws {
         let m = try JSONDecoder().decode(RecordingMinutes.self, from: Data(minutesJSON.utf8))
         #expect(RecordingMinutesModel.state(minutes: m, status: "ready", meeting: true, synced: true) == .ready(m))
