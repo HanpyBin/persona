@@ -12,6 +12,7 @@ import (
 
 	"github.com/nwverse/persona/server/internal/clitext"
 	"github.com/nwverse/persona/server/internal/hub"
+	"github.com/nwverse/persona/server/internal/procs"
 	"github.com/nwverse/persona/server/internal/update"
 )
 
@@ -82,11 +83,15 @@ func Hub(ctx context.Context, build update.Build, args []string) error {
 		if len(rest) > 0 { // a flag such as --listen would otherwise be dropped and a hub started on hub.json's port
 			return clitext.UsageError("usage: " + clitext.CommandName() + " " + Word + "[run]")
 		}
+		// The edge (or the hub serving without one) is the top of the hub's processes: it caps itself and hands the cap
+		// to its slot and built-in manager by their environment (procs.ChildEnv).
+		procs.Cap(procs.Max)
 		return hub.Serve(ctx, build)
 	case "slot": // the hub as its edge runs it (hub_edge.go): not for people
 		if len(rest) > 0 {
 			return noArguments("slot")
 		}
+		procs.AtStart() // the cap the edge passed, kept from what the slot starts but its built-in manager
 		return hub.RunSlot(ctx, build)
 	case "switch":
 		return runHubSwitch(rest)

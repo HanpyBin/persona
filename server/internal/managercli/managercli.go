@@ -16,6 +16,7 @@ import (
 	"github.com/nwverse/persona/server/internal/manager"
 	"github.com/nwverse/persona/server/internal/managerconf"
 	"github.com/nwverse/persona/server/internal/osproc"
+	"github.com/nwverse/persona/server/internal/procs"
 	"github.com/nwverse/persona/server/internal/tunnel"
 	"github.com/nwverse/persona/server/internal/update"
 )
@@ -30,6 +31,9 @@ func Assistant(ctx context.Context, build update.Build, args []string, stdin io.
 	if len(args) > 0 {
 		return clitext.UsageError("usage: " + clitext.CommandName() + " assistant [drop-shared-tables [--yes]]")
 	}
+	// The cap the hub passed (procs.ChildEnv) stays here too: the nodes, extensions and agents the manager starts never
+	// see it. A manager the hub did not start caps itself.
+	procs.AtStart()
 	// What a parent left inheritable (an older hub's listening socket) stops here, not in every node, extension and
 	// agent the manager starts. Here, not in main: the sandbox's launcher hands its descriptors on by exec.
 	osproc.SealInherited()

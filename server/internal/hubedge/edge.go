@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/nwverse/persona/server/internal/acceptloop"
+	"github.com/nwverse/persona/server/internal/procs"
 	"github.com/nwverse/persona/server/internal/proxyproto"
 )
 
@@ -464,7 +465,7 @@ func (e *edge) spawn(binary string, standby bool) (*proc, error) {
 	if standby {
 		role = "standby"
 	}
-	env := append(os.Environ(), EnvSlot+"="+name, EnvRole+"="+role, EnvSockets+"="+socks)
+	env := append(procs.ChildEnv(os.Environ()), EnvSlot+"="+name, EnvRole+"="+role, EnvSockets+"="+socks)
 	cmd := exec.Command(binary, e.o.Args...)
 	cmd.Env = env
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr

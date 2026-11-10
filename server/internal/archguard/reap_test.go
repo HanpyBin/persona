@@ -39,6 +39,7 @@ var reapSites = []reapSite{
 	}},
 	{"internal/managercli/managercli.go", "Assistant", 1, map[string]string{
 		"len":                  "builtin",
+		"procs.AtStart":        "sets GOMAXPROCS",
 		"osproc.SealInherited": "marks inherited descriptors close-on-exec",
 	}},
 	{"internal/nodecmd/nodecmd.go", "runNode", 2, map[string]string{
