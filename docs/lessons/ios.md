@@ -1639,3 +1639,13 @@ A worktree's display name and its Agents' conversation names are different comma
 ## Configuration refusals are not retryable connection failures (#1915)
 
 HTTP failures live in `Shared/APIClient.swift`, not PersonaKit's model-response `APIErrorInfo`. Classify business codes before status or timeout wording. A background sync must pause on disabled/read-only configuration without discarding uploads or deletion intent; another local save cannot repair that configuration. Reopen/foreground can explicitly recheck. Do not continue writes after failed reconciliation, and do not acknowledge a remote deletion from an unsupported 404. Keep the list's pending-delete explanation durable across relaunch.
+
+## Presenting from a popover's row, and identifiers that cover (2026-11-10, assistant switcher)
+
+- A popover row that opens an alert, a sheet or another page has to wait for the popover to be gone: UIKit refuses a
+  presentation while the popover is still leaving. Keep what was asked for in state, close the popover, and present it from
+  the popover content's `onDisappear` (`AssistantSwitcherHeader.listGone`), not after a guessed delay. A tap outside leaves
+  the state empty and presents nothing.
+- An `accessibilityIdentifier` on a container covers the identifiers of the buttons laid out directly in it (the drawer's
+  `assistant-sidebar` over its header, a popover's list over its actions); a scroll view or list in between keeps its rows'.
+  Put a container's identifier on the part that holds rows, and let UI tests also accept the covering one.

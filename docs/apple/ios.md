@@ -1633,7 +1633,9 @@ of its id's UTF-8 bytes modulo five over blue, green, orange, pink, indigo, the 
 chip and a check on the current one; an offline one is dimmed and can still be picked. Under them **New Assistant** (asks for a
 name, then the install code sheet of Settings › Assistants) and **Manage Assistants…** (Settings › Assistants). A row still
 installing opens its install code: the one this header made while it lasts, else a new one (`ManagersModel.showCode`; the hub
-keeps no code to show again). The header shows with one assistant too. A hub without a roster keeps Persona's name there.
+keeps no code to show again). What the list presents (the name alert, the code sheet, Settings) waits until the popover is
+gone (its `onDisappear`), not for a fixed delay: UIKit refuses a presentation while the popover is still leaving. The header
+shows with one assistant too. A hub without a roster keeps Persona's name there.
 
 The pick is the manager's id per group (`AppModel.assistantPicks`), kept on this device across launches (`AssistantPickStore`,
 the app's defaults); no pick follows the hub's default. A pick whose manager leaves the roster goes back to the default, and one
@@ -1668,7 +1670,9 @@ starts on the current assistant before the hub answers.
 - **Tests**: `ManagerSwitchTests` (the route rule and real requests, the pick's start, fallback and one manager, the pick kept
   across launches and through a change of the default, each manager's settings held, a manager leaving the roster, the lists,
   another assistant's conversation opened without switching, an offline manager) and `AssistantSwitcherTests` (the rows and
-  their words, the colors, the kept roster, a row still installing). By hand, against the mock hub (`MOCK_MANAGER_NAS=1`):
+  their words, the colors, the kept roster, a row still installing); UI suite `AssistantSwitcherUITests` (New Assistant → name →
+  code sheet, Manage Assistants… → Settings › Assistants, a row still installing → code sheet; against the mock hub with
+  `TEST_RUNNER_PERSONA_SWITCHER_HUB`). By hand, against the mock hub (`MOCK_MANAGER_NAS=1`):
   `-openAssistantManager m-3fa21c` (工作, no main conversation yet) or `m-8b04d2` (家里, offline) makes that manager the current
   assistant once the roster is in; `-openAssistantSidebar YES -showAssistantSwitcher YES` opens the sidebar with the list.
 

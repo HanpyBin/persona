@@ -143188,25 +143188,25 @@
         }
       }
     },
-    "This manager does not provide this action.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "This manager does not provide this action."
+    "This assistant does not provide this action." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This assistant does not provide this action."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "此管理器未提供这项操作。"
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このアシスタントはこの操作を提供していません。"
           }
         },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "このマネージャーはこの操作を提供していません。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此助手未提供这项操作。"
           }
         }
       }
@@ -143257,25 +143257,25 @@
         }
       }
     },
-    "Automatic upgrades are paused globally for this manager.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Automatic upgrades are paused globally for this manager."
+    "Automatic upgrades are paused globally for this assistant." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Automatic upgrades are paused globally for this assistant."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "此管理器的全局自动升级已暂停。"
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このアシスタントでは自動アップグレードが全体で一時停止しています。"
           }
         },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "このマネージャーでは自動アップグレードが全体で一時停止しています。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此助手的全局自动升级已暂停。"
           }
         }
       }
@@ -143418,71 +143418,71 @@
         }
       }
     },
-    "This manager does not provide a safe uninstall preview. Remove the extension at its source.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "This manager does not provide a safe uninstall preview. Remove the extension at its source."
+    "This assistant does not provide a safe uninstall preview. Remove the extension at its source." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This assistant does not provide a safe uninstall preview. Remove the extension at its source."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "此管理器未提供安全的卸载预检，请在来源处移除扩展。"
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このアシスタントは安全なアンインストールの事前確認を提供していません。提供元で削除してください。"
           }
         },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "このマネージャーは安全なアンインストールの事前確認を提供していません。提供元で削除してください。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此助手未提供安全的卸载预检，请在来源处移除扩展。"
           }
         }
       }
     },
-    "This manager does not provide a rollback preview.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "This manager does not provide a rollback preview."
+    "This assistant does not provide a rollback preview." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This assistant does not provide a rollback preview."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "此管理器未提供回滚预览。"
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このアシスタントはロールバックのプレビューを提供していません。"
           }
         },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "このマネージャーはロールバックのプレビューを提供していません。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此助手未提供回滚预览。"
           }
         }
       }
     },
-    "The manager is offline. Reconnect to change this extension.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The manager is offline. Reconnect to change this extension."
+    "The assistant is offline. Reconnect to change this extension." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The assistant is offline. Reconnect to change this extension."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "管理器已离线，重新连接后才能修改此扩展。"
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アシスタントはオフラインです。この拡張機能を変更するには再接続してください。"
           }
         },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "マネージャーはオフラインです。この拡張機能を変更するには再接続してください。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "助手已离线，重新连接后才能修改此扩展。"
           }
         }
       }

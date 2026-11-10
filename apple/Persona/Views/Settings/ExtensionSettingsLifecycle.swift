@@ -16,10 +16,10 @@ nonisolated struct ExtensionSettingsPolicy {
     let market: String?
 
     static var uninstallPreviewGap: String {
-        String(localized: "This manager does not provide a safe uninstall preview. Remove the extension at its source.")
+        String(localized: "This assistant does not provide a safe uninstall preview. Remove the extension at its source.")
     }
     static var rollbackPreviewGap: String {
-        String(localized: "This manager does not provide a rollback preview.")
+        String(localized: "This assistant does not provide a rollback preview.")
     }
 
     init(detail: HubExtensionDetail) {
@@ -56,7 +56,7 @@ nonisolated struct ExtensionSettingsPolicy {
             case "installed": source = String(localized: "Installed [Extension Market Views a8b6c3]")
             default: source = String(localized: "Not provided")
             }
-            updateReason = canCheck && !canAutoUpgrade ? String(localized: "This manager does not provide this action.") :
+            updateReason = canCheck && !canAutoUpgrade ? String(localized: "This assistant does not provide this action.") :
                 (canCheck ? "" : String(localized: "This extension is not managed by an extension market. Update it at its source."))
             uninstallReason = canCheck ? Self.uninstallPreviewGap : String(localized: "This extension is managed outside the extension market. Remove it at its source.")
         }
@@ -173,7 +173,7 @@ nonisolated struct ExtensionSettingsPolicy {
             let next = try await api().previewCatalogExtension(market: candidate.market, plugin: id)
             guard next.upgrades(id), next.upgrade == true, next.market == candidate.market,
                   next.from == detail?.plugin.version else {
-                throw APIError(status: 0, message: String(localized: "This manager does not provide this action."))
+                throw APIError(status: 0, message: String(localized: "This assistant does not provide this action."))
             }
             preview = next
             error = nil
@@ -187,7 +187,7 @@ nonisolated struct ExtensionSettingsPolicy {
         defer { busy = false }
         if let problem = preview.confirmationProblem(at: .now) { error = problem; return false }
         guard preview.upgrades(id), preview.market == policy?.market, preview.from == detail?.plugin.version else {
-            error = String(localized: "This manager does not provide this action.")
+            error = String(localized: "This assistant does not provide this action.")
             return false
         }
         do {
@@ -206,7 +206,7 @@ nonisolated struct ExtensionSettingsPolicy {
 
     private func record(_ error: Error) {
         if let apiError = error as? APIError, [404, 405, 501].contains(apiError.status) {
-            self.error = String(localized: "This manager does not provide this action.")
+            self.error = String(localized: "This assistant does not provide this action.")
         } else { self.error = error.localizedDescription }
     }
 }

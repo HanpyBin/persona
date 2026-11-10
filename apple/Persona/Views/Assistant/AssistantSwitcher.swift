@@ -66,9 +66,17 @@ struct AssistantSwitcherHeader: View {
     var openSettings: () -> Void
 
     @State private var listShown = false
+    /// What the list asked for that presents something else, run once the list is gone (`afterList`).
+    @State private var next: Next?
     @State private var page = ManagersModel()
     @State private var naming = false
     @State private var newName = ""
+
+    /// What a row or an action of the list presents once the list has gone away.
+    private enum Next: Equatable {
+        case create, manage
+        case code(HubManager)
+    }
 
     var body: some View {
         Button { listShown.toggle() } label: {
@@ -90,24 +98,16 @@ struct AssistantSwitcherHeader: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .accessibilityElement(children: .ignore)
+        // A button that reads as one line (a button combines its children already; its label replaces theirs).
         .accessibilityLabel("\(manager.name), \(AssistantSwitcherText.line(manager, now: .now))")
         .accessibilityHint("Switches assistants")
         .accessibilityAddTraits(.isHeader)
         .accessibilityIdentifier("assistant-switcher")
         .popover(isPresented: $listShown, arrowEdge: .top) {
-            AssistantSwitcherList(pick: pick, create: {
-                afterList {
-                    newName = ""
-                    naming = true
-                }
-            }, manage: {
-                afterList {
-                    model.settingsPath = NavigationPath([SettingsPage.managers])
-                    openSettings()
-                }
-            })
-            .presentationCompactAdaptation(.popover)
+            AssistantSwitcherList(pick: pick, create: { afterList(.create) }, manage: { afterList(.manage) })
+                .presentationCompactAdaptation(.popover)
+                // Gone, not going: UIKit refuses another presentation while the popover is still on its way out.
+                .onDisappear(perform: listGone)
         }
         .alert("New Assistant", isPresented: $naming) {
             TextField("For example: Work", text: $newName)
@@ -137,23 +137,32 @@ struct AssistantSwitcherHeader: View {
         #endif
     }
 
-    /// Closes the list, then runs what presents something else (an alert, a sheet, Settings): UIKit refuses a
-    /// presentation while the popover is still going away.
-    private func afterList(_ run: @escaping () -> Void) {
+    /// Closes the list and keeps what presents something else (an alert, a sheet, Settings) for when it is gone.
+    private func afterList(_ what: Next) {
+        next = what
         listShown = false
-        Task {
-            try? await Task.sleep(for: Self.listLeaves)
-            run()
-        }
     }
 
-    /// How long the popover takes to go away.
-    private static let listLeaves = Duration.milliseconds(350)
+    /// The list went away: what it asked for, if anything (a tap outside asks for nothing).
+    private func listGone() {
+        guard let what = next else { return }
+        next = nil
+        switch what {
+        case .create:
+            newName = ""
+            naming = true
+        case .manage:
+            model.settingsPath = NavigationPath([SettingsPage.managers])
+            openSettings()
+        case .code(let m):
+            Task { await page.showCode(m) }
+        }
+    }
 
     /// An installed one becomes the current assistant; one still installing shows how to install it.
     private func pick(_ m: HubManager) {
         if m.installing != nil {
-            afterList { Task { await page.showCode(m) } }
+            afterList(.code(m))
             return
         }
         listShown = false
@@ -185,6 +194,8 @@ private struct AssistantSwitcherList: View {
                         }
                     }
                     .scrollBounceBehavior(.basedOnSize)
+                    // On the rows' list only: a container's identifier covers those of the buttons in it.
+                    .accessibilityIdentifier("assistant-switcher-list")
                     Divider().padding(.horizontal, Theme.Space.s).padding(.vertical, Theme.Space.xs)
                 }
                 action(String(localized: "New Assistant"), Theme.Icon.add, tint: Theme.accent, id: "assistant-switcher-new", run: create)
@@ -193,7 +204,6 @@ private struct AssistantSwitcherList: View {
             .padding(Theme.Space.s)
             .scaledFrame(width: Theme.Size.box300)
         }
-        .accessibilityIdentifier("assistant-switcher-list")
     }
 
     private func row(_ m: HubManager, roster: ManagerRoster, current: Bool, now: Date) -> some View {
@@ -222,7 +232,6 @@ private struct AssistantSwitcherList: View {
             .opacity(m.installing == nil && !m.online ? 0.55 : 1)
         }
         .buttonStyle(.plain)
-        .accessibilityElement(children: .ignore)
         .accessibilityLabel(AssistantSwitcherText.spoken(m, now: now, current: current, isDefault: isDefault))
         .accessibilityAddTraits(current ? .isSelected : [])
         .accessibilityIdentifier("assistant-switcher-row-\(m.id)")
