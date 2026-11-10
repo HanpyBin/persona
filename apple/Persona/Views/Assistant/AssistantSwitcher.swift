@@ -46,10 +46,14 @@ struct AssistantMonogram: View {
     var manager: HubManager
     var defaultID: String
     var now: Date
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         let color = AssistantSwitcherText.color(manager, defaultID: defaultID)
-        Monogram(name: manager.name, size: Theme.Size.wellL, fill: color.opacity(0.15), ink: color, font: Theme.Font.bodyStrong)
+        // The disc grows with the text as the rows do (`scaledFrame`); its letter stops growing first, so it stays inside.
+        Monogram(name: manager.name, size: Theme.Size.wellL * Theme.sizeScale(typeSize), fill: color.opacity(0.15), ink: color,
+                 font: Theme.Font.bodyStrong)
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             .overlay(alignment: .bottomTrailing) { managerDot(ManagersText.status(manager, now: now).tone) }
             .accessibilityHidden(true)
     }
