@@ -134,7 +134,6 @@
     <plurals name="chat_tabs_sheet_title">
         <item quantity="other">エージェント%1$d件</item>
     </plurals>
-    <string name="chat_handoff_failed">Personaに渡せませんでした。もう一度お試しください</string>
     <string name="chat_request_draft_page_only">下書きはこのページにのみ一時保存されます</string>
     <string name="chat_refusal_draft_terminal">コンピューターに未送信の下書きがあります。先にターミナルで対応してください。スマートフォンの入力は保持されています。</string>
     <string name="chat_refusal_draft_clearable">コンピューターに未送信の下書きがあります。確認後にクリアして送信できます。</string>

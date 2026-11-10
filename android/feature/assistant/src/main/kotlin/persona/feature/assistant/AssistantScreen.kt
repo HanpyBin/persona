@@ -386,9 +386,11 @@ fun AssistantScreen(
         if (active == null && blocking != null) { blocking.primaryAction()?.let { runReadinessAction(it) }; return }
         // An offline manager takes nothing: its page is history only until it is back.
         if (managers.offline != null) return
-        if (sending || !draftReady || !composer.hasContent || !composer.ready) return
+        // A forward put on the new conversation's composer (#3901) goes with what is typed, or alone.
+        val forwards = if (active == null) persona.feature.chat.ForwardPlacements.home else emptyList()
+        if (sending || !draftReady || !(composer.hasContent || forwards.isNotEmpty()) || !composer.ready) return
         val sentDraft = composer.draft
-        val text = composer.message()
+        val text = if (forwards.isEmpty()) composer.message() else persona.feature.chat.forwardMessage(composer.message(), forwards, resources)
         // A launcher picked on the new-conversation page: a conversation of its own on it, then the message to it.
         val launcher = starterLauncher.takeIf { active == null }
         val startWith = startConversationWith
@@ -430,6 +432,8 @@ fun AssistantScreen(
                 sendAssistantMessage(mainConversationSender, messageSender, target, submitted, operationId)
                 // Clear the submitted assistant's editor after commit, even while another assistant is shown.
                 composer.clearIfUnchanged(sentDraft)
+                if (forwards.isNotEmpty()) persona.feature.chat.ForwardPlacements.home =
+                    persona.feature.chat.ForwardPlacements.home.filterNot { ref -> forwards.any { it.id == ref.id } }
                 draftEditor?.changed(composer.draft)
                 pendingClientId = null
                 pendingText = null
@@ -630,8 +634,11 @@ fun AssistantScreen(
                         draftError?.let { JNotice(androidx.compose.ui.res.stringResource(it), Modifier.padding(horizontal = pagePadding), status = Status.NeedsYou) }
                         val uploadTarget = active ?: snapshot.mainSession
                             ?: SessionKey(assistantMachine, PendingMainConversation.sessionId)
+                        // A forward waiting for the new conversation (#3901): its card over the composer, sent with it.
+                        val homeForwards = if (active == null) persona.feature.chat.ForwardPlacements.home else emptyList()
                         ChatComposer(uploadTarget, composer, working = false, sending = sending || !draftReady,
                             canClear = false, service = composerService?.takeIf { uploadTarget.machineId.isNotBlank() },
+                            extraContent = homeForwards.isNotEmpty(),
                             onSend = ::submit, onCommand = { composer.insert(it, composer.focused) },
                             onNotice = { message ->
                                 if (feedback?.notice(message) != true) scope.launch { snackbar.showSnackbar(message) }
@@ -640,13 +647,19 @@ fun AssistantScreen(
                             blockedLabel = blocking?.takeIf { active == null }?.let { stringResource(blockedSendLabel(it)) },
                             onBlocked = { blocking?.primaryAction()?.let { runReadinessAction(it) } },
                             // A new conversation's launcher, for it alone (iOS StarterComposer, web StarterLauncherChip).
-                            accessory = if (active == null && pageManagement != null && startConversationWith != null && !demo) ({
-                                StarterLauncherChip(starterLauncher, defaultLauncher, launchers, launchersFailed, enabled = !sending,
-                                    onOpen = { scope.launch { loadStarterLaunchers() } }) { picked ->
-                                    // Another launcher (or the default) does not reuse what the last one started.
-                                    if (picked != starterLauncher) starterStarted = null
-                                    starterLauncher = picked
+                            accessory = if (homeForwards.isNotEmpty() || (active == null && pageManagement != null && startConversationWith != null && !demo)) ({
+                                homeForwards.forEach { ref ->
+                                    persona.feature.chat.ForwardComposerCard(ref, lines = if (homeForwards.size == 1) 2 else 1) {
+                                        persona.feature.chat.ForwardPlacements.home = persona.feature.chat.ForwardPlacements.home.filterNot { it.id == ref.id }
+                                    }
                                 }
+                                if (active == null && pageManagement != null && startConversationWith != null && !demo)
+                                    StarterLauncherChip(starterLauncher, defaultLauncher, launchers, launchersFailed, enabled = !sending,
+                                        onOpen = { scope.launch { loadStarterLaunchers() } }) { picked ->
+                                        // Another launcher (or the default) does not reuse what the last one started.
+                                        if (picked != starterLauncher) starterStarted = null
+                                        starterLauncher = picked
+                                    }
                             }) else null)
                     }
                 }

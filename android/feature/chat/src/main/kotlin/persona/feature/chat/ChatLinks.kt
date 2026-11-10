@@ -6,7 +6,9 @@ import android.content.res.Resources
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.staticCompositionLocalOf
 import persona.core.contracts.Item
+import persona.core.contracts.JsonCodec
 import persona.core.contracts.contextBody
+import kotlinx.serialization.encodeToString
 import persona.core.contracts.parseTime
 import java.net.URI
 import java.net.URLDecoder
@@ -146,17 +148,30 @@ internal object ChatLinks {
 
 /**
  * A piece of a page picked in the link sheet, carried in a message as
- * `<persona-context kind="context|edit|quote" title="…" url="…" msg="…">text</persona-context>`, written exactly as iOS's `ContextRef`
- * does: the attributes escaped, the text through [contextBody] (it cannot close the tag).
+ * `<persona-context kind="context|edit|quote|forward" title="…" url="…" msg="…">text</persona-context>`, written exactly as iOS's
+ * `ContextRef` does: the attributes escaped, the text through [contextBody] (it cannot close the tag).
  */
 data class ChatLinkContext(
     val kind: String = "context", val title: String, val url: String, val text: String,
     val id: String = UUID.randomUUID().toString(),
     /** A quoted message's id in its chat ([kind] `quote`, iOS `ContextRef.msg`): one quote per message. */
     val msg: String = "",
+    /**
+     * The block's other attributes as written: a forward's metadata (`ForwardMessage`, docs/protocol/protocol.md "Forwarded
+     * messages"). Kept on read, so a block read back writes the same attributes ([EXTRA_ORDER] first, then the rest by name).
+     */
+    val extra: Map<String, String> = emptyMap(),
+    /** A forward over the composer: the line saying which computer it comes from and where it goes. Shown, never sent. */
+    val route: String? = null,
 ) {
-    fun xml(): String = "<persona-context kind=\"${if (kind == "edit" || kind == QUOTE) kind else "context"}\" title=\"${escape(title)}\" url=\"${escape(url)}\"" +
-        (if (msg.isEmpty()) "" else " msg=\"${escape(msg)}\"") + ">\n" + contextBody(text) + "\n</persona-context>"
+    val isForward: Boolean get() = kind == FORWARD
+
+    fun xml(): String = "<persona-context kind=\"${if (kind in WRITTEN_KINDS) kind else "context"}\" title=\"${escape(title)}\" url=\"${escape(url)}\"" +
+        (if (msg.isEmpty()) "" else " msg=\"${escape(msg)}\"") +
+        (listOf(PART).filter { it in extra } + EXTRA_ORDER.filter { it in extra } +
+            extra.keys.filterNot { it in EXTRA_ORDER || it in OWN_ATTRIBUTES || it == PART }.sorted())
+            .joinToString("") { name -> " $name=\"${escape(extra.getValue(name))}\"" } +
+        ">\n" + contextBody(text) + "\n</persona-context>"
 
     companion object {
         /**
@@ -179,9 +194,19 @@ data class ChatLinkContext(
         /** The author of the user's own quoted message on the wire, whatever the app's language (iOS writes and reads the Chinese "me"). */
         const val QUOTE_ME = "我" // i18n-ignore: on the wire in every language, iOS writes and reads it
         fun quote(text: String, from: String, msg: String) = ChatLinkContext(QUOTE, from, "", text.trim(), msg = msg)
+        /** A message forwarded from another chat (#3901, iOS `ForwardMessage.kind`): a card at the top of the bubble. */
+        const val FORWARD = "forward"
+        /** The kinds written as they are; any other is written as `context`. */
+        private val WRITTEN_KINDS = setOf("edit", QUOTE, FORWARD)
+        /** The attributes with fields of their own; the rest go to [extra]. */
+        private val OWN_ATTRIBUTES = setOf("kind", "title", "url", "msg")
+        /** Which part of a quoted message it is (iOS `ContextRef.part`): kept in [extra], written right after `msg`. */
+        private const val PART = "part"
+        /** The order [extra] is written in (iOS `ContextRef.extraOrder`): a forward's metadata, then any other attribute by name. */
+        val EXTRA_ORDER = listOf("role", "author", "chat", "project", "machine", "time")
 
         private val tags = Regex("<persona-context\\b([^>]*)>([\\s\\S]*?)</persona-context>\\s*")
-        private val attributes = Regex("([a-z]+)=\"([^\"]*)\"")
+        private val attributes = Regex("([\\w-]+)=\"([^\"]*)\"")
         private fun escape(s: String) = s.replace("&", "&amp;").replace("\"", "&quot;").replace("<", "&lt;").replace(">", "&gt;")
         private fun unescape(s: String) = s.replace("&quot;", "\"").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
 
@@ -190,7 +215,7 @@ data class ChatLinkContext(
             val refs = tags.findAll(text).map { tag ->
                 val attrs = attributes.findAll(tag.groupValues[1]).associate { it.groupValues[1] to unescape(it.groupValues[2]) }
                 ChatLinkContext(attrs["kind"] ?: "context", attrs["title"].orEmpty(), attrs["url"].orEmpty(), unescape(tag.groupValues[2].trim()),
-                    msg = attrs["msg"].orEmpty())
+                    msg = attrs["msg"].orEmpty(), extra = attrs.filterKeys { it !in OWN_ATTRIBUTES })
             }.toList()
             return refs to tags.replace(text, "").trim()
         }
@@ -210,29 +235,49 @@ data class ChatLinkContext(
 
 /**
  * A message with the picked contexts in front of it, as iOS sends it: the tags a line apart, then a blank line and
- * what was typed ("See the content above." when only contexts go).
+ * what was typed ("See the content above." when only contexts go; "Please look at the forwarded message above." when one
+ * of them is a forward, #3901).
  */
 internal fun linkMessage(draft: String, contexts: List<ChatLinkContext>, resources: Resources): String =
     if (contexts.isEmpty()) draft
-    else contexts.joinToString("\n") { it.xml() } + "\n\n" + draft.ifBlank { resources.getString(R.string.chat_links_context_default) }
+    else contexts.joinToString("\n") { it.xml() } + "\n\n" + draft.ifBlank {
+        resources.getString(if (contexts.any { it.isForward }) R.string.chat_forward_no_note else R.string.chat_links_context_default)
+    }
+
+/** A message carrying [forwards] before [note] (#3901), as a chat's send writes it: for Persona's new-conversation composer. */
+fun forwardMessage(note: String, forwards: List<ChatLinkContext>, resources: Resources): String = linkMessage(note, forwards, resources)
 
 /**
- * [ChatLinkContext]s kept across a configuration change: six values each after a [CONTEXTS_V2] mark (the quoted
- * message's id the sixth); five each, without it, as saved before quotes had one.
+ * [ChatLinkContext]s kept across a configuration change: eight values each after a [CONTEXTS_V3] mark (the quoted
+ * message's id, the extra attributes as JSON and a forward's route the last three); six each after [CONTEXTS_V2], as
+ * saved before forwards; five each, without a mark, as saved before quotes had an id.
  */
 internal val ChatLinkContextsSaver = listSaver<List<ChatLinkContext>, String>(
-    save = { refs -> listOf(CONTEXTS_V2) + refs.flatMap { listOf(it.kind, it.title, it.url, it.text, it.id, it.msg) } },
+    save = { refs -> listOf(CONTEXTS_V3) + refs.flatMap {
+        listOf(it.kind, it.title, it.url, it.text, it.id, it.msg, JsonCodec.encodeToString(it.extra), it.route.orEmpty())
+    } },
     restore = { values ->
-        if (values.firstOrNull() == CONTEXTS_V2) values.drop(1).chunked(6).filter { it.size == 6 }.map { ChatLinkContext(it[0], it[1], it[2], it[3], it[4], it[5]) }
-        else values.chunked(5).filter { it.size == 5 }.map { ChatLinkContext(it[0], it[1], it[2], it[3], it[4]) }
+        when (values.firstOrNull()) {
+            CONTEXTS_V3 -> values.drop(1).chunked(8).filter { it.size == 8 }.map {
+                ChatLinkContext(it[0], it[1], it[2], it[3], it[4], it[5],
+                    runCatching { JsonCodec.decodeFromString<Map<String, String>>(it[6]) }.getOrDefault(emptyMap()), it[7].ifEmpty { null })
+            }
+            CONTEXTS_V2 -> values.drop(1).chunked(6).filter { it.size == 6 }.map { ChatLinkContext(it[0], it[1], it[2], it[3], it[4], it[5]) }
+            else -> values.chunked(5).filter { it.size == 5 }.map { ChatLinkContext(it[0], it[1], it[2], it[3], it[4]) }
+        }
     },
 )
 
 private const val CONTEXTS_V2 = "contexts-v2"
+private const val CONTEXTS_V3 = "contexts-v3"
 
-/** [contexts] with [quote] added (iOS `bindMenu`): a message quoted already is not quoted twice. */
+/**
+ * [contexts] with [quote] added (iOS `ContextRef.adding`): a message quoted already is not quoted twice, and a message
+ * goes over the box once as a forward (a quote of it is another thing over the box).
+ */
 internal fun withQuote(contexts: List<ChatLinkContext>, quote: ChatLinkContext): List<ChatLinkContext> =
-    if (quote.msg.isNotEmpty() && contexts.any { it.kind == ChatLinkContext.QUOTE && it.msg == quote.msg }) contexts else contexts + quote
+    if (quote.msg.isNotEmpty() && (quote.kind == ChatLinkContext.QUOTE || quote.isForward) &&
+        contexts.any { it.kind == quote.kind && it.msg == quote.msg }) contexts else contexts + quote
 
 /** "Quote" on a message of this chat: the user's own is by [ChatLinkContext.QUOTE_ME] in every language, else by [agent]. */
 internal fun messageQuote(text: String, user: Boolean, agent: String, msg: String): ChatLinkContext =

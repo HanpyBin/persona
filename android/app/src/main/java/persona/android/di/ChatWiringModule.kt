@@ -115,6 +115,8 @@ internal suspend fun createChatWiring(
         files = HubSessionFiles(connection),
         ports = HubPortOpener(connection),
         agentShares = ChatWiringModule.agentShares(connection, ::current),
+        // Recent targets of Forward live in the pairing's own preferences, erased with it (#3901).
+        forwardMemory = PreferencesForwardMemory(data.listPreferences),
         tasks = persona.core.domain.tasks.TasksStore(persona.core.hub.HttpTasksApi(connection), group, data.coroutineScope,
             repositories.snapshots.todoCache()))
 }

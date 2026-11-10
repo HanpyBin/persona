@@ -21,6 +21,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import persona.core.contracts.Machine
 import persona.core.designsystem.*
 import persona.core.designsystem.icons.PhIcons
+import persona.feature.chat.ForwardComposerCard
+import persona.feature.chat.ForwardMessage
 import java.net.URI
 
 @Composable
@@ -207,6 +209,8 @@ private fun LazyListScope.newAgentItems(
         if (efforts?.isEmpty() == true) JRow(stringResource(R.string.agents_new_effort), subtitle = stringResource(R.string.agents_new_no_effort), enabled = false)
         else ChoiceMenu(stringResource(R.string.agents_new_effort), state.selection.effort, effortChoices(efforts), editable) { model.selection(state.selection.copy(effort = it)) }
     }
+    // A forwarded message (#3901) goes before the first message: its card over it.
+    state.context?.let(ForwardMessage::read)?.let { forward -> item("forward") { ForwardComposerCard(forward) } }
     item("prompt") {
         JTextField(state.prompt, model::prompt, enabled = !state.locked,
             label = stringResource(if (state.agentType == "codex") R.string.agents_new_first_message_codex else R.string.agents_new_first_message),
@@ -243,7 +247,7 @@ private fun NewAgentFooter(state: NewAgentState, model: NewAgentViewModel, machi
 /** A folder, a launcher or the configuration to follow, an online machine, and Codex's first message. */
 private fun startable(state: NewAgentState, machines: List<Machine>): Boolean =
     state.selection.cwd.isNotBlank() && (state.selection.launcher.isNotBlank() || state.following) &&
-        machines.any { it.id == state.machineId && it.online } && (state.agentType != "codex" || state.prompt.isNotBlank())
+        machines.any { it.id == state.machineId && it.online } && (state.agentType != "codex" || state.prompt.isNotBlank() || state.context != null)
 
 internal fun String.agentLabel() = when (this) { "claude" -> "Claude Code"; "codex" -> "Codex"; "traex" -> "TRAEX"; else -> this }
 internal val permissionModes = listOf("" to R.string.agents_mode_follow, "default" to R.string.agents_mode_default,

@@ -140,7 +140,6 @@
         <item quantity="one">%1$d agent</item>
         <item quantity="other">%1$d agents</item>
     </plurals>
-    <string name="chat_handoff_failed">Couldn\'t hand it to Persona. Try again.</string>
     <string name="chat_request_draft_page_only">The draft is kept on this page only</string>
     <string name="chat_refusal_draft_terminal">There\'s an unsent draft on the computer. Deal with it in the terminal first. What you typed on the phone is kept.</string>
     <string name="chat_refusal_draft_clearable">There\'s an unsent draft on the computer. You can confirm to clear it and send.</string>

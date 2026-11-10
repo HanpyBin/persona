@@ -164,13 +164,21 @@ internal data class ConversationWords(val untitled: String, val handoff: String,
 internal fun conversationWords() = ConversationWords(stringResource(R.string.assistant_untitled),
     stringResource(R.string.assistant_handoff), stringResource(R.string.assistant_handoff_named))
 
+/** A conversation's name as Persona's history shows it, in [resources]' language (Forward to's rows, #3901). */
+fun Session.personaConversationTitle(resources: android.content.res.Resources): String = conversationTitle(ConversationWords(
+    resources.getString(R.string.assistant_untitled), resources.getString(R.string.assistant_handoff),
+    resources.getString(R.string.assistant_handoff_named)))
+
 private val handoffTag = Regex("""<persona-context\b[^>]*?\btitle="([^"]*)"""")
+private val forwardKind = Regex("""\bkind="forward"""")
 
 /** "Hand to Persona: X" for text that is a `<persona-context title="X">` tag (attributes decoded), null for any other text. */
 internal fun handoffTitle(text: String, words: ConversationWords): String? {
     handoffTag.find(text)?.let { match ->
         val title = match.groupValues[1].replace("&quot;", "\"").replace("&lt;", "<").replace("&gt;", ">")
             .replace("&amp;", "&").trim()
+        // A forwarded message (#3901) names itself ("Forwarded from Claude · chat"); it was not handed to Persona.
+        if (title.isNotEmpty() && forwardKind.containsMatchIn(match.value)) return title
         return if (title.isEmpty()) words.handoff else words.handoff(title)
     }
     val start = text.trimStart()

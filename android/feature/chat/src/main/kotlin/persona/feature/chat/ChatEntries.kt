@@ -58,6 +58,8 @@ data class ChatAppBindings(
     /** Tasks from the assistant's conversations (docs/assistant/unified-entry.md); null where the hub group has none. */
     val tasks: persona.core.domain.tasks.TasksStore? = null,
     val agentShares: AgentSharesProvider? = null,
+    /** Forward to's Recent for this group (#3901): on the phone, ids only, gone with the pairing; null where there is none. */
+    val forwardMemory: ForwardMemory? = null,
 )
 
 interface ChatWiringSource {
@@ -168,7 +170,6 @@ fun ChatDestination(
         wiring?.agentShares?.let { provider -> sharingManager?.let { owner -> { provider.forSession(session, owner) } } }
     }?.takeIf { style == ChatRenderStyle.Agent }
     val editor = rememberChatDraftEditor(if (historyReadOnly) null else wiring, session)
-    val handToPersona = rememberHandToPersona(wiring?.mainSender?.takeIf { style != ChatRenderStyle.Assistant }, navigator)
     val composer by (editor?.composer ?: remember { MutableStateFlow<ChatComposerState?>(null) }).collectAsStateWithLifecycle()
     val error by (editor?.error ?: remember { MutableStateFlow<Int?>(null) }).collectAsStateWithLifecycle()
     if (editor != null && composer == null) return
@@ -179,7 +180,7 @@ fun ChatDestination(
             onOpenSession = { navigator.navigate(ChatRoute(it.machineId, it.sessionId)) },
             onOpenAssistant = { navigator.navigate(conversationRoute(it, assistant = true)) },
             onConnectionDetails = { navigator.navigate(SettingsPageRoute(SettingsPage.Diagnostics)) },
-            files = wiring?.files, ports = wiring?.ports, onHandToPersona = handToPersona,
+            files = wiring?.files, ports = wiring?.ports,
             tasks = wiring?.tasks?.takeIf { style == ChatRenderStyle.Assistant && !historyReadOnly },
             assistantManagement = assistantManagement,
             agentShares = sharing,

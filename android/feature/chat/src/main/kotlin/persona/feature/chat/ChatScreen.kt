@@ -239,6 +239,15 @@ private fun ChatPage(
     var clearingPane by rememberSaveable { mutableStateOf<String?>(null) }
     var linkContexts by rememberSaveable(stateSaver = ChatLinkContextsSaver) { mutableStateOf(emptyList<ChatLinkContext>()) }
     var submittedContexts by remember { mutableStateOf(emptyList<ChatLinkContext>()) }
+    // Forward (#3901): what another chat forwarded here waits over the composer, whether this page was open or not.
+    val forwarding = LocalChatForwarding.current
+    var forwardDraft by remember { mutableStateOf<ForwardDraft?>(null) }
+    val placedForwards = ForwardPlacements.waiting(key)
+    LaunchedEffect(placedForwards, readOnly, canSend) {
+        if (placedForwards == null || readOnly || !canSend) return@LaunchedEffect
+        ForwardPlacements.take(key).forEach { linkContexts = withQuote(linkContexts, it) }
+        composer.focusRequest++
+    }
     var notice by remember { mutableStateOf<String?>(null) }
     // /model in the "/" list asked for the "Mode" sheet: a one-off, cleared once the sheet opened (not replayed when the bar returns).
     var openModes by remember { mutableStateOf(false) }
@@ -959,7 +968,11 @@ private fun ChatPage(
                                         if (linkContexts.isEmpty()) ComposerSuggestion(session, composer, onSend = { text -> send(text) })
                                         if (linkContexts.isNotEmpty()) Column(Modifier.heightIn(max = 140.dp).verticalScroll(rememberScrollState())) {
                                             // One line each while the link card peeks: the whole cards left no room for the composer.
-                                            linkContexts.forEach { ref -> ChatContextCard(ref, compact = linkInset.value > 0f) { linkContexts = linkContexts.filterNot { it.id == ref.id } } }
+                                            linkContexts.forEach { ref ->
+                                                ChatContextCard(ref, compact = linkInset.value > 0f, lines = if (linkContexts.size == 1) 2 else 1) {
+                                                    linkContexts = linkContexts.filterNot { it.id == ref.id }
+                                                }
+                                            }
                                         }
                                     }, onOverlay = { composerOverlay = it }, agentName = session?.agentLabel ?: "Claude",
                                     canInterrupt = session?.canInterrupt ?: true,
@@ -986,7 +999,7 @@ private fun ChatPage(
                                     val deliveryState = if (message.state in setOf(DeliveryState.Refused, DeliveryState.Rejected))
                                         delivery?.state ?: message.state else message.state
                                     Column(verticalArrangement = Arrangement.spacedBy(Tokens.Space.xs)) {
-                                        UserBubble(composerMessagePreview(message.text))
+                                        OutboxBubble(message.text, message.clientMessageId)
                                         OutboxStatus(message.copy(state = deliveryState,
                                             error = delivery?.refusal?.code ?: message.error),
                                             busy = message.clientMessageId in deliveryActions.busyIds,
@@ -1078,9 +1091,13 @@ private fun ChatPage(
             MessageMenuSheet(messageMenu, messageMenuWrites(readOnly, session),
                 onQuote = quoteTarget, onEdit = composer::edit,
                 onContext = { text -> linkContexts = linkContexts + messageContext(menuTitle, text, context.resources); notice = res.getString(R.string.chat_screen_added_context) },
-                onHandToPersona = chrome.onHandToPersona?.takeIf { renderStyle != ChatRenderStyle.Assistant }
-                    ?.let { hand -> { text: String -> hand(handoffMessage(menuTitle, text, context.resources)) } },
+                onForward = forwarding?.let { { target: MessageTarget -> forwardDraft = forwardDraftOf(target, key, session, machine, renderStyle, it) } },
                 onNotice = { notice = it }, onFork = onFork, rewind = rewindMenu)
+            val forwardFrom = forwardDraft
+            if (forwardFrom != null && forwarding != null) ForwardSheet(forwardFrom, forwarding,
+                complete = { ForwardMessage.ref(forwardFrom.cut?.let { repository.fullText(key, it) } ?: forwardFrom.raw, forwardFrom.source, res) },
+                onDismiss = { forwardDraft = null },
+                onPicked = { target, ref -> deliverForward(target, ref, key, forwarding, res) })
             viewer?.let { request ->
                 ChatImageViewer(request.images, request.index, onDismiss = { viewer = null },
                     onEdited = if (readOnly) null else ({ attachment -> composer.beginEdit(); composer.attachments += attachment }),

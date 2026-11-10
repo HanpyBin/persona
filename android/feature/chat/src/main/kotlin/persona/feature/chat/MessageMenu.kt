@@ -35,11 +35,16 @@ import persona.core.designsystem.onSecondaryClick
 import persona.core.designsystem.stableAlpha
 
 /**
- * A message the long-press menu is open for: [text] is what it says ("Copy" / "Select" / "Quote" / "Share" / "Hand to Persona" / "Use as context"
- * take it), [editText] what "Edit" puts back in the composer (its photos as attachments again), [user] for your own.
+ * A message the long-press menu is open for: [text] is what it says ("Copy" / "Select" / "Quote" / "Share" / "Use as context"
+ * take it), [editText] what "Edit" puts back in the composer (its photos as attachments again), [user] for your own. "Forward"
+ * takes [raw] (the transcript's text, its quotes and tags included), [from] (who wrote it when that is not the chat's Agent or
+ * Persona: a relayed message's source), [ts] and [cut] (the item the hub cut for the page, read whole when it goes).
  */
 @Immutable
-internal data class MessageTarget(val id: String, val text: String, val user: Boolean, val editText: String = text)
+internal data class MessageTarget(
+    val id: String, val text: String, val user: Boolean, val editText: String = text,
+    val raw: String = text, val from: String? = null, val ts: String? = null, val cut: String? = null,
+)
 
 /** Which message the long-press menu is open for (iOS `MessageMenu`); the page shows the menu, rows open it. */
 @Stable
@@ -93,8 +98,9 @@ internal data class RewindMenu(val block: String?, val run: (MessageTarget, Rewi
 
 /**
  * The long-press menu as an action sheet (docs/android/android-design.md 2.3 rule 7): "Copy", "Select" (the message as text to
- * select from), "Quote", "Share", "Hand to Persona", "Use as context", and "Edit" on your own messages. [writes] false (a read-only
- * conversation) leaves out what would change the composer: "Quote", "Use as context", "Edit".
+ * select from), "Quote", "Forward" (#3901: to Persona or any Agent, [onForward]), "Share", "Use as context", and "Edit" on your
+ * own messages. [writes] false (a read-only conversation) leaves out what would change the composer: "Quote", "Use as context",
+ * "Edit"; Forward changes another chat's, so it stays.
  */
 @Composable
 internal fun MessageMenuSheet(
@@ -104,7 +110,8 @@ internal fun MessageMenuSheet(
     onQuote: (MessageTarget) -> Unit,
     onEdit: (String) -> Unit,
     onContext: (String) -> Unit,
-    onHandToPersona: ((String) -> Unit)?,
+    /** "Forward": the message to Forward to; null where messages are not forwarded. */
+    onForward: ((MessageTarget) -> Unit)?,
     onNotice: (String) -> Unit,
     onFork: ((String) -> Unit)? = null,
     rewind: RewindMenu? = null,
@@ -117,7 +124,7 @@ internal fun MessageMenuSheet(
     val target = menu.target
     val resources = LocalResources.current
     val extras = MessageExtras(fork = onFork != null, rewind = rewind != null, rewindBlock = rewind?.block)
-    if (target != null) JActionSheet(messageMenuActions(target, writes, onHandToPersona != null, resources, extras) { action ->
+    if (target != null) JActionSheet(messageMenuActions(target, writes, onForward != null, resources, extras) { action ->
         when (action) {
             MessageAction.Copy -> {
                 clipboard.setText(AnnotatedString(target.text))
@@ -126,7 +133,7 @@ internal fun MessageMenuSheet(
             MessageAction.Select -> { selecting = target.text }
             MessageAction.Quote -> onQuote(target)
             MessageAction.Share -> { if (!shareText(context, target.text)) onNotice(resources.getString(R.string.chat_menu_no_share)) }
-            MessageAction.HandToPersona -> onHandToPersona?.invoke(target.text)
+            MessageAction.Forward -> onForward?.invoke(target)
             MessageAction.Context -> onContext(target.text)
             MessageAction.Edit -> onEdit(target.editText)
             MessageAction.Fork -> onFork?.invoke(target.id)
@@ -153,8 +160,8 @@ internal fun MessageMenuSheet(
 
 /** What the menu offers, in order. */
 internal enum class MessageAction(@StringRes val label: Int) {
-    Copy(R.string.chat_menu_copy), Select(R.string.chat_menu_select), Quote(R.string.chat_menu_quote), Share(R.string.chat_menu_share),
-    HandToPersona(R.string.chat_menu_hand_to_persona), Context(R.string.chat_menu_context), Edit(R.string.chat_menu_edit),
+    Copy(R.string.chat_menu_copy), Select(R.string.chat_menu_select), Quote(R.string.chat_menu_quote), Forward(R.string.chat_menu_forward),
+    Share(R.string.chat_menu_share), Context(R.string.chat_menu_context), Edit(R.string.chat_menu_edit),
     Fork(R.string.chat_menu_fork), Rewind(R.string.chat_menu_rewind),
 }
 
@@ -164,14 +171,14 @@ internal enum class MessageAction(@StringRes val label: Int) {
  */
 internal data class MessageExtras(val fork: Boolean = false, val rewind: Boolean = false, val rewindBlock: String? = null)
 
-/** The menu's actions for [target]: [writes] for the composer ones, [handOff] when "Hand to Persona" is offered. */
-internal fun messageActions(target: MessageTarget, writes: Boolean, handOff: Boolean,
+/** The menu's actions for [target]: [writes] for the composer ones, [forward] when "Forward" is offered. */
+internal fun messageActions(target: MessageTarget, writes: Boolean, forward: Boolean,
     extras: MessageExtras = MessageExtras()): List<MessageAction> = buildList {
     add(MessageAction.Copy)
     add(MessageAction.Select)
     if (writes) add(MessageAction.Quote)
+    if (forward) add(MessageAction.Forward)
     add(MessageAction.Share)
-    if (handOff) add(MessageAction.HandToPersona)
     if (writes) add(MessageAction.Context)
     if (writes && target.user) add(MessageAction.Edit)
     // "Branch to new chat" on a reply that is a transcript line of its own; "Rewind to here" on your messages.
@@ -179,17 +186,17 @@ internal fun messageActions(target: MessageTarget, writes: Boolean, handOff: Boo
     if (extras.rewind && writes && target.user) add(MessageAction.Rewind)
 }
 
-private fun messageMenuActions(target: MessageTarget, writes: Boolean, handOff: Boolean, resources: Resources,
+private fun messageMenuActions(target: MessageTarget, writes: Boolean, forward: Boolean, resources: Resources,
     extras: MessageExtras, run: (MessageAction) -> Unit): List<JAction> =
-    messageActions(target, writes, handOff, extras).mapIndexed { index, action ->
+    messageActions(target, writes, forward, extras).mapIndexed { index, action ->
         val label = if (action == MessageAction.Rewind && extras.rewindBlock != null)
             resources.getString(R.string.chat_menu_rewind_blocked, extras.rewindBlock) else resources.getString(action.label)
         JAction(label, when (action) {
             MessageAction.Copy -> PhIcons.Copy
             MessageAction.Select -> PhIcons.CursorText
             MessageAction.Quote -> PhIcons.Quotes
+            MessageAction.Forward -> PhIcons.ArrowBendUpRight
             MessageAction.Share -> PhIcons.ShareNetwork
-            MessageAction.HandToPersona -> PhIcons.Sparkle
             MessageAction.Context -> PhIcons.Paperclip
             MessageAction.Edit -> PhIcons.PencilSimple
             MessageAction.Fork -> PhIcons.GitBranch
@@ -211,10 +218,6 @@ internal fun ChatComposerState.edit(message: String) {
     restoreMessage(message)
     focusRequest++
 }
-
-/** What "Hand to Persona" sends to the main conversation: the message as context from [title], then the ask. */
-internal fun handoffMessage(title: String, text: String, resources: Resources): String =
-    linkMessage(resources.getString(R.string.chat_menu_handoff_ask), listOf(messageContext(title, text, resources)), resources)
 
 /** The context "Use as context" adds to the composer: the message, titled by its conversation. */
 internal fun messageContext(title: String, text: String, resources: Resources): ChatLinkContext =

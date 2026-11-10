@@ -33,7 +33,7 @@ internal fun NewAgentDestination(route: NewAgentRoute, navigator: Navigator, dep
         }
         return
     }
-    val prefill = NewAgentPrefill(route.machineId, route.cwd, route.prompt)
+    val prefill = NewAgentPrefill(route.machineId, route.cwd, route.prompt, route.context)
     val model = viewModel(key = "new-agent-page:${service.scope}:${System.identityHashCode(service)}:${route.hashCode()}") {
         NewAgentViewModel(service, wiring.creationPreferences?.let { AgentCreationPreferences(context, it) } ?: AgentCreationPreferences(context),
             dependencies.sessions().machines, sender = dependencies.sender(), adopt = dependencies.sessions()::adopt, prefill = prefill)

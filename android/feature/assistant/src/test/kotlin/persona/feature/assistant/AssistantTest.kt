@@ -54,6 +54,10 @@ class AssistantTest {
         val escaped = Session(machineId = "m", sessionId = "z", title = "<persona-context kind=\"context\" title=\"飞书 · a&quot;b &lt;c&gt; &amp;amp;\" url=\"\">")
         assertEquals("交给 Persona：飞书 · a\"b <c> &amp;", escaped.conversationTitle(words))
         assertEquals("早报", Session(machineId = "m", sessionId = "y", title = "早报").conversationTitle(words))
+        // A forwarded message (#3901) is named by its own heading, not as a hand-off.
+        val forwarded = Session(machineId = "m", sessionId = "f",
+            title = "<persona-context kind=\"forward\" title=\"转发自 Claude · 博客迁移到 Astro\" url=\"persona://session/mbp/s1?at=a%231\">")
+        assertEquals("转发自 Claude · 博客迁移到 Astro", forwarded.conversationTitle(words))
         // No title on the tag, or an empty one: still a hand-off, not the raw tag.
         assertEquals("交给 Persona", Session(machineId = "m", sessionId = "a", title = "<persona-context kind=\"context\">").conversationTitle(words))
         assertEquals("交给 Persona", Session(machineId = "m", sessionId = "b", title = "<persona-context title=\"\" url=\"\">").conversationTitle(words))

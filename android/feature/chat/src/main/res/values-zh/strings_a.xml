@@ -134,7 +134,6 @@
     <plurals name="chat_tabs_sheet_title">
         <item quantity="other">%1$d 个 Agent</item>
     </plurals>
-    <string name="chat_handoff_failed">没能交给 Persona，请重试</string>
     <string name="chat_request_draft_page_only">草稿暂存于当前页面</string>
     <string name="chat_refusal_draft_terminal">电脑上有未发送的草稿，请先到终端处理。手机输入已保留。</string>
     <string name="chat_refusal_draft_clearable">电脑上有未发送的草稿，可以确认后清空并发送。</string>

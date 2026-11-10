@@ -41,7 +41,11 @@ internal fun MessageContent(item: Item, user: Boolean, update: ChatTextUpdate? =
     val text = whole ?: update?.text ?: item.text.orEmpty().let { if (item.fullSize != null) cutText(it) else it }
     val model = remember(text, item.from, user) { messageModel(text, item.from, user) }
     val uri = LocalUriHandler.current
-    Column(Modifier.fillMaxWidth().messageMenu(MessageTarget(item.id, model.plain, user, model.editText()))) {
+    // Forward (#3901) takes the transcript's text and who wrote it when that is another session (a relay, its "From" card).
+    val target = MessageTarget(item.id, model.plain, user, model.editText(), raw = text,
+        from = item.from?.takeIf { it.isNotBlank() } ?: (model.parts.singleOrNull() as? MessagePart.Source)?.name?.takeIf { it.isNotBlank() },
+        ts = item.ts, cut = item.id.takeIf { cut })
+    Column(Modifier.fillMaxWidth().messageMenu(target)) {
         MessageContextGroup(model.contexts, "${item.id}/contexts", uri::openUri, alignEnd = user)
         AttachedFileCards(model.attached, alignEnd = user)
         // a reply still being written: its quotes do not fold yet (#2984)
@@ -125,13 +129,16 @@ internal fun MergedUserBubble(items: List<Item>, updates: Map<String, ChatTextUp
     val texts = bubbleTexts(items, updates)
     val models = remember(items, texts) { items.mapIndexed { index, item -> messageModel(texts[index], item.from, user = true) } }
     val parts = remember(models) { models.flatMap { it.parts } }
-    val contexts = remember(models) { models.flatMap { it.contexts } }
+    // A forward (#3901) is a card at the top of the bubble; the other blocks fold into one row above it, as before.
+    val (forwards, contexts) = remember(models) { models.flatMap { it.contexts }.partition { it.kind == ForwardMessage.KIND } }
     val photos = remember(models) { models.flatMap { it.images }.distinct() }
     val files = remember(models) { models.flatMap { it.files }.distinct().take(6) }
     val attached = remember(models) { models.flatMap { it.attached }.distinctBy { it.path } }
-    val target = remember(models, items) {
+    val target = remember(models, items, texts) {
         MessageTarget(items.firstOrNull()?.id.orEmpty(), models.joinToString("\n\n") { it.plain }.trim(), true,
-            models.joinToString("\n\n") { it.editText() }.trim())
+            models.joinToString("\n\n") { it.editText() }.trim(), raw = texts.joinToString("\n\n"),
+            from = items.firstNotNullOfOrNull { it.from?.takeIf(String::isNotBlank) }, ts = items.firstOrNull()?.ts,
+            cut = items.singleOrNull()?.takeIf { it.fullSize != null && updates[it.id] == null }?.id)
     }
     val timestamp = items.lastOrNull()?.ts
     val locale = currentLocale
@@ -154,7 +161,8 @@ internal fun MergedUserBubble(items: List<Item>, updates: Map<String, ChatTextUp
     // Typed by the user: the pale blue; another session's or conversation's keeps the style's tint (#2643).
     val own = remember(items) { items.all(::isOwnMessage) }
     // Only blocks, no words, photos or cursor: the folded row alone, no empty bubble.
-    val bubble = (contexts.isEmpty() && attached.isEmpty()) || parts.isNotEmpty() || photos.isNotEmpty() || images != null || streaming
+    val bubble = (contexts.isEmpty() && attached.isEmpty()) || parts.isNotEmpty() || photos.isNotEmpty() || images != null || streaming ||
+        forwards.isNotEmpty()
     val fromCard = models.any { it.fromCard }
     Column(Modifier.fillMaxWidth()) {
         MessageContextGroup(contexts, "${items.firstOrNull()?.id.orEmpty()}/contexts", uri::openUri)
@@ -162,6 +170,11 @@ internal fun MergedUserBubble(items: List<Item>, updates: Map<String, ChatTextUp
         if (fromCard) Text(stringResource(R.string.chat_from_card), Modifier.align(Alignment.End).padding(bottom = Tokens.Space.xs),
             style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink2, maxLines = 1)
         if (bubble) UserBubbleFrame(Modifier.messageMenu(target.takeIf { menu }), footer = footer, own = own) {
+            forwards.forEachIndexed { index, forward ->
+                ForwardBubbleCard(forward, "${items.firstOrNull()?.id.orEmpty()}/forward/$index")
+                if (index < forwards.lastIndex || parts.isNotEmpty() || photos.isNotEmpty() || images != null || streaming)
+                    Spacer(Modifier.height(Tokens.Space.s))
+            }
             images?.invoke()
             if (photos.isNotEmpty()) {
                 AttachedPhotoRow(photos)

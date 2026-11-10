@@ -41,7 +41,9 @@ internal fun AssistantPendingConversation(
         items(messages, key = { it.clientMessageId }) { message ->
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                UserBubble(message.text)
+                // A forward (#3901) shows as its card and note, as the conversation will show it, not as its block.
+                if (persona.feature.chat.carriesForward(message.text)) persona.feature.chat.PendingForwardBubble(message.text, message.clientMessageId)
+                else UserBubble(message.text)
                 message.state.pendingStatus()?.let { PendingBadge(it) }
                 // A refused message says why and offers Retry, not a bubble waiting for ever: a start the hub refused
                 // for a missing step also gets that step's button (docs/assistant/onboarding.md 4.4).

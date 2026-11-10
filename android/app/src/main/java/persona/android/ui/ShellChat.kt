@@ -68,7 +68,6 @@ internal fun ShellChat(route: ChatRoute, session: ShellSession, navigator: Navig
     var openedPath by rememberSaveable { mutableStateOf<String?>(null) }
     // Its line (`a.kt:12`): the file opens scrolled to it.
     var openedLine by rememberSaveable { mutableStateOf<Int?>(null) }
-    val handToPersona = rememberHandToPersona(wiring?.mainSender, navigator)
     var insertionFocused by remember { mutableStateOf(false) }
     var git by remember { mutableStateOf<persona.core.contracts.api.SessionGitStatus?>(null) }
     val cwd = metadata?.cwd.orEmpty()
@@ -100,7 +99,6 @@ internal fun ShellChat(route: ChatRoute, session: ShellSession, navigator: Navig
                 onOpenAssistant = { navigator.navigate(persona.feature.chat.conversationRoute(it, assistant = true)) },
                 onConnectionDetails = { navigator.navigate(SettingsPageRoute(SettingsPage.Diagnostics)) },
                 files = session.files, ports = wiring?.ports, onOpenPath = if (filesAvailable) ({ path, line -> open(FilesPane.Files, path, line) }) else null,
-                onHandToPersona = if (assistant) null else handToPersona,
                 onOpenTodo = { todoId -> navigator.navigate(persona.core.navigation.TodoDetailRoute(todoId)) }),
             renderStyle = if (assistant) ChatRenderStyle.Assistant else ChatRenderStyle.Agent,
             composerState = composer, composerService = wiring?.composer,
