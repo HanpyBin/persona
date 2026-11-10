@@ -80,7 +80,7 @@ struct ExtensionSettingsView<Configuration: View, AdvancedInformation: View>: Vi
             return String(localized: "When off, this extension’s capabilities are unavailable. Your configuration is kept.")
         }
         if detail.readOnly || ["hub.json", "manager.json"].contains(detail.plugin.source ?? "") {
-            return String(localized: "This extension is set in its manager's manager.json; change its switch and settings there, then restart the manager.")
+            return String(localized: "This extension is set in its assistant's manager.json; change its switch and settings there, then restart the assistant.")
         }
         return String(localized: "This manager does not provide this action.")
     }

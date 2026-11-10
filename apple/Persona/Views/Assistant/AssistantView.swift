@@ -39,8 +39,6 @@ struct AssistantView: View {
     @State private var columns = SplitColumns.shown
     /// iPhone Duo's bars down the side: the top bar is the side rail, and the page's top is free.
     @Environment(\.shellRailEdge) private var railEdge
-    /// The manager switcher's height as drawn (several managers).
-    @State private var switcherHeight: CGFloat = 0
     #if DEBUG
     @State private var showAvatars = false
     #endif
@@ -156,30 +154,6 @@ struct AssistantView: View {
         }
     }
 
-    /// Several managers: the page shows one at a time, picked under the top bar.
-    private var switcherShown: Bool { model.managerRoster?.isMulti == true }
-
-    /// The manager switcher under the top bar, over the bar's fog carried down behind it (the page scrolls beneath); it
-    /// measures itself for the room the page leaves free. Not while a first message spins up: its answer is that
-    /// manager's.
-    @ViewBuilder private var managerSwitcher: some View {
-        if switcherShown {
-            ManagerSwitcher()
-                .disabled(pending != nil)
-                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { switcherHeight = $0 }
-                .background(alignment: .top) {
-                    // Solid from where the bar's fog stops being solid, so the two read as one: starting at the
-                    // switcher's own top left the line between them showing through, cut in half by that edge (#2909).
-                    // Not higher: the switcher is drawn over the bar, and its fog would hide the bar's buttons.
-                    let lift = max(0, AssistantTopBar.room(railEdge) - AssistantTopBar.fogSolid)
-                    TopFog(solidHeight: lift + switcherHeight, fadeHeight: AssistantTopBar.fade)
-                        .frame(height: lift + switcherHeight + AssistantTopBar.fade)
-                        .offset(y: -lift)
-                }
-                .padding(.top, AssistantTopBar.room(railEdge))
-        }
-    }
-
     /// Nothing pushed on the page: the sidebar's drag only works here (pushed pages have their own back swipe).
     private var atRoot: Bool {
         var pushed = showProfile || showKnowledge || showRoutines || showTodos || openedExtension != nil || showHealth || showRecordings
@@ -223,7 +197,6 @@ struct AssistantView: View {
                     .onAppear { NewChatCheck.shared.homeAppeared() }
                 }
             }
-            .environment(\.managerSwitcherRoom, switcherShown ? switcherHeight : 0)
             // No system bar: the top bar floats over the conversation with a fog under it (it scrolls beneath).
             .toolbarVisibility(.hidden, for: .navigationBar)
             #if os(iOS) || os(visionOS)
@@ -241,7 +214,6 @@ struct AssistantView: View {
                 .transformEnvironment(\.macTitleRowLeading) { if columns != .detailOnly { $0 = 0 } }
                 #endif
             }
-            .overlay(alignment: .top) { managerSwitcher }
             #if os(macOS)
             // The bar is the title bar's row, as the list beside it (#830); pushed pages keep their own.
             .ignoresSafeArea(.container, edges: .top)
@@ -289,7 +261,12 @@ struct AssistantView: View {
                 if showRecordings, old == nil, new == model.assistantMain { return }
                 backToRoot()
             }
-            .onChange(of: model.assistantManagerID) { starterLauncher = nil } // a launcher of the manager shown before
+            .onChange(of: model.assistantManagerID) {
+                starterLauncher = nil // a launcher of the assistant shown before
+                // A first message still spinning up is the other assistant's: its conversation is listed there when it
+                // starts (`start`), and this page shows the one switched to.
+                pending = nil
+            }
             .onChange(of: model.assistantReveal) { backToRoot(); activeDrawer.close() }
             #if DEBUG
             // `-openAssistantPage profile|avatars|routines|runs|…` (with `-tab assistant`): the profile and its pages;
@@ -541,7 +518,6 @@ struct FirstMessagePending: View {
 /// a conversation spins up it shows the first message and a typing indicator so the send feels instant.
 struct AssistantHome: View {
     @Environment(AppModel.self) private var model
-    @Environment(\.managerSwitcherRoom) private var switcherRoom
     var pending: PendingStart?
     var error: String?
     @Binding var launcher: String?
@@ -581,7 +557,7 @@ struct AssistantHome: View {
         // The floating top bar (AssistantTopBar) is over the page: leave its room, let the page scroll under it. Before
         // the composer is added: margins reach every scroll view below them, and the chips' row above the field stood
         // the top bar's height tall, over the suggestion cards.
-        .contentMargins(.top, AssistantTopBar.height + switcherRoom, for: .scrollContent)
+        .contentMargins(.top, AssistantTopBar.height, for: .scrollContent)
         // Room to scroll the last suggestions clear of the fade over the chips (as ShellHome).
         .contentMargins(.bottom, pending == nil ? Self.fade : ChatView.newestGap, for: .scrollContent)
         .themedGroupedPage()

@@ -429,7 +429,7 @@ struct InboxChainSection: View {
         case .url(let u):
             Button { openURL(u) } label: { label() }.buttonStyle(.plain)
         case .session(let key, let manager):
-            Button { InboxEventOpen.session(key, manager: manager, owner: item.manager, model: model) } label: { label() }
+            Button { InboxEventOpen.session(key, manager: manager, model: model) } label: { label() }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("inbox.chain.session")
         case .item(let id):
@@ -522,10 +522,9 @@ struct InboxRelatedSection: View {
 /// Opening a chain's conversation: the processing one is the assistant's (Persona's own conversations), a sub-session
 /// an Agent's.
 @MainActor enum InboxEventOpen {
-    /// `owner`: the item's manager, whose Persona the processing conversation is.
-    static func session(_ key: SessionKey, manager: Bool, owner: String?, model: AppModel) {
+    static func session(_ key: SessionKey, manager: Bool, model: AppModel) {
         if manager && model.session(key) == nil {
-            model.openAssistantConversation(model.inHub(key), manager: owner)
+            model.openAssistantConversation(model.inHub(key))
         } else {
             model.open(key)
         }

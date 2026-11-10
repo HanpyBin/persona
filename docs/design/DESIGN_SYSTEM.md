@@ -356,6 +356,7 @@ For every component: use the design-system one, not a lookalike. Counts are appr
 
 - Shell (compact width): Assistant and Agents as pages on a strip, a drawer sidebar, no tab bar. Top bar: persona button, `ShellSwitch`, circle button (`apple/Persona/DesignSystem/ShellComponents.swift:19,258,294`). Re-tapping the selected segment opens its menu.
 - Regular width: system tab view and split navigation; the same sidebar in a column.
+- Assistant switcher (sidebar header, `apple/Persona/Views/Assistant/AssistantSwitcher.swift`): the persona face, the current assistant's name with a down arrow and its state line; a tap opens a popover list of the hub's assistants (monogram with a state dot, name, Default chip, state line, a check on the current one), then New Assistant and Manage Assistants…. Rows are at least 44 pt and one line each. Why a popover and not a `Menu`: a row carries a colored avatar, a status dot, a chip and a second line, which a system menu item cannot draw, and the same list is drawn on web and Android. It is the only place that switches assistants; pages do not add their own.
 - Page titles: `.pageTitle`, `.detailTitle` (`apple/Persona/DesignSystem/PageTitle.swift`).
 - Side rail for iPhone Duo (`apple/Persona/DesignSystem/ShellSideRail.swift:50`).
 - Platforms: web phone shell matches (drawer plus top-bar switch); Android `HomeNavigation` has a 36 dp segment height versus Apple's 44 (DS-18).
@@ -492,6 +493,7 @@ No HTTP codes, key algorithms, CLI flags or raw error text in the primary line. 
 | Node | never in user-facing English |
 | Agent | lowercase mid-sentence; "Agents" for the tab |
 | Persona | the product and the main assistant |
+| Assistant | what the interface calls a manager (zh 助手, ja アシスタント); "manager" stays in code, docs, the API and `manager.json` |
 | Lark | in en and ja, except where Feishu is a separate option |
 | sign in / sign-in | verb / noun |
 

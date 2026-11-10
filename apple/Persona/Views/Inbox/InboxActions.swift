@@ -169,7 +169,7 @@ struct InboxDraftSheet: View {
             }
             if let key = a.sessionKey {
                 Button {
-                    model.openAssistantConversation(model.inHub(key), manager: item.manager)
+                    model.openAssistantConversation(model.inHub(key))
                     dismiss()
                 } label: {
                     Label("See How the AI Twin Handled It", systemImage: Theme.Icon.list).font(Theme.Font.captionMedium).lineLimit(1)
