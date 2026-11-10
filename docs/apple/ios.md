@@ -1666,8 +1666,9 @@ chip and a check on the current one; an offline one is dimmed and can still be p
 name, then the install code sheet of Settings › Assistants) and **Manage Assistants…** (Settings › Assistants). A row still
 installing opens its install code: the one this header made while it lasts, else a new one (`ManagersModel.showCode`; the hub
 keeps no code to show again). What the list presents (the name alert, the code sheet, Settings) waits until the popover is
-gone (its `onDisappear`), not for a fixed delay: UIKit refuses a presentation while the popover is still leaving. The header
-shows with one assistant too. A hub without a roster keeps Persona's name there.
+gone (its `onDisappear`), not for a fixed delay: UIKit refuses a presentation while the popover is still leaving. At the
+accessibility text sizes the header leaves out the face so the name fits, and the list gives way to the screen's width. The
+header shows with one assistant too. A hub without a roster keeps Persona's name there.
 
 The pick is the manager's id per group (`AppModel.assistantPicks`), kept on this device across launches (`AssistantPickStore`,
 the app's defaults); no pick follows the hub's default. A pick whose manager leaves the roster goes back to the default, and one
