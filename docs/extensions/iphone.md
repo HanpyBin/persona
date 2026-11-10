@@ -1,0 +1,114 @@
+# Phone control (iPhone)
+
+The assistant operates an iPhone through one of the user's computers (a Mac or a Linux computer): its node reaches the iPhones paired with it over
+RemotePairing and gives the assistant the screen, taps, swipes and typing (#3452). There is no automation app on the
+phone and no VPN on it. It is the built-in extension **`iphone`**, parallel to `cua` ([computer-use.md](computer-use.md)):
+**off by default**, then turned on computer by computer, and an iPhone is operated only after **that iPhone itself** allowed it.
+
+| Block | Issue | What |
+| --- | --- | --- |
+| A | #3452 | The device bridge (RemotePairing) and its wire schema (block A's own doc) |
+| B | #3452 | Pairing and sessions: the pairing record, finding the iPhone again, reconnecting without replaying input |
+| C | #3450 | The node's built-in program `iphone`: `iphone.status`, handing `iphone.call` to D, pair / forget / cancel |
+| D | #3452 | The content: element numbers, reading the screen, timeouts, human-like input, which steps need approval |
+| E | #3456 | The manager side (this page): the extension, its settings and switches, the assistant's tools, approvals, consent; the app |
+
+Not verified on a real iPhone yet: everything here is tested against a fake node.
+
+## Settings and switches
+
+The manifest is written in English and translated into Simplified Chinese and Japanese from the hub's catalog
+(`hub-iphone.manifest_*`; a built-in has no package to read `l10n/` from, `Registry.AddBuiltinTranslated`).
+
+### Switches
+
+Three things, all needed before the assistant can touch an iPhone:
+
+1. **The extension** `iphone`: Settings › Extensions, or `personad plugin enable iphone` on the hub machine. Off by default.
+   While it is off the manager asks no node about iPhones, the machines carry no `iphone` and the assistant has no `iphone_*` tools.
+2. **The computer**: on each computer's page, **Phone Control** › **Allow the assistant to operate iPhones through this computer**
+   (`PUT /api/v1/machines/{mid}/iphone`), kept in the extension's `machines`. The extension's page shows the same list, one toggle per computer (`x-os: darwin, linux`).
+3. **The iPhone's own consent**: in the Persona app on that iPhone, Settings › Connectors › This iPhone ›
+   **Control of This iPhone** (`PUT /api/v1/iphone/consent`), kept in the extension's `phones` by the node's device id.
+   Only the user's own signed-in app can give it (a master token or an extension's token gets 403).
+
+An iPhone is **allowed** when a computer that reaches it is on and its id is in `phones`. The assistant's tools appear only while
+some iPhone is allowed, and only allowed iPhones can be named. Everything else fails closed: an iPhone the app could not
+identify never gets consent, a computer turned off takes its iPhones away, taking the consent back takes the iPhone away.
+
+The extension's `confirm` (**Ask on the phone before every action**, off by default) asks before every `iphone_do`.
+Without it only the steps the node marks as needing approval are asked.
+
+### Which iPhone is this one
+
+The app on an iPhone cannot read its own device id (iOS gives apps no UDID, and the device name is just "iPhone"). So the
+section lists what the computers report (`GET /api/v1/iphone`) and matches on what the app does know: its model identifier
+(`utsname.machine`, such as `iPhone17,1`) and iOS version, against each device's `product_type` and `ios`.
+
+- **Exactly one match**: that is this iPhone; the switch acts on it.
+- **Several**: the section lists them (name, model, the computers that reach it) and the user picks **This Is the One**. The pick is
+  remembered on the phone (by device id) until the hub no longer lists it.
+- **None**: the switch is off and says why: not paired with a computer that is online, or the extension is off.
+
+A wrong pick can only allow the other iPhone the user also owns and paired; the consent is still the user's, from their own app.
+
+## The assistant's tools
+
+Descriptions in `server/internal/prompts/mcp/iphone/`; handlers in `server/internal/extmgr/iphone.go`. Assistant
+conversations only, like `computer_*`.
+
+| Tool | Arguments | Does |
+| --- | --- | --- |
+| `iphone_status` | `{}` | Each allowed iPhone: id, name, model, iOS, the computer it is reached through, connected, transport, locked, ready, note, plus what the node says of it now (`iphone.call` op `status`, as `detail`); `not_allowed` counts the rest |
+| `iphone_look` | `{phone?, screenshot? = true, query?}` | `phone.call` op `look`: the screen as numbered elements and a screenshot |
+| `iphone_do` | `{phone?, steps, observe?}` | `phone.call` op `do`: the steps in order, stopping at the first failure |
+
+`phone` is an id or a name; without it, the only allowed iPhone. A device several computers reach goes through one where it is
+connected. Each call carries the conversation's session `persona-<first 8 characters of its id>`. The hub log records the
+tool, the actions (`do [tap type]`), the time and ok / failed (with what was sent), never typed text or screenshots.
+
+`iphone_do` takes `timeout_ms`, the node's time for the call (1–120 s, 30 s by default); the manager waits 5 s more.
+
+### Failures
+
+The call helper (`iphoneCall`) checks again, on every call, that the extension is on, the computer is on, online and has the
+program `iphone`, and the iPhone is allowed there (a target picked a moment earlier can be stale). A failure is an `*rpc.Error` whose data is
+`{"sent": "no" | "unknown"}` (`proto.IPhoneSent`):
+
+- `no`: nothing reached the iPhone (the extension off, the computer off or offline, the iPhone not allowed, a node too old, or
+  the node's own word). The model is told so; trying again once that changed is safe.
+- `unknown`, or a failure that says neither (a timeout, a dropped connection): some of it may have happened. The model is
+  told to look at the screen with `iphone_look` first and not to repeat the steps blindly.
+
+The names are `iphone_*` (and the node's methods `iphone.*`), not `phone_*`: `phone_*` are the iPhone's own data tools,
+which the hub hands to the app ([phone-tools.md](../apple/phone-tools.md)).
+
+### Approval
+
+`iphone.call` answers `{output?, text?, image?, needs_approval?, approval_summary?, approval_id?}` (`proto.IPhoneResult`). When
+`needs_approval` is set, the manager shows the usual permission card (`iphone_do`, "On “<iPhone>”: <approval_summary>") and,
+once allowed, makes the same call again with `approved: <approval_id>`. A refusal (or 15 minutes without an answer) tells
+the assistant the user declined and not to retry. One call asks at most 8 times. Which steps need approval is the node's
+decision (block D); the manager only asks and passes the answer on.
+
+## Interfaces
+
+- `GET /api/v1/machines/{mid}/iphone` → `IPhone` `{enabled, installed, version?, devices: [{id, name, product_type?, ios?, paired, usb?, state?, transport?, connected, locked, capabilities?, ready, note?, allowed}], note?, checked?, job?}` (fields are block C's, `proto/iphone.go`);
+  `PUT` `{"enabled": bool}` is the computer's switch. Extension off, or a computer the bridge doesn't run on → 404.
+- `POST /api/v1/machines/{mid}/iphone/{pair|forget|cancel}` `{"device"?}`: pair an iPhone plugged into this computer (progress in `job`),
+  forget one's pairing record, cancel a pairing (no device). Pairing only once the computer is on (404); forget and cancel
+  need only the extension on; no device 400; offline or an old node 409. The log never says which iPhone.
+- `GET /api/v1/iphone` → `{on, devices: [{…device, machines: [{id, name, enabled}], consented}]}`, every iPhone the computers reach, each once.
+- `PUT /api/v1/iphone/consent` `{"device", "allowed"}` → that device as above. Not the user's own app → 403; extension off → 404.
+- `proto.Machine.iphone` is the computer's `IPhone` while the extension is on (the manager's report, like `computer`).
+- Node: `iphone.status` → `IPhone` (the manager sets `enabled` and `allowed` itself, never taking the node's word);
+  `iphone.call` `{device, session, op: status|look|do, args, approved?, timeout_ms?}` (`proto.IPhoneCall`) → `IPhoneResult`;
+  `iphone.pair` / `iphone.forget` / `iphone.cancel` `{device}` → `IPhone`. Through `plugin.node.call` to the built-in
+  program `iphone` (methods `status`, `call`, `pair`, `forget`, `cancel`) on a node that lists it, by these names otherwise.
+  `op: status` is the node's own answer; `look` and `do` go to block D's package.
+
+## Notes and their languages
+
+The node writes its notes (the computer's, each device's, a job's error) as the fixed Simplified Chinese of
+`hub-iphone.json`'s `rpc_*` keys; the hub translates them for each app (`i18n.IPhoneStatus`, the computer's note, the
+job and every device's note), as Cua's are.

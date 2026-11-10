@@ -1,0 +1,485 @@
+package extmgr
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/nwverse/persona/server/internal/i18n"
+	"github.com/nwverse/persona/server/internal/proto"
+	"github.com/nwverse/persona/server/internal/rpc"
+)
+
+type phoneCallSeen struct {
+	Method string
+	Call   proto.IPhoneCall
+}
+
+// iphoneMac is a Mac whose node reaches the paired iPhones devices, answering iphone.status and iphone.call as the
+// #3452 contract says; answer, when set, answers phone.call instead of the default (look: a screen, do: done). It
+// says which calls it was asked.
+func iphoneMac(t *testing.T, h *Manager, id string, devices []proto.IPhoneDevice, answer func(proto.IPhoneCall) (proto.IPhoneResult, error)) (*Machine, func() []phoneCallSeen) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	h2nR, h2nW := io.Pipe()
+	n2hR, n2hW := io.Pipe()
+	hubSide, nodeSide := rpc.New("h", h2nW), rpc.New("n", n2hW)
+	var mu sync.Mutex
+	var seen []phoneCallSeen
+	nodeSide.OnRequest = func(_ context.Context, method string, params json.RawMessage) (any, error) {
+		if method != "plugin.node.call" {
+			t.Errorf("%s by its name: the iphone program is asked over plugin.node.call", method)
+			return nil, &rpc.Error{Message: "unknown method " + method}
+		}
+		var c proto.PluginNodeCall
+		_ = json.Unmarshal(params, &c)
+		if c.ID != iphoneExtensionID {
+			t.Errorf("plugin.node.call %s.%s", c.ID, c.Method)
+		}
+		method, params = "iphone."+c.Method, c.Params
+		mu.Lock()
+		defer mu.Unlock()
+		switch method {
+		case "iphone.status":
+			seen = append(seen, phoneCallSeen{Method: method})
+			return proto.IPhone{Devices: devices, Checked: time.Now(), Enabled: true}, nil // Enabled is never the node's
+		case "iphone.call":
+			var p proto.IPhoneCall
+			_ = json.Unmarshal(params, &p)
+			seen = append(seen, phoneCallSeen{method, p})
+			if answer != nil {
+				r, err := answer(p)
+				if err != nil {
+					return nil, err
+				}
+				return r, nil
+			}
+			if p.Op == "look" {
+				return proto.IPhoneResult{Output: json.RawMessage(`{"elements":"[1] button \"Settings\""}`), Image: &proto.Image{Mime: "image/jpeg", Data: "AAAA"}}, nil
+			}
+			return proto.IPhoneResult{Output: json.RawMessage(`{"done":true}`)}, nil
+		case "iphone.pair", "iphone.forget", "iphone.cancel":
+			seen = append(seen, phoneCallSeen{Method: method})
+			return proto.IPhone{Devices: devices, Checked: time.Now(), Job: &proto.ComputerJob{Kind: "pair", State: "running"}}, nil
+		}
+		return nil, &rpc.Error{Message: "unknown method " + method}
+	}
+	go func() { _ = hubSide.Serve(ctx, n2hR) }()
+	go func() { _ = nodeSide.Serve(ctx, h2nR) }()
+	t.Cleanup(func() { cancel(); _ = h2nW.Close(); _ = n2hW.Close() })
+	m := newMachine(h, MachineConfig{ID: id, Name: id})
+	m.peer, m.online, m.info = hubSide, true, proto.NodeInfo{OS: "darwin", BuiltinPrograms: []string{"cua", "ego", "imessage", iphoneExtensionID}}
+	h.fleetMu.Lock()
+	h.machines, h.byID[id] = append(h.machines, m), m
+	h.fleetMu.Unlock()
+	return m, func() []phoneCallSeen {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]phoneCallSeen(nil), seen...)
+	}
+}
+
+func shownIPhone(t *testing.T, h *Manager, m *Machine) *proto.IPhone {
+	t.Helper()
+	x, ok := h.report().Machines[m.cfg.ID]
+	if !ok || len(x.IPhone) == 0 {
+		return nil
+	}
+	var p proto.IPhone
+	if err := json.Unmarshal(x.IPhone, &p); err != nil {
+		t.Fatal(err)
+	}
+	return &p
+}
+
+var testIPhone = proto.IPhoneDevice{ID: "dev-a1", Name: "Test iPhone", ProductType: "iPhone17,1", IOS: "26.1", Connected: true, Ready: true}
+
+// Off until turned on, then Mac by Mac and iPhone by iPhone: the tools come only once a Mac is on and a paired
+// iPhone consented from its own app, and only that iPhone is ever operated (fail-closed).
+func TestIPhoneExtension(t *testing.T) {
+	h, _ := extensionTestHub(t)
+	ctx := context.Background()
+	mux := h.routes()
+	other := proto.IPhoneDevice{ID: "dev-b2", Name: "Other iPhone", ProductType: "iPhone16,2", IOS: "26.0", Connected: true, Ready: true}
+	mac, seen := iphoneMac(t, h, "mac", []proto.IPhoneDevice{testIPhone, other}, nil)
+	phone := deviceToken("dev_phone", roleFull)
+
+	if p := h.extensions.reg.Get(iphoneExtensionID); p == nil || p.Record.Enabled {
+		t.Fatalf("built in and off: %+v", p)
+	}
+	if shownIPhone(t, h, mac) != nil || strings.Contains(toolNames(toolsForAgents(t, h, true)), "iphone_") {
+		t.Fatal("off: nothing of it")
+	}
+	h.refreshIPhone(ctx, mac)
+	if len(seen()) != 0 {
+		t.Fatal("the node is not asked while it is off")
+	}
+	if code, out := call(t, mux, "GET", "/api/v1/iphone", phone, ""); code != 200 || out["on"] != false {
+		t.Fatalf("off: %d %v", code, out)
+	}
+	if code, _ := call(t, mux, "PUT", "/api/v1/iphone/consent", phone, `{"device": "dev-a1", "allowed": true}`); code != 404 {
+		t.Fatalf("no consent while it is off: %d", code)
+	}
+
+	if err := h.extensions.reg.SetEnabled(ctx, iphoneExtensionID, true, "test"); err != nil {
+		t.Fatal(err)
+	}
+	// Every Mac is asked while it is on: the iPhone's own app finds itself among them before its Mac is on.
+	code, out := call(t, mux, "GET", "/api/v1/iphone", phone, "")
+	devs, _ := out["devices"].([]any)
+	if code != 200 || out["on"] != true || len(devs) != 2 {
+		t.Fatalf("%d %v", code, out)
+	}
+	if d := devs[0].(map[string]any); d["id"] != "dev-a1" || d["product_type"] != "iPhone17,1" || d["consented"] != false || d["allowed"] != false {
+		t.Fatalf("%v", d)
+	}
+	if p := shownIPhone(t, h, mac); p == nil || p.Enabled || len(p.Devices) != 2 || p.Devices[0].Allowed {
+		t.Fatalf("not on for this Mac, and the node's word is not taken for it: %+v", p)
+	}
+
+	// The Mac on, nobody consented: still nothing to operate.
+	code, out = call(t, mux, "PUT", "/api/v1/machines/mac/iphone", h.cfg.Token, `{"enabled": true}`)
+	if code != 200 || out["enabled"] != true {
+		t.Fatalf("%d %v", code, out)
+	}
+	if h.iphoneTools() != nil {
+		t.Fatal("no iPhone consented: no tools")
+	}
+	if res := h.callIPhoneTool(ctx, "conv1234x", "iphone_look", json.RawMessage(`{}`)); !res.IsError || !strings.Contains(res.Content[0].Text, "allowed: none") {
+		t.Fatalf("fail-closed: %+v", res)
+	}
+
+	// Only the user's own signed-in app gives an iPhone's consent: never the master token.
+	if code, _ := call(t, mux, "PUT", "/api/v1/iphone/consent", h.cfg.Token, `{"device": "dev-a1", "allowed": true}`); code != 403 {
+		t.Fatalf("master token: %d", code)
+	}
+	if code, _ := call(t, mux, "PUT", "/api/v1/iphone/consent", phone, `{"device": " ", "allowed": true}`); code != 400 {
+		t.Fatalf("no device: %d", code)
+	}
+	code, out = call(t, mux, "PUT", "/api/v1/iphone/consent", phone, `{"device": "dev-a1", "allowed": true}`)
+	if code != 200 || out["consented"] != true || out["allowed"] != true {
+		t.Fatalf("%d %v", code, out)
+	}
+	if got := toolNames(toolsForAgents(t, h, true)); !strings.Contains(got, "iphone_status iphone_look iphone_do") {
+		t.Fatal(got)
+	}
+	if strings.Contains(toolNames(toolsForAgents(t, h, false)), "iphone_") {
+		t.Fatal("the assistant's only")
+	}
+	if p := shownIPhone(t, h, mac); !p.Devices[0].Allowed || p.Devices[1].Allowed {
+		t.Fatalf("only the one that consented: %+v", p.Devices)
+	}
+
+	// The one allowed is the default; the other one is never operated, by id or name.
+	res := h.callIPhoneTool(ctx, "conv1234x", "iphone_look", json.RawMessage(`{"query": "set"}`))
+	if res.IsError || len(res.Content) != 2 || res.Content[1].Type != "image" || !strings.Contains(res.Content[0].Text, "Settings") {
+		t.Fatalf("%+v", res)
+	}
+	calls := seen()
+	last := calls[len(calls)-1]
+	var args map[string]any
+	_ = json.Unmarshal(last.Call.Args, &args)
+	if last.Call.Device != "dev-a1" || last.Call.Op != "look" || last.Call.Session != "persona-conv1234" || args["query"] != "set" || args["screenshot"] != true {
+		t.Fatalf("%+v %v", last, args)
+	}
+	for _, name := range []string{"dev-b2", "Other iPhone"} {
+		before := len(seen())
+		res := h.callIPhoneTool(ctx, "c", "iphone_do", json.RawMessage(`{"phone": "`+name+`", "steps": [{"action": "tap", "target": 1}]}`))
+		if !res.IsError || !strings.Contains(res.Content[0].Text, "Test iPhone (dev-a1)") {
+			t.Fatalf("%s: %+v", name, res)
+		}
+		for _, c := range seen()[before:] {
+			if c.Method == "iphone.call" {
+				t.Fatalf("%s was operated: %+v", name, c)
+			}
+		}
+	}
+	if res := h.callIPhoneTool(ctx, "c", "iphone_do", json.RawMessage(`{"steps": []}`)); !res.IsError {
+		t.Fatal("no steps")
+	}
+
+	// iphone_status: the allowed one with what it says of itself, and how many are not allowed.
+	res = h.callIPhoneTool(ctx, "c", "iphone_status", nil)
+	var st struct {
+		Phones []struct {
+			ID     string          `json:"id"`
+			Mac    string          `json:"mac"`
+			Detail json.RawMessage `json:"detail"`
+		} `json:"phones"`
+		NotAllowed int `json:"not_allowed"`
+	}
+	if err := json.Unmarshal([]byte(res.Content[0].Text), &st); err != nil || res.IsError || len(st.Phones) != 1 || st.Phones[0].ID != "dev-a1" ||
+		st.Phones[0].Mac != "mac" || len(st.Phones[0].Detail) == 0 || st.NotAllowed != 1 {
+		t.Fatalf("%v %+v %s", err, st, res.Content[0].Text)
+	}
+
+	// Taking the consent back, or turning the Mac off, takes the iPhone away again.
+	if code, _ := call(t, mux, "PUT", "/api/v1/iphone/consent", phone, `{"device": "dev-a1", "allowed": false}`); code != 200 {
+		t.Fatal(code)
+	}
+	if h.iphoneTools() != nil {
+		t.Fatal("consent taken back")
+	}
+	call(t, mux, "PUT", "/api/v1/iphone/consent", phone, `{"device": "dev-a1", "allowed": true}`)
+	call(t, mux, "PUT", "/api/v1/machines/mac/iphone", h.cfg.Token, `{"enabled": false}`)
+	if h.iphoneTools() != nil || shownIPhone(t, h, mac).Devices[0].Allowed {
+		t.Fatal("the Mac turned off")
+	}
+}
+
+// A step the node says needs approval is asked on the phone with the node's words; once allowed it is called again
+// with the approval's id, a refusal ends it. "Ask before every action" asks first, and a refusal runs nothing.
+func TestIPhoneApprovals(t *testing.T) {
+	h, _ := extensionTestHub(t)
+	ctx := context.Background()
+	answer := func(p proto.IPhoneCall) (proto.IPhoneResult, error) {
+		if p.Op == "do" && p.Approved != "ap1" {
+			return proto.IPhoneResult{NeedsApproval: true, ApprovalID: "ap1", ApprovalSummary: "Tap Pay"}, nil
+		}
+		return proto.IPhoneResult{Text: "paid"}, nil
+	}
+	_, seen := iphoneMac(t, h, "mac", []proto.IPhoneDevice{testIPhone}, answer)
+	if err := h.extensions.reg.SetEnabled(ctx, iphoneExtensionID, true, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.extensions.reg.SetConfig(ctx, iphoneExtensionID, json.RawMessage(`{"machines": ["mac"], "phones": ["dev-a1"]}`), "test"); err != nil {
+		t.Fatal(err)
+	}
+	h.refreshIPhoneMacs(ctx)
+	steps := json.RawMessage(`{"steps": [{"action": "tap", "target": 4}, {"action": "type", "text": "secret words"}]}`)
+
+	done := make(chan proto.ToolResult, 1)
+	go func() { done <- h.callIPhoneTool(ctx, "c", "iphone_do", steps) }()
+	card := answerCard(t, h, true, false)
+	if card.ToolName != "iphone_do" || card.Summary != i18n.T(h.userLang(), "hub-iphone.confirm_sensitive", i18n.Args{"phone": "Test iPhone", "summary": "Tap Pay"}) {
+		t.Fatalf("%+v", card)
+	}
+	if res := <-done; res.IsError || res.Content[0].Text != "paid" {
+		t.Fatalf("%+v", res)
+	}
+	var approved []string
+	for _, c := range seen() {
+		if c.Method == "iphone.call" {
+			approved = append(approved, c.Call.Approved)
+		}
+	}
+	if strings.Join(approved, ",") != ",ap1" {
+		t.Fatalf("called again with the approval: %v", approved)
+	}
+
+	go func() { done <- h.callIPhoneTool(ctx, "c", "iphone_do", steps) }()
+	answerCard(t, h, false, false)
+	if res := <-done; !res.IsError || !strings.Contains(res.Content[0].Text, "declined") {
+		t.Fatalf("%+v", res)
+	}
+
+	// Ask before every action: the card names the actions only, never what is typed.
+	if err := h.extensions.reg.SetConfig(ctx, iphoneExtensionID, json.RawMessage(`{"machines": ["mac"], "phones": ["dev-a1"], "confirm": true}`), "test"); err != nil {
+		t.Fatal(err)
+	}
+	before := len(seen())
+	go func() { done <- h.callIPhoneTool(ctx, "c", "iphone_do", steps) }()
+	card = answerCard(t, h, false, false)
+	if !strings.Contains(card.Summary, "tap") || !strings.Contains(card.Summary, "type") || strings.Contains(card.Summary, "secret") {
+		t.Fatalf("%q", card.Summary)
+	}
+	if res := <-done; !res.IsError {
+		t.Fatalf("%+v", res)
+	}
+	for _, c := range seen()[before:] {
+		if c.Method == "iphone.call" {
+			t.Fatal("declined before: nothing runs")
+		}
+	}
+	// Looking is never asked.
+	if res := h.callIPhoneTool(ctx, "c", "iphone_look", json.RawMessage(`{"screenshot": false}`)); res.IsError {
+		t.Fatalf("%+v", res)
+	}
+}
+
+// A node that asks again and again ends the call instead of asking forever.
+func TestIPhoneApprovalsEnd(t *testing.T) {
+	h, _ := extensionTestHub(t)
+	ctx := context.Background()
+	iphoneMac(t, h, "mac", []proto.IPhoneDevice{testIPhone}, func(proto.IPhoneCall) (proto.IPhoneResult, error) {
+		return proto.IPhoneResult{NeedsApproval: true, ApprovalID: "again", ApprovalSummary: "Tap"}, nil
+	})
+	if err := h.extensions.reg.SetEnabled(ctx, iphoneExtensionID, true, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.extensions.reg.SetConfig(ctx, iphoneExtensionID, json.RawMessage(`{"machines": ["mac"], "phones": ["dev-a1"]}`), "test"); err != nil {
+		t.Fatal(err)
+	}
+	h.refreshIPhoneMacs(ctx) // the default desk allows every card
+	if res := h.callIPhoneTool(ctx, "c", "iphone_do", json.RawMessage(`{"steps": [{"action": "tap", "x": 1, "y": 2}]}`)); !res.IsError || !strings.Contains(res.Content[0].Text, "again and again") {
+		t.Fatalf("%+v", res)
+	}
+}
+
+// A node from before phone control (no built-in program iphone) is never asked: its computer's page says so, and a
+// call is refused as not sent.
+func TestIPhoneOldNode(t *testing.T) {
+	h, _ := extensionTestHub(t)
+	ctx := context.Background()
+	m, seen := iphoneMac(t, h, "old", []proto.IPhoneDevice{testIPhone}, nil)
+	m.info.BuiltinPrograms = []string{"cua", "ego"}
+	if err := h.extensions.reg.SetEnabled(ctx, iphoneExtensionID, true, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if p := h.refreshIPhone(ctx, m); p == nil || p.Note != i18n.T(i18n.Default, "hub-iphone.note_outdated") {
+		t.Fatalf("%+v", p)
+	}
+	if got := i18n.IPhoneStatus(i18n.En, h.iphoneOf(m)).Note; got != i18n.T(i18n.En, "hub-iphone.note_outdated") {
+		t.Fatalf("translated for the app: %q", got)
+	}
+	if err := h.extensions.reg.SetConfig(ctx, iphoneExtensionID, json.RawMessage(`{"machines": ["old"], "phones": ["dev-a1"]}`), "test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.iphoneCall(ctx, m, proto.IPhoneCall{Device: "dev-a1", Op: "look"}); iphoneSentOf(err) != proto.IPhoneNotSent {
+		t.Fatal(err)
+	}
+	if len(seen()) != 0 {
+		t.Fatalf("an old node is never asked: %+v", seen())
+	}
+}
+
+// A linux computer reaches iPhones too; a Windows one does not list them.
+func TestIPhoneSystems(t *testing.T) {
+	h, _ := extensionTestHub(t)
+	ctx := context.Background()
+	lin, _ := iphoneMac(t, h, "box", []proto.IPhoneDevice{testIPhone}, nil)
+	win, _ := iphoneMac(t, h, "pc", []proto.IPhoneDevice{testIPhone}, nil)
+	lin.info.OS, win.info.OS = "linux", "windows"
+	if err := h.extensions.reg.SetEnabled(ctx, iphoneExtensionID, true, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if h.iphoneOf(lin) == nil || h.iphoneOf(win) != nil {
+		t.Fatal("darwin and linux only")
+	}
+}
+
+// The manifest is English with its own translations, and its settings are the form the plugin page draws.
+func TestIPhoneManifest(t *testing.T) {
+	h, _ := extensionTestHub(t)
+	p := h.extensions.reg.Snapshot(iphoneExtensionID)
+	if p == nil || p.Manifest.Name != "Phone control" || p.L10n.Name(i18n.ZhHans, p.Manifest.Name) != i18n.T(i18n.ZhHans, "hub-iphone.manifest_name") {
+		t.Fatalf("%+v", p)
+	}
+	var cfg struct {
+		Properties map[string]any `json:"properties"`
+	}
+	if err := json.Unmarshal(p.Manifest.Configuration, &cfg); err != nil || len(cfg.Properties) != 3 {
+		t.Fatalf("%v %s", err, p.Manifest.Configuration)
+	}
+	if order := string(p.Manifest.Configuration); strings.Index(order, `"machines"`) > strings.Index(order, `"phones"`) ||
+		strings.Index(order, `"phones"`) > strings.Index(order, `"confirm"`) {
+		t.Fatal(order)
+	}
+}
+
+func TestIPhoneToolsGolden(t *testing.T) {
+	var tools []proto.Tool
+	for _, n := range []string{"iphone_status", "iphone_look", "iphone_do"} {
+		tools = append(tools, mcpTool(n))
+	}
+	b, _ := json.MarshalIndent(tools, "", "  ")
+	golden(t, "iphone_tools", string(b)+"\n")
+}
+
+// A failure says whether anything reached the iPhone: "no" may be tried again, anything else means look first. The
+// call itself checks again that the Mac is on and the iPhone allowed, and the node gets its time with 5 s more to wait.
+func TestIPhoneCallFailures(t *testing.T) {
+	h, _ := extensionTestHub(t)
+	ctx := context.Background()
+	sent := map[string]string{"look": "no", "do": "unknown"}
+	mac, seen := iphoneMac(t, h, "mac", []proto.IPhoneDevice{testIPhone}, func(p proto.IPhoneCall) (proto.IPhoneResult, error) {
+		data, _ := json.Marshal(proto.IPhoneErrorData{Sent: sent[p.Op]})
+		return proto.IPhoneResult{}, &rpc.Error{Code: "bridge_failed", Message: "the bridge failed", Data: data}
+	})
+	if err := h.extensions.reg.SetEnabled(ctx, iphoneExtensionID, true, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.extensions.reg.SetConfig(ctx, iphoneExtensionID, json.RawMessage(`{"machines": ["mac"], "phones": ["dev-a1"]}`), "test"); err != nil {
+		t.Fatal(err)
+	}
+	h.refreshIPhoneMacs(ctx)
+	if res := h.callIPhoneTool(ctx, "c", "iphone_look", nil); !res.IsError || !strings.Contains(res.Content[0].Text, "nothing was sent") {
+		t.Fatalf("%+v", res)
+	}
+	res := h.callIPhoneTool(ctx, "c", "iphone_do", json.RawMessage(`{"steps": [{"action": "home"}], "timeout_ms": 500000}`))
+	if !res.IsError || !strings.Contains(res.Content[0].Text, "look at its screen with iphone_look") {
+		t.Fatalf("%+v", res)
+	}
+	calls := seen()
+	if got := calls[len(calls)-1].Call.TimeoutMS; got != 120000 {
+		t.Fatalf("the node's time is clamped to 120 s: %d", got)
+	}
+
+	// Checked again in the call: the Mac turned off, or the consent taken back, after the target was picked.
+	before := len(seen())
+	for _, cfg := range []string{`{"machines": [], "phones": ["dev-a1"]}`, `{"machines": ["mac"], "phones": []}`} {
+		if err := h.extensions.reg.SetConfig(ctx, iphoneExtensionID, json.RawMessage(cfg), "test"); err != nil {
+			t.Fatal(err)
+		}
+		_, err := h.iphoneCall(ctx, mac, proto.IPhoneCall{Device: "dev-a1", Op: "look"})
+		if err == nil || iphoneSentOf(err) != proto.IPhoneNotSent {
+			t.Fatalf("%s: %v", cfg, err)
+		}
+	}
+	for _, c := range seen()[before:] {
+		if c.Method == "iphone.call" {
+			t.Fatal("nothing went to the node")
+		}
+	}
+	if iphoneSentOf(errors.New("connection lost")) != proto.IPhoneMaybeSent {
+		t.Fatal("a plain error may have sent something")
+	}
+}
+
+// Pairing, forgetting and cancelling go to the node's built-in program from the Mac's page, once the Mac is on.
+func TestIPhoneJobs(t *testing.T) {
+	h, _ := extensionTestHub(t)
+	ctx := context.Background()
+	mux := h.routes()
+	_, seen := iphoneMac(t, h, "mac", []proto.IPhoneDevice{testIPhone}, nil)
+	if err := h.extensions.reg.SetEnabled(ctx, iphoneExtensionID, true, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := call(t, mux, "POST", "/api/v1/machines/mac/iphone/pair", h.cfg.Token, `{"device": "dev-a1"}`); code != 404 {
+		t.Fatalf("pairing needs the computer on: %d", code)
+	}
+	if code, _ := call(t, mux, "POST", "/api/v1/machines/mac/iphone/cancel", h.cfg.Token, ""); code != 200 {
+		t.Fatalf("cancelling needs only the extension on: %d", code)
+	}
+	call(t, mux, "PUT", "/api/v1/machines/mac/iphone", h.cfg.Token, `{"enabled": true}`)
+	if code, _ := call(t, mux, "POST", "/api/v1/machines/mac/iphone/pair", h.cfg.Token, ""); code != 400 {
+		t.Fatalf("pair names a device: %d", code)
+	}
+	code, out := call(t, mux, "POST", "/api/v1/machines/mac/iphone/pair", h.cfg.Token, `{"device": "dev-a1"}`)
+	if job, _ := out["job"].(map[string]any); code != 200 || job["kind"] != "pair" || out["enabled"] != true {
+		t.Fatalf("%d %v", code, out)
+	}
+	if code, _ := call(t, mux, "POST", "/api/v1/machines/mac/iphone/forget", h.cfg.Token, `{}`); code != 400 {
+		t.Fatalf("forget names a device: %d", code)
+	}
+	if code, _ := call(t, mux, "POST", "/api/v1/machines/mac/iphone/forget", h.cfg.Token, `{"device": "dev-a1"}`); code != 200 {
+		t.Fatal(code)
+	}
+	if code, _ := call(t, mux, "POST", "/api/v1/machines/mac/iphone/reboot", h.cfg.Token, ""); code != 404 {
+		t.Fatal(code)
+	}
+	var methods []string
+	for _, c := range seen() {
+		if c.Method != "iphone.status" {
+			methods = append(methods, c.Method)
+		}
+	}
+	if strings.Join(methods, " ") != "iphone.cancel iphone.pair iphone.forget" {
+		t.Fatal(methods)
+	}
+}
