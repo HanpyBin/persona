@@ -1,9 +1,9 @@
 package assistant
 
 import (
-	"bytes"
 	"cmp"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	jsonv2 "encoding/json/v2"
 	"slices"
@@ -161,22 +161,25 @@ func (s *Service) publishList(machine string) []proto.Session {
 		list = kept
 	}
 	msg := assistantwire.FleetSessions{MachineID: machine, Sessions: list, Muted: s.mutedSessions(machine, list)}
-	// json.Marshal's bytes, compared with the list told last as they are written: a list that is the same (most of them)
-	// is not kept, and one that differs is copied once.
-	w := changedWriter{old: f.sent[machine]}
+	// json.Marshal's bytes, in the one buffer every list is encoded into, compared with the list told last by its
+	// digest: a list that is the same (most of them) is not told again, and no machine's list is kept.
+	f.listBuf.Reset()
 	var b []byte // nil when the list does not encode, as json.Marshal gives
-	if jsonv2.MarshalWrite(&w, msg, json.DefaultOptionsV1()) == nil {
-		if w.same() {
+	if jsonv2.MarshalWrite(&f.listBuf, msg, json.DefaultOptionsV1()) == nil {
+		b = f.listBuf.Bytes()
+		sum := listDigest{sha256.Sum256(b), len(b)}
+		if f.sent[machine] == sum {
 			return list
 		}
-		b = w.written()
-	} else if len(w.old) == 0 {
+		if f.sent == nil {
+			f.sent = map[string]listDigest{}
+		}
+		f.sent[machine] = sum
+	} else if _, told := f.sent[machine]; told {
+		delete(f.sent, machine) // told as null: the next list that encodes is told
+	} else {
 		return list
 	}
-	if f.sent == nil {
-		f.sent = map[string][]byte{}
-	}
-	f.sent[machine] = b // kept and told: never written again
 	f.shownMu.Lock()
 	if f.shown == nil {
 		f.shown = map[string][]proto.Session{}
@@ -210,34 +213,11 @@ func awaitingReply(list []proto.Session) []proto.Session {
 	return out
 }
 
-// changedWriter takes an encoding and compares it with old as it comes, copying it out only once it differs.
-type changedWriter struct {
-	old []byte
-	n   int    // how many bytes came, while they are old's
-	out []byte // all of them, once they differ from old
-}
-
-func (w *changedWriter) Write(p []byte) (int, error) {
-	if w.out == nil {
-		if len(p) <= len(w.old)-w.n && bytes.Equal(p, w.old[w.n:w.n+len(p)]) {
-			w.n += len(p)
-			return len(p), nil
-		}
-		w.out = append(make([]byte, 0, max(len(w.old), w.n+len(p))), w.old[:w.n]...)
-	}
-	w.out = append(w.out, p...)
-	return len(p), nil
-}
-
-// same: what came is old.
-func (w *changedWriter) same() bool { return w.out == nil && w.n == len(w.old) }
-
-// written is everything that came, when it was not old.
-func (w *changedWriter) written() []byte {
-	if w.out == nil {
-		return slices.Clone(w.old[:w.n]) // a prefix of old: never handed on as old's own bytes
-	}
-	return w.out
+// listDigest stands for a session list's JSON as it was told the hub: its SHA-256 and length. The next list is only
+// compared with it, and keeping every machine's bytes for that was a few MB.
+type listDigest struct {
+	sum [sha256.Size]byte
+	n   int
 }
 
 // decorated returns a machine's sessions as the apps get them: the unified states, the pending interaction counts,

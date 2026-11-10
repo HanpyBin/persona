@@ -974,9 +974,10 @@ func todoCount(s *Service) int {
 	return len(s.todos.todos)
 }
 
-// Tell keeps what the manager told the hub of the nodes (fleet.*).
+// Tell keeps what the manager told the hub of the nodes (fleet.*), copied: the manager encodes its next session list
+// into the buffer params may be.
 func (f *fakeHub) Tell(event string, params any) error {
-	b, err := json.Marshal(params)
+	b, err := json.Marshal(params) // its own bytes, never params'
 	if err != nil {
 		return err
 	}

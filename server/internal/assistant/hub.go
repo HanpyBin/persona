@@ -36,7 +36,8 @@ type Hub interface {
 	// InboxChanged is inbox.changed: inbox items changed (inbox.go); the hub tells the extensions and the apps. One way.
 	InboxChanged(ctx context.Context, c assistantwire.InboxChanged)
 	// Tell is one of the manager's one-way events to the hub (fleet.*: what the apps get of the nodes, fleet.go);
-	// an error: not connected.
+	// an error: not connected. params are written out before it returns: the next session list is encoded into the
+	// same buffer (publishList).
 	Tell(event string, params any) error
 }
 

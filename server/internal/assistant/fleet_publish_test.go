@@ -2,10 +2,12 @@ package assistant
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"math"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -103,6 +105,75 @@ func TestFleetEventsAreTheLinesTheyWere(t *testing.T) {
 		if !strings.Contains(all.String(), esc) {
 			t.Errorf("no %s in what was told", esc)
 		}
+	}
+}
+
+// A machine's list is told the hub when it is not the one told last, by as little as a byte, and again once the
+// connection is back; one that does not encode is told once, as null, and the next that does is told.
+func TestPublishListTellsWhatChanged(t *testing.T) {
+	ft := newFleetTestNoStore(t)
+	at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	list := func(title string, at time.Time) {
+		ft.d.setSessions("mac", []proto.Session{{SessionID: "a", Agent: "claude", Status: proto.StatusDone, Title: title, UpdatedAt: at}})
+	}
+	want := func(step string, n int, last string) {
+		t.Helper()
+		ft.f.mu.Lock()
+		defer ft.f.mu.Unlock()
+		var told []string
+		for _, tl := range ft.f.told {
+			if tl.event == assistantwire.EventFleetSessions {
+				told = append(told, string(tl.params))
+			}
+		}
+		if len(told) != n || !strings.Contains(told[n-1], last) {
+			t.Fatalf("%s: told %d lists, want %d ending with %s: %q", step, len(told), n, last, told)
+		}
+	}
+	list("abc", at)
+	ft.s.publishList("mac")
+	ft.s.publishList("mac")
+	want("the same list", 1, `"title":"abc"`)
+	list("abd", at)
+	ft.s.publishList("mac")
+	ft.s.publishList("mac")
+	want("a byte changed", 2, `"title":"abd"`)
+	ft.s.FleetUp(context.Background())
+	ft.s.publishList("mac")
+	want("connected again", 3, `"title":"abd"`)
+	list("abd", time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC))
+	ft.s.publishList("mac")
+	ft.s.publishList("mac")
+	want("no JSON for it", 4, "null")
+	list("abd", at)
+	ft.s.publishList("mac")
+	want("JSON again", 5, `"title":"abd"`)
+}
+
+// A list told the hub costs its decorated copy, its JSON in the buffer every list reuses, and the bus's line
+// (#3197): about 671 KB for 300 sessions measured, where the JSON copied out to be kept and the line checked and
+// copied twice more made it 998 KB.
+func TestPublishListAllocations(t *testing.T) {
+	if raceEnabled {
+		t.Skip("race instrumentation allocates")
+	}
+	if !isolated(t) {
+		return
+	}
+	s, next := publishOf(300, io.Discard)
+	next()
+	s.publishList("mac")
+	const runs = 200
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	for range runs {
+		next()
+		s.publishList("mac")
+	}
+	runtime.ReadMemStats(&after)
+	if per := (after.TotalAlloc - before.TotalAlloc) / runs; per > 691000 {
+		t.Fatalf("a changed list told the hub allocated %d bytes, want at most 691000", per)
 	}
 }
 

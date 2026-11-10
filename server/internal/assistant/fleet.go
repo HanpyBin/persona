@@ -1,6 +1,7 @@
 package assistant
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"slices"
@@ -65,10 +66,12 @@ type fleetBook struct {
 	clients            assistantwire.Clients
 	prev               map[string]map[string]turnPrev // each machine's list setSessions saw last, by session id
 
-	// sent: each machine's last session list told the hub (fleet.sessions), as JSON. sentMu is held while a list is
-	// decorated and told (publishList), so the lists reach the hub in the order they were made.
-	sentMu sync.Mutex
-	sent   map[string][]byte
+	// sent: the digest of each machine's last session list told the hub (fleet.sessions), as JSON; listBuf: the buffer
+	// each list is encoded into. sentMu is held while a list is decorated, encoded and told (publishList), so the lists
+	// reach the hub in the order they were made.
+	sentMu  sync.Mutex
+	sent    map[string]listDigest
+	listBuf bytes.Buffer
 	// shown: the rows awaiting a reply of the list last told the hub for each machine, decorated (the reminders of
 	// agents awaiting a reply read them instead of decorating every list each minute, agents_reply.go).
 	shownMu sync.Mutex
