@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -481,5 +482,59 @@ func TestIPhoneJobs(t *testing.T) {
 	}
 	if strings.Join(methods, " ") != "iphone.cancel iphone.pair iphone.forget" {
 		t.Fatal(methods)
+	}
+}
+
+// Two allowed iPhones with the same name are never guessed between; a consent can be taken back while the extension is
+// off; a switch body that says nothing changes nothing.
+func TestIPhoneEdges(t *testing.T) {
+	h, _ := extensionTestHub(t)
+	ctx := context.Background()
+	mux := h.routes()
+	twin := testIPhone
+	twin.ID = "dev-c3"
+	_, seen := iphoneMac(t, h, "mac", []proto.IPhoneDevice{testIPhone, twin}, nil)
+	phone := deviceToken("dev_phone", roleFull)
+	if err := h.extensions.reg.SetEnabled(ctx, iphoneExtensionID, true, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.extensions.reg.SetConfig(ctx, iphoneExtensionID, json.RawMessage(`{"machines": ["mac"], "phones": ["dev-a1", "dev-c3"]}`), "test"); err != nil {
+		t.Fatal(err)
+	}
+	h.refreshIPhoneMacs(ctx)
+	for _, args := range []string{`{"phone": "test iphone"}`, `{}`} {
+		if res := h.callIPhoneTool(ctx, "c", "iphone_look", json.RawMessage(args)); !res.IsError || !strings.Contains(res.Content[0].Text, "more than one iPhone") {
+			t.Fatalf("%s: %+v", args, res)
+		}
+	}
+	if res := h.callIPhoneTool(ctx, "c", "iphone_look", json.RawMessage(`{"phone": "dev-c3"}`)); res.IsError {
+		t.Fatalf("by id: %+v", res)
+	}
+	calls := seen()
+	if last := calls[len(calls)-1]; last.Call.Device != "dev-c3" {
+		t.Fatalf("%+v", last)
+	}
+
+	if code, _ := call(t, mux, "PUT", "/api/v1/machines/mac/iphone", h.cfg.Token, `{}`); code != 400 {
+		t.Fatalf("no enabled: %d", code)
+	}
+	if p := h.iphoneOf(h.machineByID("mac")); !p.Enabled {
+		t.Fatal("the switch stays on")
+	}
+
+	if err := h.extensions.reg.SetEnabled(ctx, iphoneExtensionID, false, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := call(t, mux, "PUT", "/api/v1/iphone/consent", phone, `{"device": "dev-a1", "allowed": true}`); code != 404 {
+		t.Fatalf("no new consent while off: %d", code)
+	}
+	if code, _ := call(t, mux, "PUT", "/api/v1/iphone/consent", phone, `{"device": "dev-a1", "allowed": false}`); code != 200 {
+		t.Fatalf("taken back while off: %d", code)
+	}
+	if err := h.extensions.reg.SetEnabled(ctx, iphoneExtensionID, true, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if phones := h.iphone().Phones; slices.Contains(phones, "dev-a1") || !slices.Contains(phones, "dev-c3") {
+		t.Fatalf("on again, without the one taken back: %v", phones)
 	}
 }

@@ -30,7 +30,9 @@ Three things, all needed before the assistant can touch an iPhone:
    (`PUT /api/v1/machines/{mid}/iphone`), kept in the extension's `machines`. The extension's page shows the same list, one toggle per computer (`x-os: darwin, linux`).
 3. **The iPhone's own consent**: in the Persona app on that iPhone, Settings › Connectors › This iPhone ›
    **Control of This iPhone** (`PUT /api/v1/iphone/consent`), kept in the extension's `phones` by the node's device id.
-   Only the user's own signed-in app can give it (a master token or an extension's token gets 403).
+   Only the user's own signed-in apps can give it (a master token or an extension's token gets 403). The hub cannot tell
+   which of the user's devices sent it (an app cannot prove it is a given iPhone), so the switch is offered only in the
+   app on an iPhone, for the iPhone it identifies as itself (below). Taking it back works even while the extension is off.
 
 An iPhone is **allowed** when a computer that reaches it is on and its id is in `phones`. The assistant's tools appear only while
 some iPhone is allowed, and only allowed iPhones can be named. Everything else fails closed: an iPhone the app could not
@@ -63,7 +65,9 @@ conversations only, like `computer_*`.
 | `iphone_look` | `{phone?, screenshot? = true, query?}` | `phone.call` op `look`: the screen as numbered elements and a screenshot |
 | `iphone_do` | `{phone?, steps, observe?}` | `phone.call` op `do`: the steps in order, stopping at the first failure |
 
-`phone` is an id or a name; without it, the only allowed iPhone. A device several computers reach goes through one where it is
+`phone` is an id or a name (several allowed iPhones with the same name must be named by id); without it, the only
+allowed iPhone. The target comes from what the computers said last, and only when that does not settle it are they asked
+again. A device several computers reach goes through one where it is
 connected. Each call carries the conversation's session `persona-<first 8 characters of its id>`. The hub log records the
 tool, the actions (`do [tap type]`), the time and ok / failed (with what was sent), never typed text or screenshots.
 

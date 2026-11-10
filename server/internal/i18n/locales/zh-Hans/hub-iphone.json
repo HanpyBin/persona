@@ -1,7 +1,7 @@
 {
   "note_outdated": "这台电脑上的 personad 太旧，还不会操控 iPhone：重新部署它",
   "err_off": "操控手机的扩展没打开，或这台电脑连不了 iPhone",
-  "err_consent_device": "只有那台 iPhone 自己能在它的 Persona 里同意被操控",
+  "err_consent_device": "只有你自己登录的 Persona App 能同意操控 iPhone",
   "err_no_device": "没说是哪台 iPhone",
   "confirm_steps": "在「{phone}」上依次执行：{steps}",
   "confirm_sensitive": "在「{phone}」上：{summary}",
@@ -32,5 +32,6 @@
   "rpc_disconnected": "和这台 iPhone 的连接断开了，正在重连",
   "rpc_timeout": "这台 iPhone 没有及时回应",
   "rpc_trust_pending": "在 iPhone 上点「信任」，再点一次「配对」",
-  "rpc_not_found": "数据线上找不到这台 iPhone：重新插上再试"
+  "rpc_not_found": "数据线上找不到这台 iPhone：重新插上再试",
+  "err_no_enabled": "没说是打开还是关掉"
 }

@@ -179,17 +179,6 @@ func decodeExtra[T any](raw json.RawMessage) *T {
 	return &v
 }
 
-// computerOf / browserOf are machine m's Cua and ego state as the manager reports it (nil when not on).
-func (h *Hub) computerOf(m *Machine) *proto.Computer {
-	c, _, _ := h.extrasOf(m)
-	return c
-}
-
-func (h *Hub) browserOf(m *Machine) *proto.Browser {
-	_, b, _ := h.extrasOf(m)
-	return b
-}
-
 // screenAllowed: the app may open m's screen (cua or ego is on for it).
 func (h *Hub) screenAllowed(m *Machine) bool { return h.extReport().Machines[m.cfg.ID].ScreenPort }
 

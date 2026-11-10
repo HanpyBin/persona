@@ -183,21 +183,25 @@ func (h *Manager) getIPhone(w http.ResponseWriter, r *http.Request, m *Machine) 
 // putIPhone: PUT /api/v1/machines/{mid}/iphone {"enabled": bool}, the machine page's switch (the extension's machines).
 func (h *Manager) putIPhone(w http.ResponseWriter, r *http.Request, m *Machine) {
 	var in struct {
-		Enabled bool `json:"enabled"`
+		Enabled *bool `json:"enabled"`
 	}
 	if err := decodeJSONBody(w, r, &in, 4<<10); err != nil {
 		h.writeComputerBodyErr(w, r, err)
+		return
+	}
+	if in.Enabled == nil { // a body without it never turns the switch off
+		writeErr(w, http.StatusBadRequest, i18n.Err("hub-iphone.err_no_enabled"))
 		return
 	}
 	if h.iphoneOf(m) == nil {
 		writeErr(w, http.StatusNotFound, i18n.Err("hub-iphone.err_off"))
 		return
 	}
-	if err := h.setExtensionMachine(r.Context(), iphoneExtensionID, m.cfg.ID, in.Enabled); err != nil {
+	if err := h.setExtensionMachine(r.Context(), iphoneExtensionID, m.cfg.ID, *in.Enabled); err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	h.logf("[%s] iphone control %v", m.cfg.ID, in.Enabled)
+	h.logf("[%s] iphone control %v", m.cfg.ID, *in.Enabled)
 	writeJSON(w, i18n.IPhoneStatus(h.requestLang(r), h.refreshIPhone(r.Context(), m)))
 }
 
@@ -295,9 +299,15 @@ type iphoneList struct {
 	Devices []iphoneSeen `json:"devices"`
 }
 
-// iphoneDevices is every iPhone the Macs reported, each once (the first report of it, connected ones first), with
-// the Macs that reach it.
+// iphoneDevices is every iPhone the computers reported, each once, with the computers that reach it: as the computer
+// that best reaches it reports it (allowed there first, then connected).
 func (h *Manager) iphoneDevices() []iphoneSeen {
+	better := func(a, b proto.IPhoneDevice) bool {
+		if a.Allowed != b.Allowed {
+			return a.Allowed
+		}
+		return a.Connected && !b.Connected
+	}
 	s := h.iphone()
 	var out []iphoneSeen
 	at := map[string]int{}
@@ -313,7 +323,7 @@ func (h *Manager) iphoneDevices() []iphoneSeen {
 			mac := iphoneSeenMac{ID: m.cfg.ID, Name: m.cfg.Name, Enabled: p.Enabled}
 			if i, ok := at[d.ID]; ok {
 				out[i].Machines = append(out[i].Machines, mac)
-				if d.Allowed && (!out[i].Allowed || (d.Connected && !out[i].Connected)) {
+				if better(d, out[i].IPhoneDevice) {
 					out[i].IPhoneDevice = d
 				}
 				continue
@@ -367,7 +377,7 @@ func (h *Manager) putIPhoneConsent(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, i18n.Err("hub-iphone.err_consent_device"))
 		return
 	}
-	if !h.iphone().On {
+	if !h.iphone().On && in.Allowed { // taking it back always works: the consent must not wait for the extension
 		writeErr(w, http.StatusNotFound, i18n.Err("hub-iphone.err_off"))
 		return
 	}
@@ -382,6 +392,7 @@ func (h *Manager) putIPhoneConsent(w http.ResponseWriter, r *http.Request) {
 	h.logf("iphone consent %v from device %s", in.Allowed, principalOf(r.Context()).ID)
 	for _, d := range h.iphoneDevices() {
 		if d.ID == in.Device {
+			d.Note = i18n.ComputerText(h.requestLang(r), d.Note)
 			writeJSON(w, d)
 			return
 		}
@@ -551,9 +562,27 @@ func (h *Manager) refreshIPhoneMacs(ctx context.Context) {
 }
 
 // iphoneTarget is the allowed iPhone the assistant named (by id or name; the only one when it named none) and the
-// Mac to reach it through.
+// computer to reach it through: from what the computers said last, and only when that does not settle it, from what
+// they say now (each look and step would otherwise wait for every computer's status first).
 func (h *Manager) iphoneTarget(ctx context.Context, name string) (iphoneSeen, *Machine, error) {
+	d, m, err := h.iphonePick(name)
+	if err == nil && m != nil {
+		return d, m, nil
+	}
 	h.refreshIPhoneMacs(ctx)
+	d, m, err = h.iphonePick(name)
+	if err != nil {
+		return iphoneSeen{}, nil, err
+	}
+	if m == nil {
+		return iphoneSeen{}, nil, fmt.Errorf("no computer that reaches %s is online", d.Name)
+	}
+	return d, m, nil
+}
+
+// iphonePick is iphoneTarget on what the computers said last: the iPhone (an error when none or several match) and
+// the computer to reach it through (nil when none is online).
+func (h *Manager) iphonePick(name string) (iphoneSeen, *Machine, error) {
 	var allowed []iphoneSeen
 	for _, d := range h.iphoneDevices() {
 		if d.Allowed {
@@ -568,28 +597,28 @@ func (h *Manager) iphoneTarget(ctx context.Context, name string) (iphoneSeen, *M
 	if list == "" {
 		list = "none"
 	}
-	var d *iphoneSeen
 	name = strings.TrimSpace(name)
-	for i := range allowed {
-		if name != "" && (allowed[i].ID == name || strings.EqualFold(allowed[i].Name, name)) {
-			d = &allowed[i]
-			break
+	var match []iphoneSeen
+	for _, d := range allowed {
+		if name == "" || d.ID == name {
+			match = append(match, d)
+		}
+	}
+	if name != "" && len(match) == 0 {
+		for _, d := range allowed {
+			if strings.EqualFold(d.Name, name) {
+				match = append(match, d)
+			}
 		}
 	}
 	switch {
-	case d != nil:
-	case name == "" && len(allowed) == 1:
-		d = &allowed[0]
-	case name == "" && len(allowed) > 1:
-		return iphoneSeen{}, nil, fmt.Errorf("more than one iPhone: give phone (one of: %s)", list)
+	case len(match) == 1:
+		return match[0], h.iphoneMac(match[0]), nil
+	case len(match) > 1:
+		return iphoneSeen{}, nil, fmt.Errorf("more than one iPhone matches: give phone as an id (one of: %s)", list)
 	default:
 		return iphoneSeen{}, nil, fmt.Errorf("no iPhone %q the user allowed (allowed: %s); the user allows one in that iPhone's Persona app and turns its computer on on that computer's page", name, list)
 	}
-	m := h.iphoneMac(*d)
-	if m == nil {
-		return iphoneSeen{}, nil, fmt.Errorf("no computer that reaches %s is online", d.Name)
-	}
-	return *d, m, nil
 }
 
 // iphoneMac is the online Mac, turned on, to reach d through: one where it is connected first.
