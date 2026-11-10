@@ -59,7 +59,7 @@ nonisolated struct RecordingEntry: Codable, Identifiable, Hashable, Sendable {
     var segments: [RecordingSegment] = []
     var marks: [Double] = []
     var endDelivered = false
-    /// Last local change: the knowledge-base revision (ms) the phone uploads it as (docs/apple/recording.md「同步进知识库」).
+    /// Last local change: the knowledge-base revision (ms) the phone uploads it as (docs/apple/recording.md「Synchronization」).
     var updatedAt: Date? = nil
     /// Set when it was started as a meeting recording (or a watch recording arrived during a calendar event); nil for a note.
     var meeting: RecordingMeeting? = nil
