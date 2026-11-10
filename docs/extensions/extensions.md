@@ -1287,7 +1287,7 @@ These are SDK/manager lifecycle contracts, not new pages, permissions, source re
 
 ### Opt-in exact JSON integer request params (#1201)
 
-The TypeScript SDK keeps `Handler(method, params)` and its default `JSON.parse` / `Number` behavior. A namespace that needs the original request tokens explicitly wraps its handler with `withExactParams`. Only inbound namespace RPC requests get the third `ExactCall` argument; events get `undefined`. This does not change tool schemas, replies, outbound calls/events, state, HTTP response parsing, authorization, egress or resource gates.
+The TypeScript SDK keeps `Handler(method, params)` and its default `JSON.parse` / `Number` behavior. A namespace that needs the original request tokens explicitly wraps its handler with `withExactParams`. Inbound namespace RPC requests and notifications get the third `ExactCall` argument; notifications still produce no reply or error response, and events not yet initialized are dropped. This does not change tool schemas, replies, outbound calls/events, state, HTTP response parsing, authorization, egress or resource gates.
 
 ```ts
 import { withExactParams, type Program } from "@persona/extension";

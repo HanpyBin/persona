@@ -60,7 +60,7 @@ test("the opt-in leaves the two-argument Handler, legacy Number, initialization 
   expect(arities).toEqual([2, 2, 2, 2, 2]);
   conn.line('{"event":"exact.changed","params":{"n":1.0}}');
   await Promise.resolve(); await Promise.resolve();
-  expect(eventCall).toBeUndefined();
+  expect(eventCall).toEqual({ rawParams: '{"n":1.0}', params: expect.anything() });
   await conn.shutdown();
 });
 

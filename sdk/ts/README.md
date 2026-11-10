@@ -5,12 +5,12 @@ The SDK runtime and public types live in `src/`. Source programs default-export 
 retain their existing APIs. See `docs/extensions/extensions.md` in the Persona
 repository for the source runtime and its production admission rules.
 
-## Exact integer request params (explicit opt-in)
+## Exact integer request and notification params (explicit opt-in)
 
 `withExactParams((method, legacyParams, call) => ...)` keeps the legacy parsed
-`Number` argument and exposes original namespace RPC request params as
-`call.rawParams` / `call.params`. Events have no call metadata; replies and
-serialization are unchanged. Use `call.params?.field("args")` for a Go
+`Number` argument and exposes original namespace RPC request/notification params
+as `call.rawParams` / `call.params`. Notifications still have no replies or error
+responses; replies and serialization are unchanged. Use `call.params?.field("args")` for a Go
 `json.RawMessage` struct field (case-folded names, last duplicate including null),
 then `int64()` or `int64Fields(["topic", "replies"])` for lexical Go signed-64
 integers as bigint. `member(name)` instead uses exact decoded map keys.

@@ -348,6 +348,11 @@ Splitting a registry at its first colon reads `[::1]:5000` as `[`, selecting HTT
 
 - Resuming hooks can read the same cached data and still publish a fresh wrapper, unnecessarily changing the render version and invalidating a displayed legacy callback. Preserve equivalent results using their service/request identity, cached timestamps, item references and missed/error semantics, while still publishing genuine changes and new requests. A bundled Program regression plus actual HTTP callback/navigation tests catches this; merely checking that a fitted View loads does not.
 
+## Exact notification input belongs at the shared namespace dispatch (#1640)
+
+- Keep requests and notifications on the same opt-in raw-parameter path, while leaving ordinary two-argument handlers unchanged. Do not add a custom Program transport just to recover int64 tokens or duplicate fields. Notifications retain no-reply/error behavior and initialization gating; the raw view does not promise exact replies or outbound serialization.
+- Preserve page cancellation as a separate request argument when sharing dispatch. Test a bundled source notification against an independently bundled host SDK, including raw signed-int64 bounds, lexical decimals, folded duplicate params, null versus absence, pre-init input and malformed frames.
+
 ## Finite source-page snapshots (#1184)
 
 - Mount → snapshot → suspend can cancel every asynchronous load before it publishes, even though native open-session tests pass. Mark finite loads explicitly with `useLoadEffect`, negotiate the bundled readiness contract and select snapshot transport from the manager's legacy session, never UI version. Do not await arbitrary subscriptions or raise deadlines. Count fetches, cancellations and rendered content across cold mount/resume turns.
