@@ -4080,8 +4080,8 @@ struct Composer: View, Equatable {
     /// back; its history reads.
     private var offlineManager: HubManager? {
         if let s = model.session(key) { return model.offlineManager(of: s) }
-        // Not listed yet: the manager it was opened for (an inbox item's).
-        return itemManager.flatMap { model.managerRosters[key.group]?.offlineManager(of: $0) }
+        // Not listed yet: the manager the Persona page opened it for (an inbox item's).
+        return model.assistantItemManagers[key].flatMap { model.managerRosters[key.group]?.offlineManager(of: $0) }
     }
     /// A health conversation's files go to the health space's reports/ (docs/assistant/health.md「Checkup reports」), not the temp directory.
     private var uploadDest: String? { model.session(key)?.isHealth == true ? Session.healthSpace : nil }
