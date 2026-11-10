@@ -559,7 +559,7 @@ extension Theme {
         static let calendarEvent = "calendar.day.timeline.left"
         /// A meeting's minutes (#2710): a key point, a decision, a question left open (action items are `todo`).
         static let keyPoint = "text.bubble.fill"
-        static let decision = "checkmark.seal"
+        static let decision = "signature"
         static let openQuestion = "questionmark.circle.dashed"
         /// People in the knowledge base.
         static let people = "person.3"
