@@ -208,6 +208,10 @@ class ForwardShotsTest {
     @Suppress("UNCHECKED_CAST")
     private fun capture(name: String) {
         rule.waitForIdle()
+        // Replies parse their Markdown off the main thread (ChatMarkdownCache) and show plain text until then: give it real
+        // time, as ReplyBlocksShotsTest does, or `code` is captured with its backticks.
+        Thread.sleep(200)
+        rule.waitForIdle()
         val bitmap = rule.runOnIdle {
             val global = Class.forName("android.view.WindowManagerGlobal")
             val instance = global.getMethod("getInstance").invoke(null)
