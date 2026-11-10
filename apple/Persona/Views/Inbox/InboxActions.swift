@@ -173,7 +173,7 @@ struct InboxDraftSheet: View {
                     if let pushChat {
                         pushChat(InboxChatRoute(key: model.inHub(key), manager: item.manager))
                     } else {
-                        model.openAssistantConversation(model.inHub(key))
+                        model.openAssistantConversation(model.inHub(key), manager: item.manager)
                     }
                     dismiss()
                 } label: {

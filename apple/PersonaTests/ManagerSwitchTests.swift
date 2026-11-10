@@ -368,6 +368,112 @@ struct ManagerSwitchTests {
         #expect(model.assistantManagerID == "m-2" && model.assistantCurrent?.sessionID == "h1", "the health space is the default's and opens too")
     }
 
+    /// Another assistant's conversation names that assistant (the top bar), by its listing or, not listed yet, by the
+    /// manager it was opened for, which also reads its links; neither switches.
+    @Test func anotherAssistantsConversationNamesItsOwnAssistant() throws {
+        let saved = UserDefaults.standard.object(forKey: "assistant.current")
+        defer { UserDefaults.standard.set(saved, forKey: "assistant.current") }
+        let hub = FakeHub()
+        let model = try model(hub, roster: try Self.roster())
+        model.applySessions([MachineRef(group: "", id: "box"): [try session("w1", manager: "m-1"), try session("a1", manager: "assistant"),
+                                                                 try session("h1", manager: "assistant", space: Session.healthSpace)]])
+        let listed = SessionKey(machineID: "box", sessionID: "w1"), unlisted = SessionKey(machineID: "box", sessionID: "n1")
+        #expect(model.otherAssistant(of: listed)?.name == "工作", "工作's conversation while 助手 is current")
+        #expect(model.otherAssistant(of: SessionKey(machineID: "box", sessionID: "a1")) == nil, "the current one's: none")
+        #expect(model.otherAssistant(of: SessionKey(machineID: "box", sessionID: "h1")) == nil, "the health space: none")
+        #expect(model.otherAssistant(of: unlisted) == nil, "not listed and opened for nobody: none")
+
+        model.openAssistantConversation(unlisted, manager: "m-2")
+        #expect(model.assistantCurrent == unlisted && model.assistantManagerID == nil, "opened, not switched")
+        #expect(model.assistantItemManagers[unlisted] == "m-2" && model.otherAssistant(of: unlisted)?.name == "家里")
+        #expect(model.managerRoster?.offlineManager(of: model.assistantItemManagers[unlisted])?.id == "m-2", "家里 is offline: its note shows")
+        model.selectAssistantManager("m-1")
+        #expect(model.otherAssistant(of: listed) == nil, "工作 current: its own conversation names no other")
+    }
+
+    /// Only a change of the current assistant closes the Persona page's pushed pages and takes another assistant's
+    /// conversation off screen; re-reading the same one (back online) does neither.
+    @Test func onlyASwitchClosesPagesAndLeavesAnotherAssistantsConversation() async throws {
+        let saved = UserDefaults.standard.object(forKey: "assistant.current")
+        defer { UserDefaults.standard.set(saved, forKey: "assistant.current") }
+        let hub = FakeHub()
+        let model = try model(hub, roster: try Self.roster())
+        model.applySessions([MachineRef(group: "", id: "box"): [try session("w1", manager: "m-1"), try session("a1", manager: "assistant")]])
+        model.selectAssistantManager("m-2") // 家里, offline
+        let switches = model.assistantSwitches
+        model.openAssistantConversation(SessionKey(machineID: "box", sessionID: "w1")) // 工作's, from a notification
+        hub.on("GET", "/api/v1/managers", json: #"""
+        {"default":"assistant","managers":[{"id":"assistant","name":"助手","online":true,"default":true,"builtin":true},
+          {"id":"m-1","name":"工作","online":true},{"id":"m-2","name":"家里","online":true}]}
+        """#)
+        await model.refreshManagerRoster("") // 家里 back online: read again, not switched
+        #expect(model.assistantManagerID == "m-2" && model.assistantSwitches == switches)
+        #expect(model.assistantCurrent?.sessionID == "w1", "工作's conversation stays through a re-read")
+        model.selectAssistantManager(nil)
+        #expect(model.assistantSwitches == switches + 1, "a switch closes the pushed pages")
+        #expect(model.assistantCurrent?.sessionID != "w1", "and leaves another assistant's conversation")
+    }
+
+    /// While another assistant is current, the default's settings (Health, the channels) are read once in this run.
+    @Test func anotherAssistantCurrentStillReadsTheDefaultsSettingsOnce() async throws {
+        let hub = FakeHub()
+        let tz = TimeZone.current.identifier
+        hub.on("GET", "/api/v1/assistant") { req in
+            Data((req.headers[Self.header] == "m-1" ? #"{"machine_id":"w","launcher":"codex","cwd":"/w","conversations":[],"timezone":"\#(tz)"}"#
+                                                     : #"{"machine_id":"h","launcher":"claude","cwd":"/h","conversations":[],"timezone":"\#(tz)"}"#).utf8)
+        }
+        hub.on("GET", "/api/v1/managers", json: Self.roster)
+        func defaults() -> Int { hub.sent("GET", "/api/v1/assistant").filter { $0.headers[Self.header] == nil }.count }
+        let folder = FileManager.default.temporaryDirectory.appending(path: "manager-switch-" + UUID().uuidString)
+        AssistantPickStore.save(["": "m-1"], folder: folder)
+        let model = try model(hub, roster: nil, folder: folder) // a launch on 工作, its roster not read yet
+        await model.refreshManagerRoster("")
+        #expect(model.assistantManagerID == "m-1")
+        await waitUntil { model.assistantByGroup[""] != nil }
+        #expect(model.assistantByGroup[""]?.machineID == "h" && model.healthMachineID == "h", "Health follows the default's machine")
+        let after = defaults()
+        hub.on("GET", "/api/v1/managers", json: #"""
+        {"default":"assistant","managers":[{"id":"assistant","name":"助手","online":true,"default":true,"builtin":true},
+          {"id":"m-1","name":"工作","online":true},{"id":"m-2","name":"家里","online":true}]}
+        """#)
+        await model.refreshManagerRoster("") // the roster changed (家里 back), the default didn't
+        #expect(defaults() == after, "once in this run")
+    }
+
+    /// A cold start with a snapshot is on the assistant picked before, with the settings it held of it, before the hub
+    /// answers.
+    @Test func aColdStartFromTheSnapshotIsOnThePickedAssistant() throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "manager-switch-" + UUID().uuidString)
+        let roster = try Self.roster()
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try JSON.encoder.encode(AppModel.DevSnapshot(machines: [], sessions: [], interactions: [], assistant: try Self.state("claude"),
+                                                     managers: roster.managers, defaultManager: roster.defaultID,
+                                                     picked: try Self.state("codex"), pickedManager: "m-1"))
+            .write(to: folder.appending(path: AppModel.snapshotName("") + ".json"))
+        AssistantPickStore.save(["": "m-1"], folder: folder)
+        let model = try model(FakeHub(), roster: nil, folder: folder)
+        model.restoreSaved()
+        #expect(model.currentAssistant?.name == "工作" && model.assistantManagerID == "m-1" && model.api?.shownManager == "m-1")
+        #expect(model.assistantConfig?.launcher == "codex", "its settings as the snapshot kept them")
+        #expect(model.assistantByGroup[""]?.launcher == "claude", "and the default's, for Health and the channels")
+    }
+
+    /// The snapshot's fields for the current assistant come back as written, and a snapshot from before them reads.
+    @Test func theSnapshotKeepsTheRosterAndThePickedAssistantAndReadsAnOldOne() throws {
+        let roster = try Self.roster()
+        let snap = AppModel.DevSnapshot(machines: [], sessions: [], interactions: [], assistant: nil, managers: roster.managers,
+                                        defaultManager: "assistant", picked: try Self.state("codex"), pickedManager: "m-1")
+        let back = try JSON.decoder.decode(AppModel.DevSnapshot.self, from: JSON.encoder.encode(snap))
+        #expect(back.managers == roster.managers && back.defaultManager == "assistant" && back.pickedManager == "m-1")
+        #expect(back.picked?.launcher == "codex")
+        let old = try JSON.decoder.decode(AppModel.DevSnapshot.self, from: Data(#"{"machines":[],"sessions":[],"interactions":[]}"#.utf8))
+        #expect(old.managers == nil && old.defaultManager == nil && old.picked == nil && old.pickedManager == nil)
+    }
+
+    private static func state(_ launcher: String) throws -> APIClient.AssistantState {
+        try JSON.decoder.decode(APIClient.AssistantState.self, from: Data(#"{"machine_id":"x","launcher":"\#(launcher)","cwd":"/x","conversations":[]}"#.utf8))
+    }
+
     @Test func nothingGoesToAnOfflineManager() async throws {
         let hub = FakeHub()
         let model = try model(hub, roster: try Self.roster())

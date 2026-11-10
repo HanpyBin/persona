@@ -36,21 +36,31 @@ extension AppModel {
             assistantPicks[group] = nil
         }
         saveSnapshot()
-        // Another manager's page stays shown: Health and the channels read the new default's settings all the same.
-        if defaultMoved, assistantPick(in: group) != nil, let moved = roster?.defaultID {
-            Task {
-                guard let st = try? await api.manager(nil).assistant(), managerRosters[group]?.defaultID == moved,
-                      assistantPick(in: group) != nil else { return }
-                assistantByGroup[group] = st
-            }
+        // Another manager's page stays shown: Health, the channels and the health launcher follow the default all the same,
+        // so its settings are read once in this run (the default's own page, which reads them, doesn't show), and again
+        // when another manager becomes the default.
+        if assistantPick(in: group) != nil, defaultMoved || defaultAssistantReads.insert(group).inserted {
+            readDefaultAssistant(group, api: api)
         }
         guard group == hub?.group else { return }
         // The manager the Persona page showed left the roster (or the hub has one manager again), the default moved, or the
-        // shown one is back online: the page reads its manager again.
+        // shown one is back online: the page reads its manager again. Only the first and a pick kept from the last launch
+        // that names a manager only now that the roster is read change the current assistant.
         let now = roster.map { shownOwner($0, group: group) }
         let back = wasOffline && assistantManagerOffline == nil
-        // Or the pick kept from the last launch names a manager only now that the roster is read.
-        if defaultMoved || back || (was != nil && was != now) || assistantPick(in: group) != wasPick { assistantManagerChanged() } else { relistAssistant() }
+        let switched = (was != nil && was != now) || assistantPick(in: group) != wasPick
+        if defaultMoved || back || switched { assistantManagerChanged(switched: switched) } else { relistAssistant() }
+    }
+
+    /// The default manager's Persona settings for group while another assistant is current (`assistantByGroup`), unless
+    /// the default moved again or the default became current meanwhile.
+    private func readDefaultAssistant(_ group: String, api: APIClient) {
+        let expected = managerRosters[group]?.defaultID
+        Task {
+            guard let st = try? await api.manager(nil).assistant(), managerRosters[group]?.defaultID == expected,
+                  assistantPick(in: group) != nil else { return }
+            assistantByGroup[group] = st
+        }
     }
 
     /// The manager group's Persona page shows by `roster`.
@@ -80,6 +90,24 @@ extension AppModel {
     var assistantManager: HubManager? {
         guard let roster = managerRoster, roster.isMulti else { return nil }
         let id = roster.owner(assistantManagerID)
+        return roster.installed.first { $0.id == id }
+    }
+
+    /// The assistant whose conversation `key` is, when that is another than the current one: a conversation opened from
+    /// a notification, a link or the inbox, which doesn't switch. By its listing, else by what it was opened for
+    /// (`assistantItemManagers`). nil for the current assistant's, the health space's, and with one manager.
+    func otherAssistant(of key: SessionKey) -> HubManager? {
+        guard let roster = managerRosters[key.group], roster.isMulti else { return nil }
+        let manager: String?
+        if let s = session(key) {
+            guard s.assistant, !s.isHealth else { return nil }
+            manager = s.manager
+        } else {
+            guard let m = assistantItemManagers[key] else { return nil }
+            manager = m
+        }
+        let id = roster.owner(manager)
+        guard id != roster.owner(assistantPick(in: key.group)) else { return nil }
         return roster.installed.first { $0.id == id }
     }
 

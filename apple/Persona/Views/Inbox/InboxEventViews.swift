@@ -523,12 +523,13 @@ struct InboxRelatedSection: View {
 /// Opening a chain's conversation: the processing one is the assistant's (Persona's own conversations), a sub-session
 /// an Agent's. On the iPhone's shell either is pushed over the item instead (`pushInboxChat`).
 @MainActor enum InboxEventOpen {
-    /// `owner`: the item's manager, which a pushed conversation not listed yet is read through (`InboxChatRoute`).
+    /// `owner`: the item's manager, which a conversation not listed yet is read through (`InboxChatRoute`, or the
+    /// Persona page's `assistantItemManagers`).
     static func session(_ key: SessionKey, manager: Bool, owner: String?, model: AppModel, push: ((InboxChatRoute) -> Void)? = nil) {
         if let push {
             push(InboxChatRoute(key: model.inHub(key), manager: owner))
         } else if manager && model.session(key) == nil {
-            model.openAssistantConversation(model.inHub(key))
+            model.openAssistantConversation(model.inHub(key), manager: owner)
         } else {
             model.open(key)
         }

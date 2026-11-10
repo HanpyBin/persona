@@ -41,35 +41,43 @@ enum AssistantSwitcherText {
     }
 }
 
-/// An assistant's avatar in the switcher's list: its name's first letter on a disc in its color, with its state's dot at
-/// the disc's foot, as on every client (the letter in the page's color, so it reads on the disc in both appearances).
+/// An assistant's avatar in the switcher's list: its name's first letter on a solid disc in its color, with its state's
+/// dot at the disc's foot, as on every client. The letter and the dot's ring are the list's own surface color (`surface`):
+/// white on the disc in light mode, and dark on the lighter dark-mode colors, where white would not read. `fade`: an
+/// offline row's (`Theme.Fade.offline`).
 struct AssistantMonogram: View {
     var manager: HubManager
     var defaultID: String
     var now: Date
+    var surface: Color = Theme.card
+    var fade: Double = 1
     @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         let color = AssistantSwitcherText.color(manager, defaultID: defaultID)
         // The disc grows with the text as the rows do (`scaledFrame`); its letter stops growing first, so it stays inside.
-        Monogram(name: manager.name, size: Theme.Size.wellL * Theme.sizeScale(typeSize), fill: color, ink: Theme.pageBackground,
+        Monogram(name: manager.name, size: Theme.Size.wellL * Theme.sizeScale(typeSize), fill: color.opacity(fade), ink: surface,
                  font: Theme.Font.bodyStrong)
             .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-            .overlay(alignment: .bottomTrailing) { AssistantStateDot(tone: ManagersText.status(manager, now: now).tone) }
+            .overlay(alignment: .bottomTrailing) {
+                AssistantStateDot(tone: ManagersText.status(manager, now: now).tone, ring: surface, fade: fade)
+            }
             .accessibilityHidden(true)
     }
 }
 
 /// An assistant's state at the foot of its avatar (the Persona face in the header, a row's disc): green online, gray
-/// offline, orange while it is still being installed, ringed in the page's color so it stands apart from the avatar.
-/// Settings › Assistants keeps `managerDot` beside its words.
+/// offline, orange while it is still being installed, ringed in the color of what it sits on (`ring`) so it stands apart
+/// from the avatar. Settings › Assistants keeps `managerDot` beside its words.
 struct AssistantStateDot: View {
     var tone: ManagersText.Tone
+    var ring: Color = Theme.pageBackground
+    var fade: Double = 1
 
     var body: some View {
         Circle()
-            .fill(Self.color(tone))
-            .overlay(Circle().strokeBorder(Theme.pageBackground, lineWidth: Theme.Size.lineMedium))
+            .fill(Self.color(tone).opacity(fade))
+            .overlay(Circle().strokeBorder(ring, lineWidth: Theme.Size.lineMedium))
             .scaledFrame(width: Theme.Size.dotXL, height: Theme.Size.dotXL)
             .accessibilityHidden(true)
     }
@@ -121,7 +129,8 @@ struct AssistantSwitcherHeader: View {
                         ThemedIcon(Theme.Icon.expand).font(Theme.Font.labelStrong).foregroundStyle(.secondary)
                     }
                     if !compact {
-                        Text(AssistantSwitcherText.line(manager, now: .now)).font(Theme.Font.label).foregroundStyle(.secondary).lineLimit(1)
+                        Text(AssistantSwitcherText.line(manager, now: .now)).font(Theme.Font.label).foregroundStyle(.secondary)
+                            .lineLimit(typeSize.isAccessibilitySize ? 2 : 1)
                     }
                 }
             }
@@ -137,6 +146,8 @@ struct AssistantSwitcherHeader: View {
         .popover(isPresented: $listShown, arrowEdge: .top) {
             AssistantSwitcherList(pick: pick, create: { afterList(.create) }, manage: { afterList(.manage) })
                 .presentationCompactAdaptation(.popover)
+                // A solid panel, as on the other clients: through glass the sidebar's badges showed beside the rows.
+                .presentationBackground(Theme.card)
                 // Gone, not going: UIKit refuses another presentation while the popover is still on its way out.
                 .onDisappear(perform: listGone)
         }
@@ -243,29 +254,33 @@ private struct AssistantSwitcherList: View {
     private var width: CGFloat { Theme.Size.box300 * Theme.sizeScale(typeSize) }
 
     private func row(_ m: HubManager, roster: ManagerRoster, current: Bool, now: Date) -> some View {
-        let isDefault = m.id == roster.defaultID && m.installing == nil
+        // Default only beside another one: with one assistant there is nothing to tell apart.
+        let isDefault = m.id == roster.defaultID && m.installing == nil && roster.isMulti
+        // An offline one's whole row is greyed, not off: its pages show what was last read of it. In the colors, not the
+        // row's opacity, which the popover's vibrant text doesn't take.
+        let fade = m.installing == nil && !m.online ? Theme.Fade.offline : 1
         return Button { pick(m) } label: {
             HStack(spacing: Theme.Space.m) {
-                AssistantMonogram(manager: m, defaultID: roster.defaultID, now: now)
+                AssistantMonogram(manager: m, defaultID: roster.defaultID, now: now, fade: fade)
                 VStack(alignment: .leading, spacing: Theme.Space.xxs) {
                     NameWithChips {
-                        Text(m.name).font(Theme.Font.bodyStrong).foregroundStyle(Color.primary).lineLimit(1)
+                        Text(m.name).font(Theme.Font.bodyStrong).foregroundStyle(Color.primary.opacity(fade)).lineLimit(1)
                     } chips: {
-                        if isDefault { Chip(text: String(localized: "Default [Prompt Composer 844b8c]"), look: .tint(Theme.accent)) }
+                        if isDefault { Chip(text: String(localized: "Default [Prompt Composer 844b8c]"), look: .tint(Theme.accent)).opacity(fade) }
                     }
-                    Text(AssistantSwitcherText.line(m, now: now)).font(Theme.Font.label).foregroundStyle(.secondary).lineLimit(1)
+                    // Whole at the accessibility sizes, where one line keeps only its first words.
+                    Text(AssistantSwitcherText.line(m, now: now)).font(Theme.Font.label).foregroundStyle(Color.secondary.opacity(fade))
+                        .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
                 }
                 Spacer(minLength: Theme.Space.s)
                 if current {
-                    ThemedIcon(Theme.Icon.done).font(Theme.Font.bodyStrong).foregroundStyle(Theme.accent)
+                    ThemedIcon(Theme.Icon.done).font(Theme.Font.bodyStrong).foregroundStyle(Theme.accent.opacity(fade))
                 }
             }
             .padding(.horizontal, Theme.Space.s)
             .padding(.vertical, Theme.Space.xs)
             .scaledFrame(minHeight: Theme.Size.tapTarget)
             .contentShape(.rect)
-            // Greyed, not off: an offline one's pages show what was last read of it.
-            .opacity(m.installing == nil && !m.online ? 0.55 : 1)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(AssistantSwitcherText.spoken(m, now: now, current: current, isDefault: isDefault))

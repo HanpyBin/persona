@@ -4078,7 +4078,11 @@ struct Composer: View, Equatable {
     private var allowsSend: Bool { model.session(key)?.canSend == true && offlineManager == nil }
     /// The manager whose conversation this is, while a hub with several has it offline: nothing goes to it until it is
     /// back; its history reads.
-    private var offlineManager: HubManager? { model.offlineManager(of: model.session(key)) }
+    private var offlineManager: HubManager? {
+        if let s = model.session(key) { return model.offlineManager(of: s) }
+        // Not listed yet: the manager it was opened for (an inbox item's).
+        return itemManager.flatMap { model.managerRosters[key.group]?.offlineManager(of: $0) }
+    }
     /// A health conversation's files go to the health space's reports/ (docs/assistant/health.md「Checkup reports」), not the temp directory.
     private var uploadDest: String? { model.session(key)?.isHealth == true ? Session.healthSpace : nil }
 

@@ -1713,7 +1713,14 @@ header shows with one assistant too. A hub without a roster keeps Persona's name
 The pick is the manager's id per group (`AppModel.assistantPicks`), kept on this device across launches (`AssistantPickStore`,
 the app's defaults); no pick follows the hub's default. A pick whose manager leaves the roster goes back to the default, and one
 that becomes the default stays picked. Each group's snapshot keeps the roster and the picked manager's settings, so a launch
-starts on the current assistant before the hub answers.
+starts on the current assistant before the hub answers. Switching closes the Persona page's pushed pages (`assistantSwitches`:
+they read the assistant before and would write to the next); re-reading the same assistant (back online, the default moving
+under a pick) doesn't. While another assistant is current, the default's settings are read once a run all the same
+(`defaultAssistantReads`), since Health and the channels follow the default.
+
+CarPlay's voice follows the conversation open in the app, else the current assistant's main conversation (it extends the app's
+screen, `CarPlayVoiceSession`); Siri and Shortcuts, the Watch, widgets, Live Activities and the Health page keep following the
+default assistant.
 
 - **Requests**: `AppModel.api` and `api(_:)` carry the pick (`APIClient.showing(_:)`); a request names it in `X-Persona-Manager`
   only on the assistant's own routes (`APIClient.assistantRoute`): not one conversation's (`/api/v1/assistant/conversations/{id}/…`,
@@ -1737,8 +1744,9 @@ starts on the current assistant before the hub answers.
   (`AppModel.offlineManager(of:)`).
 - **From elsewhere**: opening a conversation (a link, a notification, the Inbox's hand-off to Persona) opens that conversation
   and leaves the current assistant alone (`AppModel.openAssistantConversation`); its requests go to its own manager, as the hub
-  routes a conversation's. It stays on screen through later pushes, and gives way to the current assistant's main conversation
-  only when the user switches. A hand-off sent as a plain message goes to the item's manager's main conversation. A summary started from an extension's chat page stays on the default
+  routes a conversation's. The top bar names that assistant (`otherAssistant(of:)`); one not listed yet keeps the item's manager
+  (`assistantItemManagers`) for its links, its offline note and that name. It stays on screen through later pushes and re-reads,
+  and gives way to the current assistant's main conversation only when the user switches. A hand-off sent as a plain message goes to the item's manager's main conversation. A summary started from an extension's chat page stays on the default
   manager.
 - **Tests**: `ManagerSwitchTests` (the route rule and real requests, the pick's start, fallback and one manager, the pick kept
   across launches and through a change of the default, each manager's settings held, a manager leaving the roster, the lists,

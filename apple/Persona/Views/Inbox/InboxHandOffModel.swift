@@ -181,8 +181,9 @@ final class InboxHandOffModel {
                     model.openChat = key
                     model.selectedTab = .chats
                 } else {
-                    // The conversation itself, whichever assistant is current: the hub routes it to its own manager.
-                    model.openAssistantConversation(key)
+                    // The conversation itself, whichever assistant is current: the hub routes it to its own manager, and
+                    // the item's names it until it is listed.
+                    model.openAssistantConversation(key, manager: item.manager)
                 }
             },
             markDone: { InboxStore.shared.setDone(item, true, haptic: false) }))

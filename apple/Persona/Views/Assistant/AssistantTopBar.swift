@@ -383,8 +383,11 @@ struct AssistantTopBar: View {
     }
 
     /// Whose page it is: the current assistant's name on a hub with several (the face stays the persona's, picked in
-    /// Appearance), the persona's with one.
-    private var ownName: String { model.assistantManager?.name ?? model.persona.name }
+    /// Appearance), the persona's with one; another assistant's conversation opened from elsewhere names its own.
+    private var ownName: String {
+        if let key, let other = model.otherAssistant(of: key) { return other.name }
+        return model.assistantManager?.name ?? model.persona.name
+    }
 
     /// The conversation's launcher (the next message uses it) or, on the new-conversation page, the default one.
     /// The model picked for the next message here, nil: the launcher's default.

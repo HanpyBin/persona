@@ -50,7 +50,10 @@ final class AssistantSwitcherUITests: XCTestCase {
     @MainActor func testAtTheLargestTextSizeBothActionsCanBeTapped() throws {
         let app = openList(["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"])
         let create = element(app, "assistant-switcher-new"), manage = element(app, "assistant-switcher-manage")
-        for _ in 0..<4 where !(create.isHittable && manage.isHittable) { element(app, "assistant-switcher-list").swipeUp() }
+        // The rows scroll on their own, down to the last one (still installing), above the two actions.
+        let last = element(app, "assistant-switcher-row-m-c1e9f0")
+        for _ in 0..<4 where !last.isHittable { element(app, "assistant-switcher-list").swipeUp() }
+        XCTAssertTrue(last.isHittable, "the rows don't scroll to the last one:\n\(app.debugDescription)")
         XCTAssertTrue(create.isHittable && manage.isHittable, "an action out of reach:\n\(app.debugDescription)")
         let window = app.windows.firstMatch.frame
         XCTAssertTrue(window.contains(create.frame) && window.contains(manage.frame), "an action cut off by the screen")

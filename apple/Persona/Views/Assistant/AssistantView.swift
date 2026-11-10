@@ -179,7 +179,8 @@ struct AssistantView: View {
                 let _ = ShellTrace.shared.note("assistant page \(NewChatCheck.name(current, main: model.assistantMain)) pending=\(pending != nil)")
                 #endif
                 if let key = current, pending == nil {
-                    ChatView(key: key, style: .assistant)
+                    // Another assistant's conversation not listed yet: read through the manager it was opened for.
+                    ChatView(key: key, style: .assistant, itemManager: model.assistantItemManagers[key])
                         .id(key)
                         // The iPad draws the shell's composer too (`ChatComposerKind.padCard`): the assistant's, as on the iPhone.
                         .environment(\.shellChat, shell != nil || ChatComposerKind.padCard)
@@ -274,12 +275,21 @@ struct AssistantView: View {
                 pending = nil
             }
             .onChange(of: model.assistantReveal) { backToRoot(); activeDrawer.close() }
+            // Another assistant is current: a pushed page (the profile, scheduled tasks, memory…) read the one before and
+            // would write to this one, so it closes.
+            .onChange(of: model.assistantSwitches) { backToRoot() }
             #if DEBUG
             // `-openAssistantPage profile|avatars|routines|runs|…` (with `-tab assistant`): the profile and its pages;
             // `-openAssistantSidebar YES` (or a fraction): the sidebar is out; `-showDrawerAutoDrag <rounds>`: scripted drags, measured
             // (`DrawerProbe`, with `-showDrawerProbe YES`).
             .navigationDestination(isPresented: $showAvatars) { PersonaGallery() }
-            .onAppear {
+            .task {
+                // With `-openAssistantManager <id>` the page first switches to that assistant, which closes pushed pages
+                // (`assistantSwitches`): open them once it is current.
+                if let id = UserDefaults.standard.string(forKey: "openAssistantManager") {
+                    for _ in 0..<40 where model.currentAssistant?.id != id { try? await Task.sleep(for: .milliseconds(250)) }
+                    try? await Task.sleep(for: .milliseconds(300)) // after the switch's own going back
+                }
                 switch UserDefaults.standard.string(forKey: "openAssistantPage") {
                 case "avatars": showAvatars = true
                 case "knowledge": showKnowledge = true
@@ -288,14 +298,6 @@ struct AssistantView: View {
                 case .some(let p) where p != "assistant": showProfile = true
                 default: break
                 }
-                // `-openAssistantSidebar 0.5`: held part way out, as a drag leaves it (screenshots of its corners).
-                let sidebarAt = UserDefaults.standard.double(forKey: "openAssistantSidebar")
-                if sidebarAt > 0 { activeDrawer.progress = min(sidebarAt, 1) }
-                else if UserDefaults.standard.bool(forKey: "openAssistantSidebar") { activeDrawer.progress = 1 }
-                #if os(iOS)
-                let rounds = UserDefaults.standard.integer(forKey: "showDrawerAutoDrag")
-                if rounds > 0 { Task { await DrawerAutoDrag(drawer: activeDrawer).run(rounds: rounds) } }
-                #endif
                 // `-openShellPage inbox|machines|routines|knowledge|profile` (the new shell): that page pushed.
                 switch UserDefaults.standard.string(forKey: "openShellPage") {
                 case "inbox": show(.inbox)
@@ -308,6 +310,16 @@ struct AssistantView: View {
                 case "recordings": show(.recordings)
                 default: break
                 }
+            }
+            .onAppear {
+                // `-openAssistantSidebar 0.5`: held part way out, as a drag leaves it (screenshots of its corners).
+                let sidebarAt = UserDefaults.standard.double(forKey: "openAssistantSidebar")
+                if sidebarAt > 0 { activeDrawer.progress = min(sidebarAt, 1) }
+                else if UserDefaults.standard.bool(forKey: "openAssistantSidebar") { activeDrawer.progress = 1 }
+                #if os(iOS)
+                let rounds = UserDefaults.standard.integer(forKey: "showDrawerAutoDrag")
+                if rounds > 0 { Task { await DrawerAutoDrag(drawer: activeDrawer).run(rounds: rounds) } }
+                #endif
             }
             #endif
             .task { await model.refreshAssistant() }
