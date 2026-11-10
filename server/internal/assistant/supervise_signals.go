@@ -293,11 +293,12 @@ func (s *Service) superviseLoop(ctx context.Context) {
 // main conversation's pushes that outlived superviseHoldMax.
 func (s *Service) superviseWatch(ctx context.Context, now time.Time) {
 	s.autoReviewTick(ctx, now)
+	lists := machineSessions{}
 	for _, t := range s.todosOf(ctx, "*") {
 		if t.Supervision == nil || t.DoneAt != nil {
 			continue
 		}
-		for _, g := range watchSignals(t, s.taskAgents(ctx, t), now) {
+		for _, g := range watchSignals(t, s.taskAgentsIn(ctx, t, lists), now) {
 			s.signal(g)
 		}
 	}

@@ -129,12 +129,13 @@ func (s *Service) ensureToday(ctx context.Context, conversation string) (FeedIte
 			}
 		}
 		slices.SortFunc(mine, func(a, b Todo) int { return a.CreatedAt.Compare(b.CreatedAt) })
+		lists := machineSessions{}
 		for _, t := range mine {
 			if t.Supervision.state(t) == reviewPending {
 				body.PendingReview = append(body.PendingReview, todayTask{ID: t.ID, Title: t.Title})
 				continue
 			}
-			switch taskState(t, s.taskAgents(ctx, t)) {
+			switch taskState(t, s.taskAgentsIn(ctx, t, lists)) {
 			case "needs_you", "interrupted":
 				body.Waiting = append(body.Waiting, todayTask{ID: t.ID, Title: t.Title})
 			case "working":
