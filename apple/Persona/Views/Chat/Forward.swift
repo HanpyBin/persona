@@ -271,7 +271,7 @@ extension AppModel {
         case .persona:
             if let main = assistantMain, main.group == group {
                 place(ref, images: images, on: main, route: ForwardMessage.route(from: ref.extra?["machine"], to: nil))
-                open(main)
+                openAssistantConversation(main) // `open` takes a conversation it has not listed for an Agent's
             } else {
                 var r = ref
                 r.route = ForwardMessage.route(from: ref.extra?["machine"], to: nil)
@@ -297,7 +297,7 @@ extension AppModel {
             let to: (agent: String, machine: String?)? = s?.assistant == true ? nil
                 : (s?.agentLabel ?? "Claude", machine(key.machineRef)?.name)
             place(ref, images: images, on: key, route: ForwardMessage.route(from: ref.extra?["machine"], to: to))
-            open(key)
+            if s?.assistant == true { openAssistantConversation(key) } else { open(key) }
         }
     }
 
