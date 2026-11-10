@@ -98,3 +98,7 @@ Runtime acceptance is a separate, explicitly authorized step on visionOS, using 
   never opt it into the normal scheme or run it unguarded on a user's headset.
 - Record actual results and remaining memory/timer limits before proposing any execution-gate change.
   Neither a passing build nor this test target enables production configuration; enabling remains a separate decision.
+  When enabling visionOS execution after acceptance and explicit approval, update both
+  `test_html_acceptance_keeps_vision_execution_gate_closed` in `apple/PersonaTests/test_persona_only.py`
+  and `executionRequiresPlatformAcceptance` in `apple/PersonaTests/AssistantHTMLSafetyTests.swift`
+  to reflect the newly accepted platform state; these assertions deliberately guard the current closed gate.
