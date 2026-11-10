@@ -1,12 +1,13 @@
 // Actual New agent and to-do handoff workflows. All API writes stay in synthetic fixtures.
-// Usage: node web/e2e/agent-first-prompt.mjs <mockWebOrigin> <artifactDir>
+// Usage: node web/e2e/agent-first-prompt.mjs <mockWebOrigin> <artifactDir> [standard|large]
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { chromium } from "playwright-core";
 
-const [address, artifacts, ...extra] = process.argv.slice(2);
+const [address, artifacts, textSize = "standard", ...extra] = process.argv.slice(2);
 assert.ok(address && artifacts && !extra.length, "Supply the mock web origin and artifact directory");
+assert.ok(["standard", "large"].includes(textSize), "Use a supported app text size");
 const base = new URL(address);
 assert.ok(["127.0.0.1", "localhost", "[::1]"].includes(base.hostname), "Use a loopback mock server");
 assert.ok(["http:", "https:"].includes(base.protocol) && !base.username && !base.password && base.pathname === "/" && !base.search && !base.hash, "Use an origin without credentials or a route");
@@ -17,7 +18,7 @@ const machine = { id: "example-computer", name: "Example computer", online: true
 const secondMachine = { id: "second-computer", name: "Second computer", online: true };
 const prompt = "Summarize the example project";
 const todo = { id: "example-todo", title: "Review the example project", created_at: "2026-01-01T10:00:00Z", updated_at: "2026-01-01T10:00:00Z" };
-const result = { status: "running", runs: [], screenshots: [] };
+const result = { status: "running", textSize, runs: [], screenshots: [] };
 const browser = await chromium.launch({ channel: "chrome", headless: true });
 const deadline = setTimeout(() => void browser.close(), 240_000);
 
@@ -27,12 +28,13 @@ async function open(lang, theme, mode = "inline", phone = false) {
   const run = { lang, theme, mode, phone, writes: [], deferredReads: [], errors: [], blocked: [], mockHellos: 0 };
   result.runs.push(run);
   const context = await browser.newContext({ viewport: { width: phone ? 390 : 1280, height: 900 }, colorScheme: theme, serviceWorkers: "block" });
-  await context.addInitScript(({ lang, theme }) => {
+  await context.addInitScript(({ lang, theme, textSize }) => {
     localStorage.setItem("persona.token", "fixture-token");
     localStorage.setItem("persona.language", lang);
     localStorage.setItem("persona.theme", theme);
+    if (textSize !== "standard") localStorage.setItem("persona.text-size", textSize);
     localStorage.setItem("new.cwd.example-computer", "/code/example");
-  }, { lang, theme });
+  }, { lang, theme, textSize });
   let started, first = "";
   const switching = mode.startsWith("handoff-");
   const machines = switching ? [machine, secondMachine] : [machine];
@@ -95,6 +97,7 @@ async function open(lang, theme, mode = "inline", phone = false) {
   page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource.*(?:404|409|502)/.test(m.text())) run.errors.push(m.text()); });
   const shot = async (state) => {
     await page.evaluate(() => document.fonts.ready); await page.waitForTimeout(350);
+    assert.equal(await page.locator("html").getAttribute("data-text-size"), textSize === "standard" ? null : textSize);
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "No horizontal overflow");
     assert.equal(await page.locator("vite-error-overlay").count(), 0);
     const file = `${lang}-${theme}-${mode}${phone ? "-phone" : ""}-${state}.png`;
