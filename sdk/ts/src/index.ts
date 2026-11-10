@@ -54,8 +54,9 @@ export type ExactHandler = (method: string, params: any, call: ExactCall | undef
 const EXACT_PARAMS = Symbol.for("@persona/extension.exactParams");
 type OptInHandler = Handler & { [EXACT_PARAMS]?: true };
 
-/** Explicitly opt one namespace into original JSON request params. The second argument
- * remains legacy JSON.parse data. Lexical int64 errors become public invalid_params errors. */
+/** Explicitly opt one namespace into original inbound JSON params. The second argument
+ * remains legacy JSON.parse data. Request lexical int64 errors become public invalid_params errors;
+ * notification errors remain ignored, with no reply. */
 export function withExactParams(handler: ExactHandler): Handler {
   const wrapped = (method: string, params: any, call?: ExactCall) => handler(method, params, call);
   Object.defineProperty(wrapped, EXACT_PARAMS, { value: true });

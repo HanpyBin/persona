@@ -172,6 +172,10 @@ fleet, preferences, foreground state and tokens, and recheck after a slow claim.
 Empty/done, an open phone or a fresh update token suppresses a queued start. Restart
 reconstructs its deadline from the durable budget and the current manager snapshot.
 
+## Exact input must cover notification dispatch too (#1640)
+
+A request-only raw-params hook cannot preserve a notification's int64 fields after `JSON.parse` rounds them. Share the explicit branded namespace dispatch path for requests and inbound events, but retain their distinct lifecycle: requests may wait for initialization and answer errors; notifications before initialization are dropped and never reply. Test raw event frames with unsafe signed integers and ordered duplicate/null/type failures, including separately bundled SDK copies. Do not infer exact replies or outbound serialization from exact input.
+
 ## A custom HTTPS dial must opt into HTTP/2 (#1620)
 
 A custom `http.Transport.DialContext` conservatively disables Go's automatic HTTP/2 negotiation. Keep the checked-address dial callback and explicitly enable `ForceAttemptHTTP2`; do not replace it with a default dialer or let an upstream proxy resolve the name again. Verify real local TLS HTTP/2 negotiation, HTTP/1.1 fallback and request cancellation. A successful transport test is not evidence that a particular upstream challenge disappeared: verify the installed source separately, without raising budgets or substituting host-downloaded content.
