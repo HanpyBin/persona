@@ -21,6 +21,7 @@ import (
 	"github.com/nwverse/persona/server/internal/bus"
 	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/managerconf"
+	"github.com/nwverse/persona/server/internal/memtrim"
 	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/rpc"
 )
@@ -466,6 +467,7 @@ func (b *BusHub) request(ctx context.Context, method string, params json.RawMess
 		if err := decode(&p); err != nil {
 			return nil, err
 		}
+		defer memtrim.AfterLarge(len(p.Body)) // a large upload's buffers go back to the system after it
 		var h http.Handler = s
 		if d := b.opts.Devices; d != nil {
 			h = s.fleetHandler(d.Handler(s)) // the machines' and the nodes' routes that are the manager's (devices.go, fleet_routes.go)
