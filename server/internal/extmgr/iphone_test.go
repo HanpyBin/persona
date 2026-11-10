@@ -85,6 +85,11 @@ func iphoneMac(t *testing.T, h *Manager, id string, devices []proto.IPhoneDevice
 	}
 }
 
+func rawApproval(a *iphoneApproval) json.RawMessage {
+	b, _ := json.Marshal(a)
+	return b
+}
+
 // lastIPhoneCall is the last iphone.call the node got (a refresh's iphone.status may land after it).
 func lastIPhoneCall(t *testing.T, calls []phoneCallSeen) phoneCallSeen {
 	t.Helper()
@@ -250,11 +255,11 @@ func TestIPhoneExtension(t *testing.T) {
 func TestIPhoneApprovals(t *testing.T) {
 	h, _ := extensionTestHub(t)
 	ctx := context.Background()
-	pay := &proto.IPhoneApproval{Step: 1, Action: "tap", Needs: []string{"payment"}, App: proto.IPhoneApp{Name: "Wallet", BundleID: "com.example.wallet"},
-		Target: &proto.IPhoneElementRef{N: 4, Role: "button", Label: "Pay ¥36.00"}, Evidence: []string{"label matches pay"}}
+	pay := &iphoneApproval{Step: 1, Action: "tap", Needs: []string{"payment"}, App: iphoneApp{Name: "Wallet", BundleID: "com.example.wallet"},
+		Target: &iphoneElementRef{N: 4, Role: "button", Label: "Pay ¥36.00"}, Evidence: []string{"label matches pay"}}
 	answer := func(p proto.IPhoneCall) (proto.IPhoneResult, error) {
 		if p.Op == "do" && p.Approved != "ap1" {
-			return proto.IPhoneResult{NeedsApproval: true, ApprovalID: "ap1", Approval: pay}, nil
+			return proto.IPhoneResult{NeedsApproval: true, ApprovalID: "ap1", Approval: rawApproval(pay)}, nil
 		}
 		return proto.IPhoneResult{Text: "paid"}, nil
 	}
@@ -327,24 +332,24 @@ func TestIPhoneApprovals(t *testing.T) {
 // steps one "ask before every action" answer covers.
 func TestIPhoneCard(t *testing.T) {
 	l := i18n.En
-	text, input := iphoneCard(l, "My iPhone", &proto.IPhoneApproval{Step: 2, Action: "type", Needs: []string{"password"}, TextLen: 8,
-		Target: &proto.IPhoneElementRef{N: 3, Role: "secure_text_field"}})
+	text, input := iphoneCard(l, "My iPhone", &iphoneApproval{Step: 2, Action: "type", Needs: []string{"password"}, TextLen: 8,
+		Target: &iphoneElementRef{N: 3, Role: "secure_text_field"}})
 	if !strings.Contains(text, "8 characters") || !strings.Contains(text, "item 3") || strings.Contains(string(input), `"text"`) {
 		t.Fatalf("%q %s", text, input)
 	}
-	text, _ = iphoneCard(l, "My iPhone", &proto.IPhoneApproval{Step: 1, Action: "tap", Needs: []string{"unchecked"}, At: &proto.IPhonePoint{X: 119.6, Y: 640}})
+	text, _ = iphoneCard(l, "My iPhone", &iphoneApproval{Step: 1, Action: "tap", Needs: []string{"unchecked"}, At: &iphonePoint{X: 119.6, Y: 640}})
 	if !strings.Contains(text, "(120, 640)") || !strings.Contains(text, i18n.T(l, "hub-iphone.card_need_unchecked")) || strings.Contains(text, " in ") {
 		t.Fatalf("%q", text)
 	}
-	text, _ = iphoneCard(l, "My iPhone", &proto.IPhoneApproval{Step: 1, Action: "tap", Needs: []string{"confirm"}, App: proto.IPhoneApp{BundleID: "com.example.notes"},
-		Target: &proto.IPhoneElementRef{N: 2, Role: "button", Label: "New"},
-		Steps: []proto.IPhoneStepSummary{{Action: "tap", Target: &proto.IPhoneElementRef{N: 2, Label: "New"}}, {Action: "type", TextLen: 5},
+	text, _ = iphoneCard(l, "My iPhone", &iphoneApproval{Step: 1, Action: "tap", Needs: []string{"confirm"}, App: iphoneApp{BundleID: "com.example.notes"},
+		Target: &iphoneElementRef{N: 2, Role: "button", Label: "New"},
+		Steps: []iphoneStepSummary{{Action: "tap", Target: &iphoneElementRef{N: 2, Label: "New"}}, {Action: "type", TextLen: 5},
 			{Action: "button", Button: "home"}, {Action: "launch", App: "com.example.mail"}}})
 	if !strings.Contains(text, "com.example.notes") || !strings.Contains(text, "Type 5 characters → Go to the Home Screen → Open com.example.mail") {
 		t.Fatalf("%q", text)
 	}
 	long := strings.Repeat("字", 300)
-	text, _ = iphoneCard(i18n.ZhHans, "我的 iPhone", &proto.IPhoneApproval{Action: "type", Needs: []string{"send_message"}, Text: long, TextLen: 300})
+	text, _ = iphoneCard(i18n.ZhHans, "我的 iPhone", &iphoneApproval{Action: "type", Needs: []string{"send_message"}, Text: long, TextLen: 300})
 	if strings.Contains(text, long) || !strings.Contains(text, "…") {
 		t.Fatal("a long text is cut")
 	}
@@ -361,7 +366,7 @@ func TestIPhoneApprovalsEnd(t *testing.T) {
 			data, _ := json.Marshal(proto.IPhoneErrorData{Sent: proto.IPhoneNotSent})
 			return proto.IPhoneResult{}, &rpc.Error{Code: "approval_unknown", Message: "nothing was sent: that approval is no longer pending", Data: data}
 		}
-		return proto.IPhoneResult{NeedsApproval: true, ApprovalID: "again", Approval: &proto.IPhoneApproval{Step: 1, Action: "tap", Needs: []string{"payment"}}}, nil
+		return proto.IPhoneResult{NeedsApproval: true, ApprovalID: "again", Approval: rawApproval(&iphoneApproval{Step: 1, Action: "tap", Needs: []string{"payment"}})}, nil
 	})
 	if err := h.extensions.reg.SetEnabled(ctx, iphoneExtensionID, true, "test"); err != nil {
 		t.Fatal(err)
@@ -434,7 +439,7 @@ func TestIPhoneManifest(t *testing.T) {
 	var cfg struct {
 		Properties map[string]any `json:"properties"`
 	}
-	if err := json.Unmarshal(p.Manifest.Configuration, &cfg); err != nil || len(cfg.Properties) != 3 {
+	if err := json.Unmarshal(p.Manifest.Configuration, &cfg); err != nil || len(cfg.Properties) != 5 {
 		t.Fatalf("%v %s", err, p.Manifest.Configuration)
 	}
 	if order := string(p.Manifest.Configuration); strings.Index(order, `"machines"`) > strings.Index(order, `"phones"`) ||
@@ -633,7 +638,107 @@ func TestIPhonePhonesOnlyFromTheConsent(t *testing.T) {
 
 	// Not in the form any client draws.
 	raw, _ := json.Marshal(h.extensions.detail(ctx, h.extensions.reg.Get(iphoneExtensionID)).Form)
-	if strings.Contains(string(raw), `"phones"`) || !strings.Contains(string(raw), `"machines"`) {
+	if strings.Contains(string(raw), `"phones"`) || strings.Contains(string(raw), `"self_apps"`) || !strings.Contains(string(raw), `"machines"`) {
 		t.Fatalf("form: %s", raw)
+	}
+}
+
+// One iphone_do at a time per iPhone: while a do waits for its approval (the card may show on that very iPhone), a
+// second do, from another conversation too, does not reach the node until the first is done.
+func TestIPhoneDoWaitsItsTurn(t *testing.T) {
+	h, _ := extensionTestHub(t)
+	ctx := context.Background()
+	_, seen := iphoneMac(t, h, "mac", []proto.IPhoneDevice{testIPhone}, func(p proto.IPhoneCall) (proto.IPhoneResult, error) {
+		if p.Op == "do" && p.Approved == "" && strings.Contains(string(p.Args), "pay") {
+			return proto.IPhoneResult{NeedsApproval: true, ApprovalID: "ap1", Approval: rawApproval(&iphoneApproval{Step: 1, Action: "tap", Needs: []string{"payment"}})}, nil
+		}
+		return proto.IPhoneResult{Text: "done"}, nil
+	})
+	if err := h.extensions.reg.SetEnabled(ctx, iphoneExtensionID, true, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.extensions.reg.SetConfig(ctx, iphoneExtensionID, json.RawMessage(`{"machines": ["mac"], "phones": ["dev-a1"]}`), "test"); err != nil {
+		t.Fatal(err)
+	}
+	h.refreshIPhoneMacs(ctx)
+	calls := func() int {
+		n := 0
+		for _, c := range seen() {
+			if c.Method == "iphone.call" {
+				n++
+			}
+		}
+		return n
+	}
+	deskOf(h)
+	first, second := make(chan proto.ToolResult, 1), make(chan proto.ToolResult, 1)
+	go func() {
+		first <- h.callIPhoneTool(ctx, "conv-a", "iphone_do", json.RawMessage(`{"steps": [{"action": "tap", "target": {"label": "pay"}}]}`))
+	}()
+	var card deskCard
+	select {
+	case card = <-deskOf(h).ch:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no card")
+	}
+	go func() {
+		second <- h.callIPhoneTool(ctx, "conv-b", "iphone_do", json.RawMessage(`{"steps": [{"action": "tap", "target": {"n": 2}}]}`))
+	}()
+	time.Sleep(300 * time.Millisecond)
+	if n := calls(); n != 1 {
+		t.Fatalf("while the card waits only the first do reached the node: %d calls", n)
+	}
+	yes := true
+	card.answer <- proto.Resolution{Allow: &yes}
+	if res := <-first; res.IsError {
+		t.Fatalf("%+v", res)
+	}
+	if res := <-second; res.IsError {
+		t.Fatalf("%+v", res)
+	}
+	if n := calls(); n != 3 {
+		t.Fatalf("the first, its resume, then the second: %d", n)
+	}
+	// A look is not input: it never waits.
+	if res := h.callIPhoneTool(ctx, "conv-c", "iphone_look", nil); res.IsError {
+		t.Fatalf("%+v", res)
+	}
+}
+
+// Persona's own app on the phone, as the app says it when consenting, is kept (only the consent route sets it) and goes
+// down with every call so the core never operates it.
+func TestIPhoneSelfApp(t *testing.T) {
+	h, _ := extensionTestHub(t)
+	ctx := context.Background()
+	mux := h.routes()
+	_, seen := iphoneMac(t, h, "mac", []proto.IPhoneDevice{testIPhone}, nil)
+	phone := deviceToken("dev_phone", roleFull)
+	if err := h.extensions.reg.SetEnabled(ctx, iphoneExtensionID, true, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.extensions.reg.SetConfig(ctx, iphoneExtensionID, json.RawMessage(`{"machines": ["mac"]}`), "test"); err != nil {
+		t.Fatal(err)
+	}
+	h.refreshIPhoneMacs(ctx)
+	body := `{"device": "dev-a1", "allowed": true, "app": {"bundle_id": "com.example.persona", "name": "Persona"}}`
+	for range 2 { // said again: kept once
+		if code, out := call(t, mux, "PUT", "/api/v1/iphone/consent", phone, body); code != 200 {
+			t.Fatalf("%d %v", code, out)
+		}
+	}
+	if s := h.iphone(); strings.Join(s.SelfApps, ",") != "com.example.persona" || strings.Join(s.SelfNames, ",") != "Persona" {
+		t.Fatalf("%+v", s)
+	}
+	code, _ := call(t, mux, "PUT", "/api/v1/extensions/iphone/-/config", h.cfg.Token, `{"config": {"machines": ["mac"], "self_apps": [], "self_names": ["x"]}}`)
+	if s := h.iphone(); code != 200 || strings.Join(s.SelfApps, ",") != "com.example.persona" || strings.Join(s.SelfNames, ",") != "Persona" {
+		t.Fatalf("the settings route keeps them: %d %+v", code, s)
+	}
+	h.refreshIPhoneMacs(ctx)
+	if res := h.callIPhoneTool(ctx, "c", "iphone_do", json.RawMessage(`{"steps": [{"action": "wait", "ms": 10}]}`)); res.IsError {
+		t.Fatalf("%+v", res)
+	}
+	last := lastIPhoneCall(t, seen())
+	if strings.Join(last.Call.SelfApps, ",") != "com.example.persona" || strings.Join(last.Call.SelfNames, ",") != "Persona" {
+		t.Fatalf("%+v", last.Call)
 	}
 }

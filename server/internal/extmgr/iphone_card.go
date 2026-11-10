@@ -1,7 +1,7 @@
 package extmgr
 
 // The approval card of a step on an iPhone (docs/extensions/iphone.md "Approval"): the node core says what waits, as
-// data (proto.IPhoneApproval); the words are the manager's, in the user's language, from the catalog
+// data (iphoneApproval); the words are the manager's, in the user's language, from the catalog
 // (hub-iphone.card_*). The card's input is that data without the evidence (English facts for the log): never the
 // model's own arguments, which can hold a password being typed.
 
@@ -12,14 +12,61 @@ import (
 	"unicode/utf8"
 
 	"github.com/nwverse/persona/server/internal/i18n"
-	"github.com/nwverse/persona/server/internal/proto"
 )
+
+// iphoneApproval is the core's approval of the step that waits for the owner (iphonectl.Approval): which step of the
+// do, what it does, why (Needs: payment | delete | send_message | password | confirm | unchecked, unchecked being a
+// screen without elements, so the target can't be identified), in which app, on what (Target) or where (At), what it
+// types (Text, never a password; TextLen always), and with confirm the steps it covers. Evidence is English facts for
+// the log, never shown. Only what the card uses is read; the rest of the core's JSON is ignored.
+type iphoneApproval struct {
+	Step      int                 `json:"step"`
+	Action    string              `json:"action"`
+	Needs     []string            `json:"needs"`
+	App       iphoneApp           `json:"app"`
+	Target    *iphoneElementRef   `json:"target,omitempty"`
+	At        *iphonePoint        `json:"at,omitempty"`
+	Text      string              `json:"text,omitempty"`
+	TextLen   int                 `json:"text_len,omitempty"`
+	Key       string              `json:"key,omitempty"`
+	Button    string              `json:"button,omitempty"`
+	LaunchApp string              `json:"launch_app,omitempty"`
+	Evidence  []string            `json:"evidence,omitempty"`
+	Steps     []iphoneStepSummary `json:"steps,omitempty"`
+}
+
+// iphoneStepSummary is one step an approval with confirm covers.
+type iphoneStepSummary struct {
+	Action  string            `json:"action"`
+	Target  *iphoneElementRef `json:"target,omitempty"`
+	At      *iphonePoint      `json:"at,omitempty"`
+	TextLen int               `json:"text_len,omitempty"`
+	Key     string            `json:"key,omitempty"`
+	Button  string            `json:"button,omitempty"`
+	App     string            `json:"app,omitempty"`
+}
+
+type iphoneApp struct {
+	BundleID string `json:"bundle_id,omitempty"`
+	Name     string `json:"name,omitempty"`
+}
+
+type iphoneElementRef struct {
+	N     int    `json:"n,omitempty"`
+	Role  string `json:"role"`
+	Label string `json:"label,omitempty"`
+}
+
+type iphonePoint struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+}
 
 // iphoneCardText is the most of what a step types that the card shows.
 const iphoneCardText = 200
 
 // iphoneCard is the card for approval a on iPhone phone, in l: its text, and its input.
-func iphoneCard(l i18n.Lang, phone string, a *proto.IPhoneApproval) (string, json.RawMessage) {
+func iphoneCard(l i18n.Lang, phone string, a *iphoneApproval) (string, json.RawMessage) {
 	t := func(key string, args ...i18n.Args) string { return i18n.T(l, "hub-iphone.card_"+key, args...) }
 	act := iphoneCardAction(l, a.Action, a.Target, a.At, a.Text, a.TextLen, true, a.Key, a.Button, a.LaunchApp)
 	var lines []string
@@ -58,7 +105,7 @@ func iphoneCard(l i18n.Lang, phone string, a *proto.IPhoneApproval) (string, jso
 
 // iphoneCardAction is one step in words: "Tap “Pay”", "Type “hello” into item 4", "Tap at (120, 640)". withText: the
 // step's text comes with it unless it is a password (the approval itself); a step summary only ever has its length.
-func iphoneCardAction(l i18n.Lang, action string, target *proto.IPhoneElementRef, at *proto.IPhonePoint, text string, textLen int,
+func iphoneCardAction(l i18n.Lang, action string, target *iphoneElementRef, at *iphonePoint, text string, textLen int,
 	withText bool, key, button, app string) string {
 	t := func(key string, args ...i18n.Args) string { return i18n.T(l, "hub-iphone.card_"+key, args...) }
 	what := cardTarget(l, target, at)
@@ -101,7 +148,7 @@ func iphoneCardAction(l i18n.Lang, action string, target *proto.IPhoneElementRef
 }
 
 // cardTarget is what a step acts on: an element by its label, else its number; a point when there are no elements.
-func cardTarget(l i18n.Lang, target *proto.IPhoneElementRef, at *proto.IPhonePoint) string {
+func cardTarget(l i18n.Lang, target *iphoneElementRef, at *iphonePoint) string {
 	t := func(key string, args ...i18n.Args) string { return i18n.T(l, "hub-iphone.card_"+key, args...) }
 	switch {
 	case target != nil && strings.TrimSpace(target.Label) != "":
@@ -114,7 +161,7 @@ func cardTarget(l i18n.Lang, target *proto.IPhoneElementRef, at *proto.IPhonePoi
 	return ""
 }
 
-func cardApp(a proto.IPhoneApp) string {
+func cardApp(a iphoneApp) string {
 	if n := strings.TrimSpace(a.Name); n != "" {
 		return n
 	}

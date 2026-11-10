@@ -93,8 +93,9 @@ which the hub hands to the app ([phone-tools.md](../apple/phone-tools.md)).
 
 ### Approval
 
-`iphone.call` answers `{output?, text?, image?, needs_approval?, approval_summary?, approval_id?}` (`proto.IPhoneResult`),
-`approval_summary` being the core's structured approval (`proto.IPhoneApproval`): the step, its action, why
+`iphone.call` answers `{output?, text?, image?, needs_approval?, approval?, approval_id?}` (`proto.IPhoneResult`),
+`approval` being the core's structured approval as JSON (`iphonectl.Approval`; the manager reads it into
+`iphoneApproval` in `extmgr/iphone_card.go`; the older `approval_summary` string is no longer filled): the step, its action, why
 (`needs`: payment, delete, send_message, password, confirm, unchecked), the app, the target or the point (`at`, when the
 screen gives no elements), the text it types (never a password: only `text_len`), the key, button or app, and with
 `confirm` the steps one answer covers; `evidence` is English facts for the log.
@@ -104,6 +105,13 @@ The manager words the usual permission card itself, in the user's language (`hub
 screen (target not identified)". The card's input is the approval without its evidence, never the model's arguments
 (which can hold a password being typed). The card has no picture yet, so the screenshot the core keeps with an
 unchecked approval is not on it.
+
+**One do at a time per iPhone.** An `iphone_do` holds that iPhone's turn (`iphoneTurn`, across conversations) until its
+approvals are answered and it is done; a look never waits. While a card waits, and it may show on that very iPhone (a
+notification banner over another app), no other input reaches the phone, so the automation can never tap its own
+approval. The core also never operates Persona's own app: each iPhone's app sends its bundle id and display name with
+its consent (`app`), kept in `self_apps` / `self_names` (only the consent route changes them, as `phones`) and passed
+down with every call.
 
 Once allowed, the manager resumes the do with `approved: <approval_id>` and no arguments. The core answers a resume it
 no longer holds (the id used before, the do replaced by a newer one, older than 15 minutes, the node restarted) with
@@ -120,16 +128,15 @@ answer on.
   forget one's pairing record, cancel a pairing (no device). Pairing only once the computer is on (404); forget and cancel
   need only the extension on; no device 400; offline or an old node 409. The log never says which iPhone.
 - `GET /api/v1/iphone` → `{on, devices: [{…device, machines: [{id, name, enabled}], consented}]}`, every iPhone the computers reach, each once.
-- `PUT /api/v1/iphone/consent` `{"device", "allowed"}` → that device as above. Not the user's own app → 403; extension off → 404.
+- `PUT /api/v1/iphone/consent` `{"device", "allowed", "app"?: {"bundle_id", "name"}}` → that device as above. Not the user's own app → 403; extension off → 404.
 - `proto.Machine.iphone` is the computer's `IPhone` while the extension is on (the manager's report, like `computer`).
 - Node: `iphone.status` → `IPhone` (the manager sets `enabled` and `allowed` itself, never taking the node's word);
-  `iphone.call` `{device, session, op: status|look|do, args, approved?, timeout_ms?, confirm?}` (`proto.IPhoneCall`) → `IPhoneResult`;
+  `iphone.call` `{device, session, op: status|look|do, args, approved?, timeout_ms?, confirm?, self_apps?, self_names?}` (`proto.IPhoneCall`) → `IPhoneResult`;
   `iphone.pair` / `iphone.forget` / `iphone.cancel` `{device}` → `IPhone`. Through `plugin.node.call` to the built-in
   program `iphone` (methods `status`, `call`, `pair`, `forget`, `cancel`) on a node that lists it, by these names otherwise.
   `op: status` is the node's own answer; `look` and `do` go to block D's package.
-  The node passes `confirm` to the core as `Request.Confirm`, and the core's `Response` into `IPhoneResult` as it is:
-  `approval_summary` is the core's `Approval` object (`proto.IPhoneApproval` mirrors it field for field) and
-  `approval_id` its id. A resume is op `do` with only `approved` (no `args`); the core's "nothing was sent" for a resume
+  The node passes `confirm`, `self_apps` and `self_names` to the core, and its approval into `IPhoneResult.approval`
+  as it is (the core's `Approval` object) with `approval_id`. A resume is op `do` with only `approved` (no `args`); the core's "nothing was sent" for a resume
   it no longer holds stays an `*rpc.Error` with `sent: no` and the core's message.
 
 ## Notes and their languages
