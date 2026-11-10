@@ -34,6 +34,8 @@ struct KnowledgeView: View {
     @Environment(\.kbOpenEntry) private var opener
 
     private var list: KBList? { lists[kind] }
+    /// The assistant whose knowledge base the page reads (`APIClient.knowledgeRoute`): another one is another list.
+    private var assistant: String { model.api?.shownManager ?? "" }
     /// Searching only once there is text besides spaces: `search()` trims the same way and asks for nothing when that
     /// leaves nothing, so the results area would spin for good on a field of spaces (#4086).
     private var searching: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
@@ -102,9 +104,20 @@ struct KnowledgeView: View {
         // Always shown: the drawer that hides on scroll folded away as soon as results replaced the list (the chips
         // row goes), taking the typed text out of sight (2026-10-31).
         .pageSearchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: String(localized: "Search profiles and chat history"))
-        .task(id: query) { await search() }
-        .task(id: "\(kind.rawValue)|\(tag ?? "")") { await load() }
+        .task(id: "\(query)|\(assistant)") { await search() }
+        .task(id: "\(kind.rawValue)|\(tag ?? "")|\(assistant)") { await load() }
         .onChange(of: kind) { showIgnored = false }
+        // Another assistant is current: what was listed, found and open beside the list is the one before's. The two
+        // tasks above read the new one's.
+        .onChange(of: assistant) {
+            lists = [:]
+            error = nil
+            results = nil
+            resultsFor = ""
+            searchError = nil
+            tag = nil
+            opener?.open = nil
+        }
         .refreshable { await load() }
         #if os(macOS)
         .macRefreshes { await load() } // ⌘R: no pull to refresh on the Mac
@@ -295,12 +308,14 @@ struct KnowledgeView: View {
 
     private func load() async {
         guard !(kind == .recordings && localRecordings), let api = model.api else { return }
+        let asked = assistant
         do {
             let l = try await api.kbList(kind, tag: tag)
+            guard asked == assistant else { return } // another assistant is current meanwhile: its own read lands
             lists[kind] = l
             error = nil
         } catch {
-            self.error = error.shown
+            if asked == assistant { self.error = error.shown }
         }
     }
 }
@@ -583,6 +598,9 @@ struct KnowledgeDetailView: View {
     /// Opened from a search: the places it was found come first.
     var query: String? = nil
     @State private var detail: KBDetailResponse?
+    /// The hub's client as it was when the entry was first read: what the page reads again and what its editor
+    /// writes go to the assistant it was opened for, whichever is current by then.
+    @State private var api: APIClient?
     @State private var error: String?
     @State private var allMatches = false
     @State private var allMoments = false
@@ -681,7 +699,7 @@ struct KnowledgeDetailView: View {
         }
         #endif
         .sheet(isPresented: $editing) {
-            KBTagEditor(entry: shown) { await load() }
+            KBTagEditor(entry: shown, api: api) { await load() }
         }
         #if DEBUG && os(macOS)
         // `-showKBEditor YES` with `-showKnowledgeEntry <kind>/<id>`: the tag editor open (Mac screenshots).
@@ -978,7 +996,8 @@ struct KnowledgeDetailView: View {
     }
 
     private func load() async {
-        guard let api = model.api else { return }
+        guard let api = api ?? model.api else { return }
+        if self.api == nil { self.api = api }
         do {
             detail = try await api.kbDetail(entry.kind, id: entry.id, query: query)
             error = nil
@@ -1339,6 +1358,8 @@ struct KBTagEditor: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     var entry: KBEntry
+    /// The client of the page that opened it (`KnowledgeDetailView.api`): the entry's own assistant's.
+    var api: APIClient?
     var saved: () async -> Void
     @State private var importance = ""
     @State private var relevance = 50.0
@@ -1416,7 +1437,7 @@ struct KBTagEditor: View {
     }
 
     private func save() async {
-        guard let api = model.api else { return }
+        guard let api = api ?? model.api else { return }
         saving = true
         defer { saving = false }
         let isProject = entry.kind == KBKind.projects.rawValue

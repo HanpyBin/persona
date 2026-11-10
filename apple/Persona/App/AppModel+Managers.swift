@@ -16,8 +16,29 @@ extension AppModel {
         guard let api = api(group) else { return }
         let read = managerRosterReads[group, default: 0] + 1
         managerRosterReads[group] = read
-        let roster = await ManagerRoster.read(api, keeping: managerRosters[group])
-        guard read == managerRosterReads[group], managerRosters[group] != roster else { return }
+        let answer = await ManagerRoster.ask(api)
+        guard read == managerRosterReads[group] else { return }
+        let roster: ManagerRoster?
+        switch answer {
+        case .list(let list):
+            roster = ManagerRoster(list)
+            // The inbox counts go beside the roster, which carries none: a count that moved leaves the roster as it was,
+            // and nothing that reads the roster is drawn again.
+            let counts = Dictionary(list.managers.compactMap { m in m.inboxNeedsYou.map { (m.id, $0) } }, uniquingKeysWith: { a, _ in a })
+            if inboxNeedsYou[group] ?? [:] != counts { inboxNeedsYou[group] = counts }
+            if rosterless.contains(group) { rosterless.remove(group) }
+        case .absent:
+            roster = nil
+            if inboxNeedsYou[group] != nil { inboxNeedsYou[group] = nil }
+            if !rosterless.contains(group) { rosterless.insert(group) }
+        case .unread:
+            roster = managerRosters[group]
+        }
+        guard managerRosters[group] != roster else {
+            // No roster before or after, yet what the pages list may have changed: a kept pick stopped counting.
+            if group == hub?.group { followScope() }
+            return
+        }
         let was = managerRosters[group].map { shownOwner($0, group: group) }
         let wasPick = assistantPick(in: group)
         let wasOffline = group == hub?.group && assistantManagerOffline != nil

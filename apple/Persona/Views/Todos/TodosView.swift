@@ -36,7 +36,7 @@ struct TodosView: View {
     /// search narrows the to-dos first, then places what is left.
     private var triaged: TodoTriageResult {
         let lookup = TodosLogic.makeSessionLookup(AppModel.shared.allSessions(inFront: inFront))
-        return TodoTriageLogic.triageTodos(store.todos.filter(matchesQuery), lookup: lookup, now: clock, restored: restored)
+        return TodoTriageLogic.triageTodos(store.scopedTodos.filter(matchesQuery), lookup: lookup, now: clock, restored: restored)
     }
 
     private func matchesQuery(_ todo: TodoItem) -> Bool {
@@ -51,7 +51,7 @@ struct TodosView: View {
         VStack(spacing: Theme.Space.flush) {
             TodosModeBar(view: $viewMode, mode: $calendarMode)
             if viewMode == .calendar {
-                TodoCalendarView(todos: store.todos, mode: $calendarMode, anchor: $calendarAnchor,
+                TodoCalendarView(todos: store.scopedTodos, mode: $calendarMode, anchor: $calendarAnchor,
                                  open: { pushed = TodoDetailRoute(id: $0) }, showList: { viewMode = .list })
             } else {
                 list
@@ -88,10 +88,17 @@ struct TodosView: View {
             // `-showDoneTodos YES`: the Done section starts open (screenshots of done todos).
             if UserDefaults.standard.bool(forKey: "showDoneTodos") { unfolded = [.other, .shelved, .done] }
             if let match = UserDefaults.standard.string(forKey: "openTodoTitled"),
-               let todo = store.todos.first(where: { $0.title.contains(match) }) {
+               let todo = store.scopedTodos.first(where: { $0.title.contains(match) }) {
                 pushed = TodoDetailRoute(id: todo.id)
             }
             #endif
+        }
+        // Another assistant is current: the list is its to-dos now, and one opened or being written is the one before's.
+        .onChange(of: model.assistantSwitches) {
+            pushed = nil
+            showCreate = false
+            quickAdd = nil
+            openedGroups = []
         }
         .navigationDestination(item: $pushed) { r in TodoDetailView(todoID: r.id) }
     }
@@ -292,12 +299,17 @@ struct TodosView: View {
 
     @ViewBuilder private var emptySection: some View {
         Section {
-            EmptyStateView(
-                symbol: Theme.Icon.todo,
-                title: query.isEmpty ? String(localized: "No to-dos yet") : String(localized: "No matching to-dos"),
-                message: query.isEmpty ? String(localized: "Write down something to do, hand it to an agent, and track its progress.") : String(localized: "Try a different search"),
-                action: query.isEmpty ? (String(localized: "New To-Do"), { showCreate = true }) : nil
-            )
+            // The hub's merged list has nothing of an assistant that is offline: said so, not offered as a first to-do.
+            if let offline = model.assistantManagerOffline {
+                AssistantOfflineNotice(manager: offline)
+            } else {
+                EmptyStateView(
+                    symbol: Theme.Icon.todo,
+                    title: query.isEmpty ? String(localized: "No to-dos yet") : String(localized: "No matching to-dos"),
+                    message: query.isEmpty ? String(localized: "Write down something to do, hand it to an agent, and track its progress.") : String(localized: "Try a different search"),
+                    action: query.isEmpty ? (String(localized: "New To-Do"), { showCreate = true }) : nil
+                )
+            }
         }
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)

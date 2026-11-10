@@ -230,15 +230,23 @@ nonisolated struct APIClient: Sendable {
         return c
     }
 
-    /// Whether a request goes by the manager the Persona page shows: the assistant's routes (`/api/v1/assistant…`), but
+    /// Whether a request goes by the current assistant (`shownManager`): the assistant's routes (`/api/v1/assistant…`), but
     /// not one conversation's (`/api/v1/assistant/conversations/{id}…`), which the hub sends to the conversation's own
-    /// manager and a named one would override, nor the health space's (`space`), which stays the default's.
+    /// manager and a named one would override, nor the health space's (`space`), which stays the default's; and its
+    /// knowledge base (`/api/v1/kb…`, `/api/v1/kb-search`), as on the web and Android. Not the recordings
+    /// (`/api/v1/recordings`): this device syncs them to the hub in the background, whichever assistant is current.
     nonisolated static func assistantRoute(_ path: String, query: [String: String]) -> Bool {
+        if knowledgeRoute(path) { return true }
         let base = "/api/v1/assistant"
         guard path == base || path.hasPrefix(base + "/") || path.hasPrefix(base + "?"),
               query["space"]?.isEmpty != false, !path.contains("space=") else { return false }
         let parts = path.dropFirst(base.count).split(separator: "?", maxSplits: 1).first?.split(separator: "/") ?? []
         return !(parts.count > 1 && parts[0] == "conversations")
+    }
+
+    /// A knowledge base route: each manager keeps its own (docs/assistant/managers.md).
+    nonisolated static func knowledgeRoute(_ path: String) -> Bool {
+        ["/api/v1/kb", "/api/v1/kb-search"].contains { path == $0 || path.hasPrefix($0 + "/") || path.hasPrefix($0 + "?") }
     }
 
     /// What a request to `path` carries besides the caller's own headers: the manager it names.

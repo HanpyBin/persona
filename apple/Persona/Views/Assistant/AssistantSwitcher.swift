@@ -3,7 +3,9 @@ import SwiftUI
 // The assistant switcher (docs/assistant/managers.md "Clients"): the sidebar's header names the current assistant (the
 // interface's word for a manager) with whether it is online and where it runs, and opens the hub's assistants as a
 // list: one row each with its state, the current one checked, the default marked, one still installing with its code's
-// time left, then New Assistant and Manage Assistants… (Settings › Assistants). Picking one makes it the current
+// time left, and beside every other one than the current how much waits for the user there (`AssistantBadges`: its
+// agents waiting and its inbox's Needs You), then New Assistant and Manage Assistants… (Settings › Assistants). The
+// header's face carries a mark while another assistant has something waiting. Picking one makes it the current
 // assistant on this device (`AppModel.selectAssistantManager`, kept for each hub across launches); picking one still
 // installing shows how to install it. The header shows with one assistant too; a hub without a roster keeps the plain
 // name it had.
@@ -32,11 +34,21 @@ enum AssistantSwitcherText {
         return [Theme.Hue.blue, Theme.Hue.green, Theme.Hue.orange, Theme.Hue.pink, Theme.Hue.indigo][hue]
     }
 
-    /// What VoiceOver says for a row: the name, its line, and what marks it.
-    static func spoken(_ m: HubManager, now: Date, current: Bool, isDefault: Bool) -> String {
+    /// What VoiceOver says for a row: the name, its line, what marks it, and how much waits there (`waiting`; the
+    /// current one's row shows none).
+    static func spoken(_ m: HubManager, now: Date, current: Bool, isDefault: Bool, waiting: Int = 0) -> String {
         var parts = [m.name, line(m, now: now)]
         if isDefault { parts.append(String(localized: "Default [Prompt Composer 844b8c]")) }
         if current { parts.append(String(localized: "Current")) }
+        if !current, waiting > 0 { parts.append(AssistantBadges.spoken(waiting)) }
+        return parts.joined(separator: ", ")
+    }
+
+    /// What VoiceOver says for the header: the current assistant and its line, and that another one has something
+    /// waiting while the mark shows.
+    static func spokenHeader(_ m: HubManager, now: Date, othersWaiting: Bool) -> String {
+        var parts = [m.name, line(m, now: now)]
+        if othersWaiting { parts.append(String(localized: "Another assistant has something waiting for you")) }
         return parts.joined(separator: ", ")
     }
 }
@@ -91,6 +103,20 @@ struct AssistantStateDot: View {
     }
 }
 
+/// On the sidebar's header while another assistant than the current one has something waiting (its count is in the
+/// list): at the head of the face, or beside the name where the face isn't drawn.
+struct AssistantWaitingDot: View {
+    var ring: Color = Theme.pageBackground
+
+    var body: some View {
+        Circle()
+            .fill(Theme.needsYou)
+            .overlay(Circle().strokeBorder(ring, lineWidth: Theme.Size.lineMedium))
+            .scaledFrame(width: Theme.Size.dotXL, height: Theme.Size.dotXL)
+            .accessibilityHidden(true)
+    }
+}
+
 /// The sidebar's header: the Persona face (the one picked in Appearance), the current assistant's name with an arrow,
 /// and its state. A tap opens the list. `compact`: one line without the face, for a title bar's row (the Mac).
 struct AssistantSwitcherHeader: View {
@@ -116,17 +142,22 @@ struct AssistantSwitcherHeader: View {
     }
 
     var body: some View {
+        // Read here, not in the label alone: the spoken name says it too.
+        let othersWaiting = model.othersWaiting
+        // At the accessibility sizes the face gives its room to the name (the top bar keeps showing it).
+        let showsFace = !compact && !typeSize.isAccessibilitySize
         Button { listShown.toggle() } label: {
             HStack(spacing: Theme.Space.m) {
-                // At the accessibility sizes the face gives its room to the name (the top bar keeps showing it).
-                if !compact && !typeSize.isAccessibilitySize {
+                if showsFace {
                     PersonaAvatar(size: Theme.Size.avatar)
                         .overlay(alignment: .bottomTrailing) { AssistantStateDot(tone: ManagersText.status(manager, now: .now).tone) }
+                        .overlay(alignment: .topTrailing) { if othersWaiting { AssistantWaitingDot() } }
                 }
                 VStack(alignment: .leading, spacing: Theme.Space.xxs) {
                     HStack(spacing: Theme.Space.xs) {
                         Text(manager.name).font(nameFont).foregroundStyle(ink).lineLimit(1).minimumScaleFactor(0.7)
                         ThemedIcon(Theme.Icon.expand).font(Theme.Font.labelStrong).foregroundStyle(.secondary)
+                        if othersWaiting && !showsFace { AssistantWaitingDot() }
                     }
                     if !compact {
                         Text(AssistantSwitcherText.line(manager, now: .now)).font(Theme.Font.label).foregroundStyle(.secondary)
@@ -139,7 +170,7 @@ struct AssistantSwitcherHeader: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(manager.name), \(AssistantSwitcherText.line(manager, now: .now))")
+        .accessibilityLabel(AssistantSwitcherText.spokenHeader(manager, now: .now, othersWaiting: othersWaiting))
         .accessibilityHint("Switches assistants")
         .accessibilityAddTraits(.isHeader)
         .accessibilityIdentifier("assistant-switcher")
@@ -229,10 +260,11 @@ private struct AssistantSwitcherList: View {
             VStack(spacing: 0) {
                 if let roster = model.managerRoster {
                     let current = model.currentAssistant?.id
+                    let badges = model.assistantBadges
                     ScrollView {
                         VStack(spacing: 0) {
                             ForEach(AssistantSwitcherText.rows(roster)) { m in
-                                row(m, roster: roster, current: m.id == current, now: clock.date)
+                                row(m, roster: roster, current: m.id == current, waiting: badges[m.id] ?? 0, now: clock.date)
                             }
                         }
                     }
@@ -253,7 +285,8 @@ private struct AssistantSwitcherList: View {
 
     private var width: CGFloat { Theme.Size.box300 * Theme.sizeScale(typeSize) }
 
-    private func row(_ m: HubManager, roster: ManagerRoster, current: Bool, now: Date) -> some View {
+    /// `waiting`: what waits for the user at it (`AppModel.assistantBadges`), shown beside any but the current one.
+    private func row(_ m: HubManager, roster: ManagerRoster, current: Bool, waiting: Int, now: Date) -> some View {
         // Default only beside another one: with one assistant there is nothing to tell apart.
         let isDefault = m.id == roster.defaultID && m.installing == nil && roster.isMulti
         // An offline one's whole row is greyed, not off: its pages show what was last read of it. In the colors, not the
@@ -275,6 +308,9 @@ private struct AssistantSwitcherList: View {
                 Spacer(minLength: Theme.Space.s)
                 if current {
                     ThemedIcon(Theme.Icon.done).font(Theme.Font.bodyStrong).foregroundStyle(Theme.accent.opacity(fade))
+                } else if waiting > 0 {
+                    CountBadge(count: waiting, look: .solid(Theme.needsYou))
+                        .accessibilityIdentifier("assistant-switcher-count-\(m.id)")
                 }
             }
             .padding(.horizontal, Theme.Space.s)
@@ -283,7 +319,7 @@ private struct AssistantSwitcherList: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(AssistantSwitcherText.spoken(m, now: now, current: current, isDefault: isDefault))
+        .accessibilityLabel(AssistantSwitcherText.spoken(m, now: now, current: current, isDefault: isDefault, waiting: waiting))
         .accessibilityAddTraits(current ? .isSelected : [])
         .accessibilityIdentifier("assistant-switcher-row-\(m.id)")
     }
@@ -306,6 +342,26 @@ private struct AssistantSwitcherList: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier(id)
+    }
+}
+
+/// In place of the list on a page of an offline assistant's things the hub merges (the inbox, the to-dos): a merged
+/// list leaves an offline manager's items out, so the page says the assistant is offline and since when, not that there
+/// is nothing (docs/assistant/managers.md "Pages").
+struct AssistantOfflineNotice: View {
+    var manager: HubManager
+
+    static func title(_ m: HubManager) -> String { String(localized: "\(m.name) Is Offline") }
+
+    static func message(_ m: HubManager) -> String {
+        guard let seen = m.lastSeen else { return String(localized: "This updates when it's back online.") }
+        let when = seen.formatted(.relative(presentation: .named, unitsStyle: .wide))
+        return String(localized: "Last synced \(when). This updates when it's back online.")
+    }
+
+    var body: some View {
+        EmptyStateView(symbol: Theme.Icon.offline, title: Self.title(manager), message: Self.message(manager))
+            .accessibilityIdentifier("assistant-offline-notice")
     }
 }
 

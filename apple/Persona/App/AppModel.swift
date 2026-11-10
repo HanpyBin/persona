@@ -67,7 +67,7 @@ final class AppModel {
         didSet {
             allSessions = sessionsByMachine.values.flatMap { $0 }
             sessionsNow = allSessions
-            let going = DockAgent.going(allSessions)
+            let going = DockAgent.going(scoped(allSessions))
             if going != goingAgents { goingAgents = going }
             let lists = AssistantLists(allSessions, group: hub?.group ?? "", shown: assistantShown)
             if lists != assistantLists { assistantLists = lists }
@@ -1211,6 +1211,23 @@ final class AppModel {
     var managerRosters: [String: ManagerRoster] = [:]
     /// Each group's latest roster read: an earlier one answering after it is dropped.
     @ObservationIgnored var managerRosterReads: [String: Int] = [:]
+    /// The groups whose hub answered that it has no roster (a hub from before managers): a pick kept from another time
+    /// names nothing there, and nothing is filtered (`assistantScope`).
+    var rosterless: Set<String> = []
+    /// Each group's managers' inbox counts as its roster last told them (`HubManager.inboxNeedsYou`), by manager id; one
+    /// the hub told none for is not in it. Apart from `managerRosters`, which every page that names a manager reads: these
+    /// move with every change of an inbox, and only the switcher shows them.
+    var inboxNeedsYou: [String: [String: Int]] = [:]
+    /// The agents waiting for the user at each assistant of the hub-level group's hub, by manager id
+    /// (`AssistantBadges.waiting`): counted with the tab badges, set only when a number changes.
+    private(set) var assistantWaiting: [String: Int] = [:]
+    /// The hub-level hub's sessions in Needs You, every assistant's, as last read from a hub with bounded lists
+    /// (`readNeedsYou`); nil until read, or where the app's own lists are whole.
+    @ObservationIgnored private(set) var needsYou: (group: String, rows: [Session])?
+    @ObservationIgnored private var needsYouRead: Task<Void, Never>?
+    @ObservationIgnored private var needsYouStale = false
+    /// The scope the things below the views were last worked out for (`followScope`).
+    @ObservationIgnored private var followedScope: AssistantScope?
     /// Each group's current assistant, as picked in the sidebar's switcher (`selectAssistantManager`): the manager's id,
     /// kept on this device across launches (`AssistantPickStore`). A group without one follows its hub's default manager.
     var assistantPicks: [String: String] = [:] {
@@ -1688,6 +1705,8 @@ final class AppModel {
                 page.cancel()
                 Task { await self.refresh(link) }
             }
+            // Whether this hub lists one manager's sessions may have come with this hello (`sessions_manager`).
+            Task { await sessionLists.rescope(group, model: self) }
             if isHub { PersonalAgentSync.shared.received([]) }
             Task { await refreshInAppTunnel(group) }
             Task { await refreshManagerRoster(group) }
@@ -1736,6 +1755,7 @@ final class AppModel {
             }
         case .sessionsList:
             sessionLists.invalidate(group)
+            if isHub { followNeedsYou() }
             for key in subscribers.keys where key.group == group { Task { await refreshSessionDetail(key) } }
         case .sessions(let machineID, let list):
             // A busy hub sends each machine's list on its own, one after another: they are applied together a moment
@@ -2821,6 +2841,7 @@ final class AppModel {
         sessionsByMachine = Dictionary(grouping: allSessions, by: \.machineRef)
         interactions = Dictionary(allInteractions.map { ($0.uid, $0) }, uniquingKeysWith: { a, _ in a })
         assistantConfig = heldAssistant(hub?.group ?? "")
+        followedScope = assistantScope // what was just restored was worked out for it
     }
 
     func saveSnapshot() {
@@ -2860,6 +2881,8 @@ final class AppModel {
             PinsStore.forget(suffix: g)
             assistantPicks[g] = nil
             managerRosters[g] = nil
+            rosterless.remove(g)
+            inboxNeedsYou[g] = nil
             defaultAssistantReads.remove(g)
             assistantItemManagers = assistantItemManagers.filter { $0.key.group != g }
             InboxHandOffMemory.forget(group: g)
@@ -2882,6 +2905,7 @@ final class AppModel {
         InboxStore.shared.reload()
         TodoStore.shared.forget()
         TodoStore.shared.reload()
+        followScope()
         // The avatar is the new hub's from now, before its list is read below: a card tapped meanwhile goes to it.
         personas.switchHub(api)
         Task {
@@ -2920,6 +2944,7 @@ final class AppModel {
     func relistAssistant() {
         let lists = AssistantLists(allSessions, group: hub?.group ?? "", shown: assistantShown)
         if lists != assistantLists { assistantLists = lists }
+        followScope()
     }
 
     /// The Persona settings held for group's page as it is now: its default manager's (kept in the snapshot), or what the
@@ -2958,11 +2983,16 @@ final class AppModel {
     private(set) var badges = TabBadges()
     @ObservationIgnored private var watchingMutes = false
 
-    private func countBadges() {
+    /// The tabs count the current assistant's cards (docs/assistant/managers.md "Pages"); what waits at each assistant
+    /// is counted beside them for the switcher (`assistantWaiting`).
+    func countBadges() {
         var b = TabBadges()
+        let scope = assistantScope
         for ix in interactions.values {
+            let session = sessionIndex[ix.sessionKey]
+            guard scope.has(ix.manager ?? session?.manager, group: ix.group) else { continue }
             // A quiet task's agent asking is the main conversation's to tell (#1731): its count goes there, not on Agents.
-            switch TabBadges.place(ix.sessionKey, session: sessionIndex[ix.sessionKey], quiet: isQuiet(ix.sessionKey),
+            switch TabBadges.place(ix.sessionKey, session: session, quiet: isQuiet(ix.sessionKey),
                                    mutes: pinsStore(ix.sessionKey.group)?.mutes) {
             case .assistant, .quiet: b.assistant += 1
             case .agents: b.agents += 1
@@ -2970,7 +3000,74 @@ final class AppModel {
             }
         }
         if b != badges { badges = b }
+        let waiting = waitingAgents()
+        if waiting != assistantWaiting { assistantWaiting = waiting }
         if !watchingMutes { watchingMutes = true; watchMutes() }
+    }
+
+    /// The agents waiting at each assistant of the hub-level group's hub; none with one assistant. The sessions in
+    /// Needs You are the ones read for it where the hub's lists are bounded (`needsYou`), else the app's own.
+    private func waitingAgents() -> [String: Int] {
+        guard let group = hub?.group, let roster = managerRosters[group], roster.isMulti else { return [:] }
+        let rows = needsYou.flatMap { $0.group == group ? $0.rows : nil } ?? allSessions
+        return AssistantBadges.waiting(roster: roster, group: group, sessions: rows, interactions: interactions.values) { key, row in
+            let session = row ?? sessionIndex[key]
+            switch TabBadges.place(key, session: session, quiet: session?.quiet == true || isQuiet(key), mutes: pinsStore(key.group)?.mutes) {
+            case .assistant, .agents: return true
+            case .quiet, .muted: return false
+            }
+        }
+    }
+
+    // MARK: The current assistant's scope
+
+    /// What follows the current assistant below the views, worked out again: the counts always (a roster read may have
+    /// changed whose a thing is), the rest when the scope itself changed (another assistant, another hub, a roster that
+    /// came or went): the dock's agents, the Agents list's query and the inbox's history, which are one assistant's.
+    func followScope() {
+        countBadges()
+        let scope = assistantScope
+        guard scope != followedScope else { return }
+        followedScope = scope
+        followNeedsYou()
+        let going = DockAgent.going(scoped(allSessions))
+        if going != goingAgents { goingAgents = going }
+        InboxStore.shared.scopeChanged()
+        if let group = hub?.group { Task { await sessionLists.rescope(group, model: self) } }
+    }
+
+    /// The hub's sessions in Needs You are read again: at most one read at a time, and one more a moment after it for
+    /// what was asked meanwhile (a hub tells of every change of any session). Only with several assistants on a hub with
+    /// bounded lists (`sessions_list`): there the app holds the pages it showed, and what it holds of an assistant it
+    /// left is as it was then, so the switcher's counts would miss an agent, or keep one answered since.
+    func followNeedsYou() {
+        guard let group = hub?.group, managerRosters[group]?.isMulti == true, features(group).contains("sessions_list") else {
+            if needsYou != nil {
+                needsYou = nil
+                countBadges()
+            }
+            return
+        }
+        needsYouStale = true
+        guard needsYouRead == nil else { return }
+        needsYouRead = Task {
+            while needsYouStale {
+                needsYouStale = false
+                await readNeedsYou()
+                try? await Task.sleep(for: AppModel.needsYouPause)
+            }
+            needsYouRead = nil
+        }
+    }
+
+    static let needsYouPause: Duration = .seconds(2)
+
+    /// One read of the hub-level hub's sessions in Needs You; a failed one keeps the last.
+    func readNeedsYou() async {
+        guard let group = hub?.group, let api = api(group), let rows = try? await api.sessionsNeedingYou() else { return }
+        guard group == hub?.group else { return }
+        needsYou = (group, rows)
+        countBadges()
     }
 
     /// Muting an agent or a space takes its questions off the Agents badge (each group's hub keeps its own mutes); a task

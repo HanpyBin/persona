@@ -31,17 +31,21 @@ import SwiftUI
     @ObservationIgnored private let taken: () -> Void
     /// Writes completion through the shared index so the pending tray updates as soon as the PATCH succeeds.
     @ObservationIgnored private let complete: (String, APIClient) async throws -> Void
+    /// The manager a request about a to-do names (`TodoStore.named`): its own, whichever assistant is current.
+    @ObservationIgnored private let named: (String) -> String?
 
     init(api: @escaping (String) -> APIClient? = { AppModel.shared.api($0) },
          failed: @escaping (String) -> Void = { AppModel.shared.toast = Toast($0, style: .error) },
          taken: @escaping () -> Void = { TasksStore.shared.reloadTodos() },
          complete: @escaping (String, APIClient) async throws -> Void = { id, api in
              _ = try await TodoStore.shared.update(id: id, done: true, api: api)
-         }) {
+         },
+         named: @escaping (String) -> String? = { TodoStore.shared.named($0) }) {
         self.api = api
         self.failed = failed
         self.taken = taken
         self.complete = complete
+        self.named = named
     }
 
     /// A round of a to-do: the same round listed by two briefings is one button.
@@ -55,7 +59,7 @@ import SwiftUI
     func accept(_ row: BriefBody.Row, group: String) async {
         guard let take = row.take, let askedAt = row.askedAt, !askedAt.isEmpty else { return }
         await run(Self.key(accepting: row, group: group), group: group, done: .taken(take), took: taken, failure: { String(localized: "Couldn't accept: \($0)") }) {
-            try await $0.acceptTodo(row.id, askedAt: askedAt)
+            try await $0.manager(self.named(row.id)).acceptTodo(row.id, askedAt: askedAt)
         }
     }
 
