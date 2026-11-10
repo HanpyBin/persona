@@ -80,6 +80,14 @@ See `docs/android/android.md` ("App shell and direct page navigation," the Setti
 | `phone_home_run_scene {scene_id}` | Home | **Yes** | Runs a scene; the card says when it touches a security accessory |
 | `phone_notifications_list {limit?}` | None | No | **Android only**: Persona's own currently displayed notifications (id, title, body, time), newest first, default 50, maximum 100; excludes confirmation-card notifications and cannot see other apps' notifications |
 
+### Reminders imported as to-dos (#4009)
+
+Under Settings › Phone data, once Reminders is on, **Import into To-dos** (off by default) sends the incomplete
+reminders of the lists the user leaves on (all of them at first) to the hub, which makes to-dos of them, one way
+(`RemindersImport`, `RemindersImporter`; `docs/assistant/todos.md`, "Imported from Reminders"). It runs on launch, on
+return to the foreground and when the Reminders database changes while the app is in front, and sends nothing when the
+batch is the same as the last one the hub took.
+
 ### Reminders by place (#6564)
 
 "Remind me to buy milk on the way home": the assistant writes a reminder with a location alarm (`EKAlarm.structuredLocation` and `proximity`), and iOS watches the circle itself, like a reminder made in the Reminders app. Persona needs no background location and no "Always" permission; the alarm goes off on the phone and the watch even when Persona is closed. A location alarm goes off once.
