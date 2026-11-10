@@ -267,6 +267,13 @@ func (e *Engine) SearchKind(query, kind string, messages bool, limit int) []Hit 
 		return nil
 	}
 	list := e.List(kind, "")
+	if kind == KindRecording { // kb_list's order for recordings, newest first (List ranks them by the model's importance)
+		start := map[string]time.Time{}
+		for _, r := range e.Store.Recordings() {
+			start[SafeID(r.ID)] = r.StartedAt
+		}
+		sort.SliceStable(list, func(i, j int) bool { return start[SafeID(list[i].ID)].After(start[SafeID(list[j].ID)]) })
+	}
 	rank := make(map[string]int, len(list))
 	for i, en := range list {
 		r := i

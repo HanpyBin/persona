@@ -144,6 +144,13 @@ func TestSearchKind(t *testing.T) {
 	up(phone, day(8, 10), "Bo's notes", "Design review", "Bo adds the test")
 	up(other, day(9, 10), "Lunch", "", "nothing about it")
 	e.matchRecordings(now)
+	// The summarizer tags recordings: an older one tagged higher still comes after a newer one (kb_list's order).
+	if r := recordingNow(t, e, matched); true {
+		r.Tagging = Tagging{Importance: "P0", Relevance: 95}
+		if err := e.Store.putEntity(KindRecording, r.ID, r, &r.Tagging, false); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if r := recordingNow(t, e, matched); r.Meeting == nil || r.Meeting.Name != "Design review" || r.Name != "Ada's notes" {
 		t.Fatalf("matched: %+v %q", r.Meeting, r.Name)
 	}
