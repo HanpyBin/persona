@@ -91,6 +91,11 @@ func (h hookDevs) Sessions(id string) ([]proto.Session, bool) {
 	return h.fleetDevs.Sessions(id)
 }
 
+func (h hookDevs) AppendSessions(id string, dst []proto.Session) ([]proto.Session, bool) {
+	list, ok := h.Sessions(id)
+	return append(dst, list...), ok
+}
+
 func (h hookDevs) SessionsWhere(id string, keep func(*proto.Session) bool) ([]proto.Session, bool) {
 	list, ok := h.Sessions(id)
 	return keptWhere(list, keep), ok

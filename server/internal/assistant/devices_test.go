@@ -61,6 +61,9 @@ func (f *fakeDevices) MachineResources(string) (*proto.Machine, *proto.MetricSam
 func (f *fakeDevices) List() []devices.Summary                 { return nil }
 func (f *fakeDevices) Canonical(id string) string              { return id }
 func (f *fakeDevices) Sessions(string) ([]proto.Session, bool) { return nil, false }
+func (f *fakeDevices) AppendSessions(_ string, dst []proto.Session) ([]proto.Session, bool) {
+	return dst, false
+}
 func (f *fakeDevices) SessionsWhere(string, func(*proto.Session) bool) ([]proto.Session, bool) {
 	return nil, false
 }

@@ -804,6 +804,16 @@ func (d *Devices) Sessions(id string) ([]proto.Session, bool) {
 	return m.sessionList(), true
 }
 
+// AppendSessions is Sessions appended to dst, under the machine's lock: a reader that copies the same machine's list
+// over and over passes its last copy as dst[:0] and keeps one array; false when there is no such machine.
+func (d *Devices) AppendSessions(id string, dst []proto.Session) ([]proto.Session, bool) {
+	m := d.machineByID(id)
+	if m == nil {
+		return dst, false
+	}
+	return m.appendSessions(dst), true
+}
+
 // SessionsWhere are those of a machine's sessions keep accepts, copied out without the rest; false when there is no
 // such machine. keep reads each session in place, under the machine's lock: it must not change or keep it, nor call
 // the devices.

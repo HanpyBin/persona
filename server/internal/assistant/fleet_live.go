@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"path"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -82,16 +84,28 @@ func (s *Service) liveLoop(ctx context.Context) {
 	tick := time.NewTicker(15 * time.Second)
 	defer tick.Stop()
 	sig := s.fleet.live.ch()
+	// Each machine's list as the last round decorated it, copied over by the next one while the fleet changes; a quarter
+	// minute without a change gives them back.
+	var lists map[string][]proto.Session
+	changed := false
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-sig:
 			time.Sleep(100 * time.Millisecond)
+			changed = true
 		case <-tick.C:
+			if !changed {
+				lists = nil
+			}
+			changed = false
+		}
+		if changed && lists == nil {
+			lists = map[string][]proto.Session{}
 		}
 		l := s.lang(context.Background())
-		agents, ixs, told := s.fleetInputs()
+		agents, ixs, told := s.fleetInputsInto(lists)
 		s.tellLive(buildFleetIn(l, agents, ixs))
 		s.devs.SetAttention(linkAttention(l, agents, ixs, told)) // sent on only when it changed
 	}
@@ -125,12 +139,28 @@ func (s *Service) fleetSnapshot() FleetState {
 // nothing else holds and the fleet only reads: liveLoop builds the fleet up to ten times a second, and a copy of every
 // session per agent (1.5 KB each) was most of what that allocated.
 func (s *Service) fleetInputs() ([]fleetInput, []proto.Interaction, map[string]bool) {
+	return s.fleetInputsInto(nil)
+}
+
+// fleetInputsInto is fleetInputs decorating each machine's list over its copy in prev (liveLoop's own; nil: new copies),
+// which then holds this round's: every round still copies and decorates each list whole, only into the array the
+// last one used, and a list per round was most of what the rest of liveLoop's round allocated. The agents point into
+// prev's lists until the next round; nothing the fleet makes of them keeps a pointer (buildFleetIn's items and
+// linkAttention's summary are strings and numbers, archive records copies).
+func (s *Service) fleetInputsInto(prev map[string][]proto.Session) ([]fleetInput, []proto.Interaction, map[string]bool) {
 	machines := s.fleetMachines()
 	lists := make([][]proto.Session, len(machines))
 	n := 0
 	for i, m := range machines {
-		lists[i] = s.decorated(m.ID)
+		if prev == nil {
+			lists[i] = s.decorated(m.ID)
+		} else {
+			lists[i] = s.decoratedInto(m.ID, prev[m.ID][:0])
+		}
 		n += len(lists[i])
+	}
+	if prev != nil {
+		keepLists(prev, machines, lists)
 	}
 	agents := make([]fleetInput, 0, n)
 	turns := s.turnsBook()
@@ -150,6 +180,23 @@ func (s *Service) fleetInputs() ([]fleetInput, []proto.Interaction, map[string]b
 	}
 	ixs, told := s.pendingCards()
 	return agents, ixs, told
+}
+
+// keepLists puts each machine's list in prev for the next round, clearing the rows a shorter one left behind (their
+// strings are the node's last list), and drops the machines that went.
+func keepLists(prev map[string][]proto.Session, machines []fleetMachine, lists [][]proto.Session) {
+	for i, m := range machines {
+		list, old := lists[i], prev[m.ID]
+		if len(list) < len(old) && len(old) <= cap(list) {
+			clear(list[len(list):len(old)])
+		}
+		prev[m.ID] = list
+	}
+	if len(prev) > len(machines) {
+		maps.DeleteFunc(prev, func(id string, _ []proto.Session) bool {
+			return !slices.ContainsFunc(machines, func(m fleetMachine) bool { return m.ID == id })
+		})
+	}
 }
 
 // round2 keeps two significant digits: 12345 → 12000, 987 → 990. The island shows "12k", so finer changes would

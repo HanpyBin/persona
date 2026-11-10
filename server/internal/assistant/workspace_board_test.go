@@ -128,6 +128,16 @@ func (d *boardDevs) Sessions(id string) ([]proto.Session, bool) {
 	return append([]proto.Session(nil), m.sessions...), true
 }
 
+func (d *boardDevs) AppendSessions(id string, dst []proto.Session) ([]proto.Session, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	m := d.machines[d.canon(id)]
+	if m == nil {
+		return dst, false
+	}
+	return append(dst, m.sessions...), true
+}
+
 // SessionsWhere reads the sessions in place, as the devices do: a measure of the board then counts no copy of the list.
 func (d *boardDevs) SessionsWhere(id string, keep func(*proto.Session) bool) ([]proto.Session, bool) {
 	d.mu.Lock()

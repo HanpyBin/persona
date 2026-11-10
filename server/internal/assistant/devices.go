@@ -41,6 +41,8 @@ type Devices interface {
 	Canonical(id string) string
 	// Sessions copies the whole list out: the caller owns its rows (not their slices, shared and never written into).
 	Sessions(id string) ([]proto.Session, bool)
+	// AppendSessions is Sessions appended to dst: liveLoop copies each machine's list over its last round's copy.
+	AppendSessions(id string, dst []proto.Session) ([]proto.Session, bool)
 	// SessionsWhere copies out only the sessions keep accepts, read in place under the devices' lock (keep must not
 	// change or keep them, nor call the devices): a view that keeps a few rows of a busy machine copies only those.
 	SessionsWhere(id string, keep func(*proto.Session) bool) ([]proto.Session, bool)

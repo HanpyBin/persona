@@ -234,7 +234,20 @@ func runtimeListID(machine, session string) string {
 
 // decorated applies manager-owned archive visibility to its final agent states.
 func (svc *Service) decorated(machine string) []proto.Session {
-	list, _, err := svc.archivedSessions(context.Background(), machine, svc.decoratedUnarchived(machine))
+	return svc.withArchives(machine, svc.decoratedUnarchived(machine))
+}
+
+// decoratedInto is decorated over dst, the last copy of the machine's list as dst[:0] (liveLoop, fleetInputsInto): the
+// node's rows are copied into its array whole, so nothing of the last decoration stays in them.
+func (svc *Service) decoratedInto(machine string, dst []proto.Session) []proto.Session {
+	if svc.devs != nil {
+		dst, _ = svc.devs.AppendSessions(machine, dst)
+	}
+	return svc.withArchives(machine, svc.decorateInventory(machine, dst, true))
+}
+
+func (svc *Service) withArchives(machine string, list []proto.Session) []proto.Session {
+	list, _, err := svc.archivedSessions(context.Background(), machine, list)
 	if err != nil {
 		svc.logf("load agent archives: %v", err)
 	}

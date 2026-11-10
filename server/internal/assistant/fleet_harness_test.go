@@ -147,6 +147,17 @@ func (d *fleetDevs) Sessions(id string) ([]proto.Session, bool) {
 	return append([]proto.Session(nil), n.sessions...), true
 }
 
+// AppendSessions copies the list into dst, as the devices do: liveLoop's rounds then reuse their arrays.
+func (d *fleetDevs) AppendSessions(id string, dst []proto.Session) ([]proto.Session, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	n := d.machines[id]
+	if n == nil {
+		return dst, false
+	}
+	return append(dst, n.sessions...), true
+}
+
 // SessionsWhere copies out only what keep accepts, as the devices do: a benchmark of a view then counts no copy of the
 // whole list.
 func (d *fleetDevs) SessionsWhere(id string, keep func(*proto.Session) bool) ([]proto.Session, bool) {

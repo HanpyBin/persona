@@ -41,3 +41,30 @@ func TestSessionsWhereCopiesKept(t *testing.T) {
 		t.Fatalf("keeping none allocates %v times", n)
 	}
 }
+
+// appendSessions is sessionList written into the caller's array: the same rows, its own, and once the array is big
+// enough a copy allocates nothing.
+func TestAppendSessionsReusesTheArray(t *testing.T) {
+	m := &Machine{}
+	for i := range 300 {
+		m.sessions = append(m.sessions, proto.Session{SessionID: fmt.Sprintf("s%03d", i), Title: "a session"})
+	}
+	dst := m.appendSessions(nil)
+	if len(dst) != 300 || dst[299].SessionID != "s299" {
+		t.Fatalf("copied %d", len(dst))
+	}
+	dst[0].Title = "changed"
+	if m.sessions[0].Title != "a session" {
+		t.Fatal("the copy is the machine's list")
+	}
+	if got := m.appendSessions(dst[:0]); &got[0] != &dst[0] || got[0].Title != "a session" {
+		t.Fatal("not copied over the last copy")
+	}
+	if n := testing.AllocsPerRun(20, func() { dst = m.appendSessions(dst[:0]) }); n != 0 {
+		t.Fatalf("a copy into the last one allocates %v times", n)
+	}
+	m.sessions = m.sessions[:1]
+	if got := m.appendSessions(dst[:0]); len(got) != 1 {
+		t.Fatalf("a shorter list copied %d", len(got))
+	}
+}
