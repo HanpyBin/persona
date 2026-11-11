@@ -35,6 +35,7 @@ import (
 func (h *Hub) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/health", h.health)
+	h.passwordLoginRoutes(mux)
 	api := http.NewServeMux()
 	h.apiMux = api
 	if h.upd != nil {
@@ -654,7 +655,7 @@ func (h *Hub) listSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, lookup := r.URL.Query()["session_id"]
-	if lookup || sessionlist.Enabled(r.URL.Query()) {
+	if lookup || sessionlist.RuntimeEnabled(r.URL.Query()) {
 		h.pagedSessions(w, r, named)
 		return
 	}
