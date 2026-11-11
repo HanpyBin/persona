@@ -1,5 +1,12 @@
 # Lessons: web UI and interactions
 
+## A Go toolchain's files are not always under GOROOT (#4559)
+
+Homebrew's Go sets `GOROOT` to the formula's `libexec` directory and keeps `LICENSE` one level up, so a build step that
+reads `$(go env GOROOT)/LICENSE` works with the official distribution and fails on a Homebrew machine. Look in every
+place a supported install keeps the file and, when none has it, fail naming each place tried
+(`web/scripts/go-license.mjs`). Check a build script that reads the toolchain's files on Homebrew's Go too.
+
 ## Remembered task rules need their exact owner and retry context (#4418)
 
 A remembered task rule's key is opaque: encode the returned value as a query parameter, not a reconstruction from its
@@ -900,3 +907,12 @@ A connected delta hub keeps its pushed session rows during REST refresh. Refresh
 optimistically removed. Keep the pre-request session snapshot and restore it immediately on archive failure,
 before refreshing. Preserve a newer pushed row if one arrived meanwhile. Exercise mounted rows and the real
 store refresh with both delta and bounded list negotiation.
+
+## Recovering from an expired page cursor must not shrink the list
+The hub keeps a session list's frozen view for 5 minutes and at most 32 of them (`server/internal/sessionlist/index.go`).
+Reaching the end of an Agents list open longer than that asked for the next page with an expired cursor, and both
+clients recovered by starting over: the web emptied the list (`clearBaseline`) and the iPhone replaced its rows with the
+first page. A list 300 rows deep became 50, the scroller clamped its offset, and the reader was thrown back near the top
+every time they reached the bottom. Recover by reading a fresh view as deep as the reader has scrolled plus one page,
+keeping the old rows on screen until it arrives (web `SessionList.reread`, #4431; iOS `SessionListModel.rebaseline`); any
+recovery that publishes fewer rows than are on screen moves the reader.
