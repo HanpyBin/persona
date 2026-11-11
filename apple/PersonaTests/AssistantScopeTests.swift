@@ -128,7 +128,8 @@ struct AssistantScopeTests {
         #expect(Set(model.scopedInteractions.map(\.id)) == ["x2", "x3"], "a card without a stamp goes by its session's manager")
         #expect(model.machines.count == 3 && model.allSessions.count == 4 && model.pendingInteractions.count == 3,
                 "the lists themselves stay whole: another assistant's thing still opens from a notification")
-        #expect(model.machine(MachineRef(group: "", id: "NAS")) != nil && model.latest(try #require(sessions.first).key) != nil)
+        let first = try #require(sessions.first)
+        #expect(model.machine(MachineRef(group: "", id: "NAS")) != nil && model.latest(first.key) != nil)
 
         model.selectAssistantManager("m-2")
         #expect(model.scopedMachines().map(\.id) == ["NAS"] && model.scopedInteractions.isEmpty)
@@ -237,8 +238,9 @@ struct AssistantScopeTests {
         #expect(pages(hub).last?.query["manager"] == nil && model.sessionLists.sessions.count == 3)
     }
 
-    /// A hub with bounded lists but without the filter would page, total and count every manager's sessions: it is
-    /// asked for the whole list instead, filtered here by each row's `manager`, so the list and its counts are right.
+    /// A hub with bounded lists but without the filter would page, total and count every manager's sessions: the app
+    /// keeps a complete copy of its list instead (as a grouping that needs every row does), filtered here by each row's
+    /// `manager`, so the list and its counts are right.
     @Test func aHubThatCannotFilterIsAskedForTheWholeListWhichIsFilteredHere() async throws {
         let hub = pagedHub()
         let model = try model(hub)
@@ -246,7 +248,8 @@ struct AssistantScopeTests {
         model.selectAssistantManager("m-1")
         await model.sessionLists.select(SessionListQuery(), hub: nil, model: model)
         let asked = try #require(pages(hub).last)
-        #expect(asked.query["manager"] == nil && asked.query["limit"] == nil, "the whole list, with no key an older hub would ignore")
+        #expect(asked.query["manager"] == nil && asked.query["summary"] == "0" && asked.query["state"] == nil,
+                "every manager's rows, complete, with no key an older hub would ignore")
         #expect(!model.sessionLists.isPaged(""))
         #expect(model.sessionLists.sessions.map(\.sessionID) == ["b"])
         #expect(model.sessionLists.total == 1 && model.sessionLists.stateCounts == nil, "counted here, of this assistant's alone")
@@ -364,8 +367,8 @@ struct AssistantScopeTests {
 
     @Test func historyItemsAreStampedWithTheManagerAsked() throws {
         let plain = try item("h", nil, done: true), stamped = try item("k", "m-2", done: true)
-        let out = InboxStore.stamped([plain, stamped], manager: "m-1")
-        #expect(out.map(\.manager) == ["m-1", "m-2"] && out[0].key == (try item("h", "m-1")).key, "one key with the merged list's copy")
+        let out = InboxStore.stamped([plain, stamped], manager: "m-1"), listed = try item("h", "m-1")
+        #expect(out.map(\.manager) == ["m-1", "m-2"] && out[0].key == listed.key, "one key with the merged list's copy")
         #expect(InboxStore.stamped([plain], manager: nil) == [plain], "one manager: no stamp")
     }
 

@@ -18,9 +18,10 @@ import Observation
 
     /// `query` as `group`'s hub is asked it once the pages list one assistant's things (`AppModel.assistantScope`): with
     /// that manager, from a hub that filters by it (`sessions_manager`). A hub with bounded lists but without the
-    /// filter gets the whole list instead, filtered here by each row's `manager`: its pages, totals and counts are
-    /// every manager's, and a page of fifty could hold none of this assistant's. The whole list (`legacy`) is never
-    /// asked with a manager: what it answers replaces the app's rows of that hub, the other assistants' too.
+    /// filter is read as a complete copy instead (`legacy`: every row once, then what changed), filtered here by each
+    /// row's `manager`: its pages, totals and counts are every manager's, and a page of fifty could hold none of this
+    /// assistant's. A complete copy is never asked with a manager: it is the app's rows of that hub, the other
+    /// assistants' too.
     func managed(_ query: SessionListQuery, group: String) -> SessionListQuery {
         var query = query
         query.manager = ""

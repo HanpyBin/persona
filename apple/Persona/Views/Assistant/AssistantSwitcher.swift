@@ -310,7 +310,6 @@ private struct AssistantSwitcherList: View {
                     ThemedIcon(Theme.Icon.done).font(Theme.Font.bodyStrong).foregroundStyle(Theme.accent.opacity(fade))
                 } else if waiting > 0 {
                     CountBadge(count: waiting, look: .solid(Theme.needsYou))
-                        .accessibilityIdentifier("assistant-switcher-count-\(m.id)")
                 }
             }
             .padding(.horizontal, Theme.Space.s)

@@ -1765,9 +1765,9 @@ is listed), and a hub that answers it has no roster filters nothing (`AppModel.r
   current assistant's sessions (`SessionListQuery.manager`, set per group in `RuntimeSessionLists.managed`; its counts and
   its sections' pages name it too). The manager is part of the query, so another assistant is another list read from its
   first page (`rescope`, also on a hello: the feature may come with it). A hub with bounded lists but without the filter
-  is asked for the whole list instead and filtered by each row's `manager`, as a hub from before bounded lists is: its
-  pages, totals and counts would be every manager's. The whole list is never asked with a manager (what it answers
-  replaces the app's rows of that hub). The list's partition carries the scope (`AgentListProjectionCache.Partition`), so a
+  is read as a complete copy instead (the `legacy` query: every row once, then what changed since) and filtered by each
+  row's `manager`, as a hub from before bounded lists is: its pages, totals and counts would be every manager's. A
+  complete copy is never asked with a manager (it is the app's rows of that hub). The list's partition carries the scope (`AgentListProjectionCache.Partition`), so a
   switch starts the list over at once, with nothing held back. The computer menu offers the current assistant's
   (`MachineChoice.manager`), New Session its computers, and a switch clears a computer filter that is not its own and
   pops what was pushed from the list.

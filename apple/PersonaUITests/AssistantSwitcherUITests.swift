@@ -51,6 +51,29 @@ final class AssistantSwitcherUITests: XCTestCase {
         shot(app, "switcher-installing-code")
     }
 
+    /// Every other assistant's row says how much waits there and the current one's says none; after a switch it is
+    /// the other way round. Against the mock hub, whose default assistant and m-3fa21c each have inbox items that need the user.
+    @MainActor func testTheListCountsWhatWaitsAtTheOtherAssistants() throws {
+        let app = openList()
+        let home = element(app, "assistant-switcher-row-assistant"), work = element(app, "assistant-switcher-row-m-3fa21c")
+        XCTAssertTrue(work.waitForExistence(timeout: 10), "no row for 工作:\n\(app.debugDescription)")
+        XCTAssertTrue(work.label.contains("件等你处理"), "no count beside 工作: \(work.label)")
+        XCTAssertFalse(home.label.contains("件等你处理"), "the current assistant's row shows no count: \(home.label)")
+        shot(app, "switcher-counts")
+
+        work.tap()
+        let header = app.buttons.matching(NSPredicate(format: "identifier == %@ OR (identifier == %@ AND label BEGINSWITH %@)",
+                                                      "assistant-switcher", "assistant-sidebar", "工作")).firstMatch
+        XCTAssertTrue(header.waitForExistence(timeout: 10), "the header does not name 工作:\n\(app.debugDescription)")
+        // The switch's toast is gone and the roster's counts are in before the list opens again.
+        sleep(2)
+        header.tap()
+        XCTAssertTrue(home.waitForExistence(timeout: 10), "the list did not open again:\n\(app.debugDescription)")
+        XCTAssertTrue(home.label.contains("件等你处理"), "no count beside the default assistant: \(home.label)")
+        XCTAssertFalse(work.label.contains("件等你处理"), "the current assistant's row shows no count: \(work.label)")
+        shot(app, "switcher-counts-switched")
+    }
+
     /// At the largest text size New Assistant and Manage Assistants… are still whole and can be tapped: the rows scroll
     /// above them.
     @MainActor func testAtTheLargestTextSizeBothActionsCanBeTapped() throws {
