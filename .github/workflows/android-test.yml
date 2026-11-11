@@ -1,10 +1,89 @@
-name: External-origin native acceptance with UI diagnostics
+name: External-origin native acceptance with a pristine app control
 on:
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
+  baseline-readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2 -Dorg.gradle.jvmargs=-Xmx3g
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Preserve the diagnostic helper outside the pristine checkout
+        run: cp scripts/ci/external_origin_screenshots.py "$RUNNER_TEMP/external-origin-diagnostic.py"
+      - uses: actions/checkout@v4
+        with:
+          ref: 24f6d61cfec36f1653f7f47292ef0d1758428611
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Install Android SDK
+        run: sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: true
+      - name: Restore public Robolectric runtime dependencies
+        id: robolectric
+        uses: actions/cache/restore@v4
+        with:
+          # Never cache Maven settings, credentials or unrelated/private artifacts.
+          path: |
+            ~/.m2/repository/org/robolectric/android-all
+            ~/.m2/repository/org/robolectric/android-all-instrumented
+          key: ${{ runner.os }}-robolectric-v1-test-1-${{ hashFiles('android/**/*.gradle.kts', 'android/gradle/libs.versions.toml', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          # Another lane's entry, or one saved under an old lane name, holds the same public jars: better than a download.
+          restore-keys: |
+            ${{ runner.os }}-robolectric-v1-test-1-
+            ${{ runner.os }}-robolectric-v1-
+      - name: Build the screenshot-only application before booting the owned emulator
+        working-directory: android
+        run: ./gradlew :app:assembleDebug -PpersonaApplicationId=com.example.persona.shots --no-daemon --max-workers=2
+      - name: Retain the exact diagnostic APK and source identity
+        run: |
+          mkdir -p .ci-evidence/apk
+          git rev-parse HEAD > .ci-evidence/apk/source.txt
+          git rev-parse HEAD:android >> .ci-evidence/apk/source.txt
+          sha256sum android/app/build/outputs/apk/debug/app-debug.apk > .ci-evidence/apk/sha256.txt
+          cp android/app/build/outputs/apk/debug/app-debug.apk .ci-evidence/apk/
+      - name: Enable owned hosted emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Native emulator captures in all styles and font sizes
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7
+          avd-name: persona_4203_baseline
+          disable-animations: true
+          emulator-options: -no-snapshot -no-window -accel on -gpu swiftshader -feature -Vulkan -noaudio -no-boot-anim -camera-back none
+          script: |
+            "$ANDROID_HOME/platform-tools/adb" -s emulator-5554 root
+            timeout 30 "$ANDROID_HOME/platform-tools/adb" -s emulator-5554 wait-for-device
+            "$ANDROID_HOME/platform-tools/adb" -s emulator-5554 shell am force-stop com.google.android.apps.nexuslauncher
+            "$ANDROID_HOME/platform-tools/adb" -s emulator-5554 install -r android/app/build/outputs/apk/debug/app-debug.apk
+            python3 "$RUNNER_TEMP/external-origin-diagnostic.py" --serial emulator-5554 --out .ci-evidence/baseline-readiness --smoke-only
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: external-origin-baseline-readiness
+          if-no-files-found: error
+          retention-days: 7
+          path: .ci-evidence/
   emulator-shots:
+    needs: [baseline-readiness]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -41,6 +120,13 @@ jobs:
       - name: Build the screenshot-only application before booting the owned emulator
         working-directory: android
         run: ./gradlew :app:assembleDebug -PpersonaApplicationId=com.example.persona.shots --no-daemon --max-workers=2
+      - name: Retain the exact diagnostic APK and source identity
+        run: |
+          mkdir -p .ci-evidence/apk
+          git rev-parse HEAD > .ci-evidence/apk/source.txt
+          git rev-parse HEAD:android >> .ci-evidence/apk/source.txt
+          sha256sum android/app/build/outputs/apk/debug/app-debug.apk > .ci-evidence/apk/sha256.txt
+          cp android/app/build/outputs/apk/debug/app-debug.apk .ci-evidence/apk/
       - name: Enable owned hosted emulator acceleration
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -55,9 +141,12 @@ jobs:
           profile: pixel_7
           avd-name: persona_4203_evidence
           disable-animations: true
-          emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          emulator-options: -no-snapshot -no-window -accel on -gpu swiftshader -feature -Vulkan -noaudio -no-boot-anim -camera-back none
           script: |
+            "$ANDROID_HOME/platform-tools/adb" -s emulator-5554 root
+            timeout 30 "$ANDROID_HOME/platform-tools/adb" -s emulator-5554 wait-for-device
             "$ANDROID_HOME/platform-tools/adb" -s emulator-5554 shell am force-stop com.google.android.apps.nexuslauncher
+            python3 scripts/ci/external_origin_screenshots.py --serial emulator-5554 --out .ci-evidence/external-origin/initial-smoke --smoke-only
             SHOTS_STYLE=glass bash scripts/app/android.sh shots -s emulator-5554 --out .ci-evidence/external-origin/native/glass
             SHOTS_STYLE=brief bash scripts/app/android.sh shots -s emulator-5554 --out .ci-evidence/external-origin/native/brief
             SHOTS_STYLE=board bash scripts/app/android.sh shots -s emulator-5554 --out .ci-evidence/external-origin/native/board
@@ -68,4 +157,4 @@ jobs:
           name: external-origin-native-emulator-shots
           if-no-files-found: error
           retention-days: 7
-          path: .ci-evidence/external-origin/
+          path: .ci-evidence/

@@ -24,6 +24,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--serial", required=True)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--smoke-only", action="store_true", help="Capture app readiness, without claiming feature acceptance")
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     adb_path = Path(os.environ["ANDROID_HOME"]) / "platform-tools/adb"
@@ -80,13 +81,9 @@ for index, (origin, title, request) in enumerate([
             root = dump()
             if any(node.get("package") == "android" and "isn't responding" in node.get("text", "")
                    for node in root.iter("node")):
-                capture("failure-ui", root)
-                (args.out / "failure-logcat.log").write_text(adb("logcat", "-d", "-t", "500"))
                 raise AssertionError("The owned emulator is showing an Android ANR dialog")
             if predicate(root) and any(node.get("package") == APP for node in root.iter("node")):
                 return root
-        capture("failure-ui", root)
-        (args.out / "failure-logcat.log").write_text(adb("logcat", "-d", "-t", "500"))
         raise AssertionError("UI did not reach " + description)
 
     def has_text(root, text):
@@ -135,6 +132,18 @@ for index, (origin, title, request) in enumerate([
         rows = configuration["conversations"]
         machine = next(row["machine_id"] for row in rows if row["session_id"] == "f00d0001-0000-4000-8000-000000000001")
         adb("reverse", "tcp:" + str(port), "tcp:" + str(port))
+        (args.out / "graphics.txt").write_text(adb("shell", "dumpsys", "SurfaceFlinger"))
+        if args.smoke_only:
+            adb("shell", "settings", "put", "system", "font_scale", "1.0")
+            launch("glass", "light", 0)
+            root = wait_for(lambda tree: has_text(tree, CASES[0][2]) and has_text(tree, "Finished."), CASES[0][2])
+            capture("app-ready-glass-light", root)
+            (args.out / "smoke-evidence.json").write_text(json.dumps({
+                "kind": "app-ready diagnostic", "passed": True, "featureAcceptance": False,
+                "fontScale": float(adb("shell", "settings", "get", "system", "font_scale").strip()),
+            }, indent=2) + "\n")
+            print("App-ready diagnostic: PASS; feature acceptance remains separate")
+            return
         for scale in (1.0, 2.0):
             adb("shell", "settings", "put", "system", "font_scale", str(scale))
             actual_scale = float(adb("shell", "settings", "get", "system", "font_scale").strip())
@@ -165,6 +174,11 @@ for index, (origin, title, request) in enumerate([
                         evidence.append({"name": name, "fontScale": actual_scale, "rowSourceMarks": 1})
         (args.out / "evidence.json").write_text(json.dumps({"passed": True, "cases": evidence}, indent=2) + "\n")
         print("External-origin native emulator evidence: PASS (%d captures)" % len(evidence))
+    except Exception:
+        capture("failure-ui", dump())
+        (args.out / "failure-logcat.log").write_text(adb("logcat", "-d", "-t", "1000"))
+        adb("pull", "/data/anr", str(args.out / "anr"), timeout=45)
+        raise
     finally:
         try:
             adb("shell", "am", "force-stop", APP)
