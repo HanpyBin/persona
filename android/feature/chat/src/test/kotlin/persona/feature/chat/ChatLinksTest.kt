@@ -7,6 +7,10 @@ import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import persona.core.contracts.Item
 import java.time.Instant
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -104,6 +108,25 @@ class ChatLinksTest {
         assertEquals(listOf("https://example.com/m5", "https://example.com/m4", "https://example.com/m3"), ChatLinks.toPreload(many, now))
         // A computer's own pages (no dot in the host) are not for the phone to load.
         assertTrue(ChatLinks.toPreload(listOf(item("l", "2026-10-30T09:59:00Z", text = "http://localhost:5173/ 和 http://dev/x")), now).isEmpty())
+    }
+
+    @Test fun aStreamingHolderPublishesNewPreloadUrlsWithoutRepeatingUnchangedOnes() = runTest {
+        val now = Instant.parse("2026-11-11T10:00:00Z")
+        val reply = Item("reply", 1, ts = "2026-11-11T09:59:00Z", role = "assistant", kind = "text", text = "Drafting")
+        val holder = MutableStateFlow(reply.text.orEmpty())
+        val live = ChatLiveItems()
+        live.reset(listOf(reply), mapOf(reply.id to holder))
+        val initial = live.revisions.value
+        live.update(reply.id, holder, "Still drafting")
+        val noLink = live.revisions.value
+        live.update(reply.id, holder, "Read https://example.com/stream")
+        val linked = live.revisions.value
+        live.update(reply.id, holder, "Read https://example.com/stream and keep writing")
+        val sameLink = live.revisions.value
+
+        val outputs = chatLinkPreloads(flowOf(initial, noLink, linked, sameLink)) { now }.toList()
+
+        assertEquals(listOf(emptyList<String>(), listOf("https://example.com/stream")), outputs)
     }
 
     @Test fun schemes() {

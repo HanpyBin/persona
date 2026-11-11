@@ -65,4 +65,29 @@ class MarkdownPrewarmTest {
             }
         }
     }
+
+    @Test fun splitLastMatchesAFreshSplitAndRetainsEveryOtherReplyPart() {
+        var items = (1..30).map { n ->
+            Item(if (n % 2 == 0) "reply-$n" else "user-$n", n, role = if (n % 2 == 0) "assistant" else "user",
+                kind = "text", text = if (n % 2 == 0) "Settled **reply** $n" else "Question $n")
+        }
+        val prewarm = MarkdownPrewarm()
+        var previous = prewarm.split(items)
+        repeat(30) { n ->
+            val streamed = items.last()
+            items = items.dropLast(1) + streamed.copy(text = texts[n % texts.size] + "\n\nchunk $n")
+            val next = prewarm.splitLast(items)
+            assertEquals(splitAfresh(items), next)
+            val prefix = "${streamed.id}/"
+            val before = (previous.first + previous.second).filterNot { it.key.startsWith(prefix) }
+            val after = (next.first + next.second).filterNot { it.key.startsWith(prefix) }
+            assertEquals(before.size, after.size)
+            before.indices.forEach { assertSame(before[it], after[it]) }
+            previous = next
+        }
+
+        // The fast path is only for the same last row. A structural change falls back to the general split.
+        items = items.dropLast(1) + items.last().copy(role = "user")
+        assertEquals(splitAfresh(items), prewarm.splitLast(items))
+    }
 }

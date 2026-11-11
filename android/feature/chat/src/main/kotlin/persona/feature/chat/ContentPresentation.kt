@@ -171,6 +171,22 @@ internal class MarkdownPrewarm(private val limit: Int = 80) {
         return latest to earlier
     }
 
+    @Synchronized fun splitLast(items: List<Item>): Pair<List<MarkdownText>, List<MarkdownText>> {
+        val last = items.lastOrNull()
+        val was = this.items.lastOrNull()
+        if (last == null || was == null || this.items.size != items.size || last.id != was.id || last.seq != was.seq ||
+            last.role != was.role || last.kind != was.kind) return split(items)
+        // The caller's live revision proves that every earlier item is unchanged; do not compare the whole prefix again.
+        this.items = items
+        if (lastSide != 0) {
+            val texts = texts(last)
+            if (lastSide == 1) latest = latest.subList(0, latest.size - lastCount) + texts
+            else earlier = texts + earlier.subList(lastCount, earlier.size)
+            lastCount = texts.size
+        }
+        return latest to earlier
+    }
+
     private fun texts(item: Item) = messageParts(item.text.orEmpty().let { if (item.fullSize != null) cutText(it) else it }, item.from)
         .mapIndexedNotNull { index, part -> (part as? MessagePart.Text)?.let { MarkdownText("${item.id}/$index", it.text) } }
 }

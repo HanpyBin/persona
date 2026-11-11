@@ -84,6 +84,8 @@ class StreamingLayoutTest {
         val historyLine = ChatLine.Row(ChatRow("reply", LineItem(history)))
         val replyLine = ChatLine.Row(ChatRow("reply", LineItem(reply)))
         var external by mutableStateOf<ChatTextUpdate?>(null)
+        var useHolder by mutableStateOf(true)
+        var streamingIds by mutableStateOf(emptySet<String>())
         var historyCompositions = 0
         fun warm(id: String, text: String) {
             val work = parserScope.async { cache.parse("$id/0", text, streaming = true) }
@@ -108,7 +110,8 @@ class StreamingLayoutTest {
                             }
                             ChatLineContent(replyLine, SessionKey("computer", "conversation"), loader, null,
                                 onToggle = {}, onFold = {}, folding = emptySet(), foldErrors = emptyMap(), onFullText = {},
-                                textUpdates = external?.let { mapOf("reply" to it) }.orEmpty(), liveText = mapOf("reply" to live))
+                                textUpdates = external?.let { mapOf("reply" to it) }.orEmpty(),
+                                liveText = if (useHolder) mapOf("reply" to live) else emptyMap(), streamingItemIds = streamingIds)
                         }
                     }
                 }
@@ -132,6 +135,14 @@ class StreamingLayoutTest {
             rule.runOnIdle { live.value = "A repository chunk must not replace the explicit preview" }
             frames()
             rule.onNodeWithText("The host's explicit preview").assertExists()
+            rule.onNodeWithText("A repository chunk must not replace the explicit preview", substring = true).assertDoesNotExist()
+            rule.runOnIdle {
+                external = null
+                useHolder = false
+                streamingIds = setOf("reply")
+            }
+            frames()
+            rule.onNodeWithText("First streamed words", substring = false).assertExists()
             rule.onNodeWithText("A repository chunk must not replace the explicit preview", substring = true).assertDoesNotExist()
         } finally { parserScope.cancel() }
     }

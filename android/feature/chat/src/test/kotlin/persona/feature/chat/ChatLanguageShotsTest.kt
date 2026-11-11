@@ -351,7 +351,7 @@ class ChatLanguageShotsTest {
                     }
                     "search" -> {
                         val search = remember { ChatSearchState().apply { query = "needle" } }
-                        ChatSearchScreen(search, searchItems, 3, hasOlder = true, repository, session.key, onClose = {})
+                        ChatSearchScreen(search, ChatSearchItems(searchItems), 3, hasOlder = true, repository, session.key, onClose = {})
                     }
                     "viewer" -> {
                         val bytes = remember { picture() }

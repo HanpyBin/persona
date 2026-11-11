@@ -30,6 +30,9 @@ class ChatRealtimeStateTest {
         state.delta(DeltaEvent("m1", "s1", "Reply"), transcript)
         val streaming = state.items(transcript)
         val id = streaming.last().id
+        assertEquals("assistant", streaming.last().role)
+        assertEquals("text", streaming.last().kind)
+        assertEquals(setOf(id), state.streamingItemIds())
         val live = state.liveText().getValue(id)
         assertEquals("Reply", live.value)
         state.delta(DeltaEvent("m1", "s1", "Updated reply"), transcript)

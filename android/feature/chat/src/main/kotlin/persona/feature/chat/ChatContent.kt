@@ -73,16 +73,16 @@ internal val LocalChatMarkdownCache = staticCompositionLocalOf<ChatMarkdownCache
 /** mikepenz 0.46.0's padding defaults, constructible inside remember (its factory is composable and its local is static). */
 @Immutable
 private data class ChatMarkdownPadding(
-    override val block: Dp = 2.dp,
-    override val list: Dp = 4.dp,
-    override val listItemTop: Dp = 4.dp,
-    override val listItemBottom: Dp = 4.dp,
-    override val listIndent: Dp = 8.dp,
-    override val codeBlock: PaddingValues = PaddingValues(8.dp),
-    override val blockQuote: PaddingValues = PaddingValues(horizontal = 16.dp),
-    override val blockQuoteText: PaddingValues = PaddingValues(vertical = 4.dp),
+    override val block: Dp = Tokens.Space.xxs,
+    override val list: Dp = Tokens.Space.xs,
+    override val listItemTop: Dp = Tokens.Space.xs,
+    override val listItemBottom: Dp = Tokens.Space.xs,
+    override val listIndent: Dp = Tokens.Space.s,
+    override val codeBlock: PaddingValues = PaddingValues(Tokens.Space.s),
+    override val blockQuote: PaddingValues = PaddingValues(horizontal = Tokens.Space.l),
+    override val blockQuoteText: PaddingValues = PaddingValues(vertical = Tokens.Space.xs),
     override val blockQuoteBar: PaddingValues.Absolute =
-        PaddingValues.Absolute(left = 4.dp, top = 2.dp, right = 4.dp, bottom = 2.dp),
+        PaddingValues.Absolute(left = Tokens.Space.xs, top = Tokens.Space.xxs, right = Tokens.Space.xs, bottom = Tokens.Space.xxs),
     override val alert: MarkdownAlertPadding = markdownAlertPadding(),
 ) : MarkdownPadding
 

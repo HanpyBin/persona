@@ -88,4 +88,52 @@ class ChatSearchTest {
         assertNotNull(loadEarlierForSearch(res, repository, key) { org.junit.Assert.fail("Failed page must not advance progress") })
         assertEquals(21, calls)
     }
+
+    @Test fun liveChunksUpdateOnlyTheirFrozenWindowHitsAndMatchACompleteSearch() = runTest {
+        val old = Item("old", 1, role = "assistant", kind = "text", text = "Settled needle text")
+        val reply = Item("reply", 2, role = "assistant", kind = "text", text = "No match yet")
+        val frozen = listOf(old, reply)
+        val ordered = orderedChatSearchItems(frozen)
+        val order = ordered.mapIndexed { index, item -> item.id to index }.toMap()
+        val before = searchChatInOrder(res, ordered, "needle")
+        val oldHit = before.hits.single()
+
+        val first = reply.copy(text = "A chunk now contains needle")
+        val firstResult = searchChatDelta(res, listOf(old, first), order, before, mapOf(first.id to first), "needle")
+        assertEquals(searchChat(res, listOf(old, first), "needle"), firstResult)
+        assertSame(oldHit, firstResult.hits.single { it.itemId == old.id })
+        assertEquals("reply", firstResult.hits.first().itemId)
+
+        val second = reply.copy(text = "A later needle chunk changes the snippet and its highlights")
+        val secondResult = searchChatDelta(res, listOf(old, second), order, firstResult, mapOf(second.id to second), "needle")
+        assertEquals(searchChat(res, listOf(old, second), "needle"), secondResult)
+        assertSame(oldHit, secondResult.hits.single { it.itemId == old.id })
+        secondResult.hits.single { it.itemId == reply.id }.ranges.forEach {
+            assertEquals("needle", secondResult.hits.single { hit -> hit.itemId == reply.id }.snippet.substring(it))
+        }
+
+        // A structural item outside the frozen search window cannot add itself to the existing results.
+        val outside = Item("new", 3, role = "assistant", kind = "text", text = "needle outside")
+        assertSame(secondResult, searchChatDelta(res, listOf(old, second, outside), order, secondResult,
+            mapOf(outside.id to outside), "needle"))
+    }
+
+    @Test fun aTruncatedSearchIsRebuiltWhenALiveChangeCanRevealTheNextHit() = runTest {
+        val original = (1..101).map { Item("item-$it", it, role = "assistant", kind = "text", text = "needle") }
+        val ordered = orderedChatSearchItems(original)
+        val order = ordered.mapIndexed { index, item -> item.id to index }.toMap()
+        val before = searchChatInOrder(res, ordered, "needle")
+        assertTrue(before.truncated)
+        assertEquals(100, before.hits.size)
+        assertFalse(before.hits.any { it.itemId == "item-1" })
+
+        val changed = original.last().copy(text = "the newest reply no longer matches")
+        val current = original.dropLast(1) + changed
+        val after = searchChatDelta(res, current, order, before, mapOf(changed.id to changed), "needle")
+
+        assertEquals(searchChat(res, current, "needle"), after)
+        assertEquals(100, after.hits.size)
+        assertFalse(after.truncated)
+        assertTrue(after.hits.any { it.itemId == "item-1" })
+    }
 }

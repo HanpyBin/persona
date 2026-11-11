@@ -15,6 +15,13 @@ import kotlinx.serialization.json.*
 internal data class ChatSearchHit(val itemId: String, val category: String, val snippet: String, val ranges: List<IntRange>)
 internal data class ChatSearchResults(val hits: List<ChatSearchHit> = emptyList(), val truncated: Boolean = false)
 
+/** A frozen search window with either a structural refresh or only the items whose live text changed. */
+internal class ChatSearchItems(
+    val items: List<Item> = emptyList(),
+    val structural: Boolean = true,
+    val changed: Map<String, Item> = emptyMap(),
+)
+
 private fun JsonElement.strings(): Sequence<String> = when (this) {
     is JsonObject -> values.asSequence().flatMap { it.strings() }
     is JsonArray -> asSequence().flatMap { it.strings() }
@@ -45,32 +52,71 @@ private fun Item.searchFields(res: Resources): List<Pair<String, String>> = buil
     task?.let { add(event to listOfNotNull(it.title, it.detail, it.status).joinToString("\n")) }
 }
 
+private fun searchHit(itemId: String, category: String, text: String, needle: String): ChatSearchHit? {
+    val first = text.indexOf(needle, ignoreCase = true)
+    if (first < 0) return null
+    var start = (first - 45).coerceAtLeast(0)
+    var end = (first + needle.length + 110).coerceAtMost(text.length)
+    if (start > 0 && text[start].isLowSurrogate()) start--
+    if (end < text.length && text[end].isLowSurrogate()) end++
+    val snippet = (if (start > 0) "…" else "") + text.substring(start, end) + (if (end < text.length) "…" else "")
+    val ranges = mutableListOf<IntRange>()
+    var at = snippet.indexOf(needle, ignoreCase = true)
+    while (at >= 0) {
+        ranges += at until at + needle.length
+        at = snippet.indexOf(needle, at + needle.length, ignoreCase = true)
+    }
+    return ChatSearchHit(itemId, category, snippet, ranges)
+}
+
+private fun Item.searchHits(res: Resources, needle: String): List<ChatSearchHit> =
+    searchFields(res).mapNotNull { (category, text) -> searchHit(id, category, text, needle) }
+
+internal fun orderedChatSearchItems(items: List<Item>): List<Item> =
+    items.distinctBy { it.id }.sortedWith(chatItemOrder).asReversed()
+
 /** Literal matching preserves UTF-16 offsets used by Compose text spans; [res] names each hit's category. */
-internal suspend fun searchChat(res: Resources, items: List<Item>, query: String): ChatSearchResults {
+internal suspend fun searchChat(res: Resources, items: List<Item>, query: String): ChatSearchResults =
+    searchChatInOrder(res, orderedChatSearchItems(items), query)
+
+/** [orderedItems] is already in result order: newest item first, with its original field order within the item. */
+internal suspend fun searchChatInOrder(res: Resources, orderedItems: List<Item>, query: String): ChatSearchResults {
     val needle = query.trim()
     if (needle.isEmpty()) return ChatSearchResults()
     val hits = mutableListOf<ChatSearchHit>()
-    for (item in items.distinctBy { it.id }.sortedWith(chatItemOrder).asReversed()) {
+    for (item in orderedItems) {
         currentCoroutineContext().ensureActive()
-        for ((category, text) in item.searchFields(res)) {
-            val first = text.indexOf(needle, ignoreCase = true)
-            if (first < 0) continue
+        for (hit in item.searchHits(res, needle)) {
             if (hits.size == 100) return ChatSearchResults(hits, truncated = true)
-            var start = (first - 45).coerceAtLeast(0)
-            var end = (first + needle.length + 110).coerceAtMost(text.length)
-            if (start > 0 && text[start].isLowSurrogate()) start--
-            if (end < text.length && text[end].isLowSurrogate()) end++
-            val snippet = (if (start > 0) "…" else "") + text.substring(start, end) + (if (end < text.length) "…" else "")
-            val ranges = mutableListOf<IntRange>()
-            var at = snippet.indexOf(needle, ignoreCase = true)
-            while (at >= 0) {
-                ranges += at until at + needle.length
-                at = snippet.indexOf(needle, at + needle.length, ignoreCase = true)
-            }
-            hits += ChatSearchHit(item.id, category, snippet, ranges)
+            hits += hit
         }
     }
     return ChatSearchResults(hits)
+}
+
+/**
+ * Replaces only changed items' hits in an untruncated result. A truncated result cannot be repaired locally: removing
+ * one hit can reveal a match beyond the retained 100, so that case runs the same complete search again.
+ */
+internal suspend fun searchChatDelta(
+    res: Resources,
+    items: List<Item>,
+    order: Map<String, Int>,
+    previous: ChatSearchResults,
+    changed: Map<String, Item>,
+    query: String,
+): ChatSearchResults {
+    val relevant = changed.values.filter { it.id in order }
+    if (relevant.isEmpty()) return previous
+    val needle = query.trim()
+    if (needle.isEmpty()) return previous
+    if (previous.truncated) return searchChat(res, items, query)
+    currentCoroutineContext().ensureActive()
+    val changedIds = relevant.mapTo(mutableSetOf()) { it.id }
+    val replacements = relevant.sortedBy { order.getValue(it.id) }.flatMap { it.searchHits(res, needle) }
+    val hits = (previous.hits.filterNot { it.itemId in changedIds } + replacements)
+        .sortedBy { order[it.itemId] ?: Int.MAX_VALUE }
+    return ChatSearchResults(hits.take(100), truncated = hits.size > 100)
 }
 
 internal data class ChatSearchTarget(val rowId: String, val expand: Set<String> = emptySet())

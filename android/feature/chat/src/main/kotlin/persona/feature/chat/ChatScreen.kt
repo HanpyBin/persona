@@ -117,6 +117,7 @@ private fun ChatPage(
     val recovery = remember(key, statusBindings.recovery) { ChatStatusRecovery(res, statusBindings.recovery, scope, sessions::refresh) }
     val source = remember(repository, key) { repository.observeStructure(key) }
     val snapshot by source.collectAsStateWithLifecycle(ChatSnapshot())
+    val liveItems = rememberChatLiveItems(snapshot.items, snapshot.liveText)
     val application = LocalContext.current.applicationContext
     val renamer = chrome.renamer ?: remember(application) {
         if (application is GeneratedComponentManager<*>)
@@ -391,8 +392,23 @@ private fun ChatPage(
                 }
             }.asReversed()
     }
-    val searchableItems by produceState(emptyList<Item>(), snapshot.items, timelineVersion, search.visible) {
-        if (search.visible) value = withContext(Dispatchers.Default) { timeline.searchItems(snapshot.items) }
+    val searchableItems by produceState(ChatSearchItems(), liveItems, timelineVersion, search.visible) {
+        if (!search.visible) return@produceState
+        var window: List<Item>? = null
+        var members = emptySet<String>()
+        liveItems.revisions.collect { revision ->
+            val structural = window == null || revision.structural
+            if (structural) {
+                // Opening search freezes its members, not the current text of a reply already inside that window.
+                val frozen = withContext(Dispatchers.Default) { timeline.searchItems(revision.current()) }
+                window = frozen
+                members = frozen.mapTo(mutableSetOf()) { it.id }
+                value = ChatSearchItems(frozen)
+            } else {
+                val changed = revision.changed.filterKeys { it in members }
+                if (changed.isNotEmpty()) value = ChatSearchItems(revision.overlay(window), structural = false, changed = changed)
+            }
+        }
     }
     // Photos sent just before a message go into that message's bubble instead of a row of their own.
     val contentUserImages = remember(lines) {
@@ -413,7 +429,6 @@ private fun ChatPage(
     val contentWorkGroups = remember(lines) { lines.filterIsInstance<ChatLine.Work>().associateBy { it.id } }
     // Each open work line's plan card (web #1990 draws only the latest plan of an exchange).
     val contentPlans = remember(contentWorkGroups) { contentWorkGroups.filterValues { it.open }.mapValues { latestPlan(it.value.steps) } }
-    val currentItems by rememberUpdatedState(snapshot.items)
     val currentLines by rememberUpdatedState(lines)
     val list = chatList.list
     var reportedSeen by remember { mutableStateOf<Item?>(null) }
@@ -429,8 +444,8 @@ private fun ChatPage(
     val loader = remember(context, repository, readingKey?.scope) { chatImageLoader(context.applicationContext, repository) }
     val markdownCache = remember { ChatMarkdownCache() }
     // Only fresh Agent replies preload their links (ChatLinks.toPreload): paging old history never does.
-    val preloadUrls by produceState(emptyList<String>(), snapshot.items) {
-        value = withContext(Dispatchers.Default) { ChatLinks.toPreload(snapshot.items, java.time.Instant.now()) }
+    val preloadUrls by produceState(emptyList<String>(), liveItems) {
+        chatLinkPreloads(liveItems.revisions).collect { value = it }
     }
     // The items whose latest turn has its Markdown parsed. An unread conversation opens on its last question and waits
     // for this: a reply drawn as plain text and then as Markdown grows after the list was placed, and in the reversed
@@ -614,7 +629,7 @@ private fun ChatPage(
         ChatRowActions(key, fullText = { item -> repository.fullText(key, item.id) },
             openPath = if (chrome.onOpenPath != null) ({ path, line -> currentOpenPath?.invoke(path, line) }) else null,
             paths = pathPresence,
-            photos = photos, pictures = { chatViewerImages(key, currentItems, repository, imageDescription) },
+            photos = photos, pictures = { chatViewerImages(key, liveItems.current(), repository, imageDescription) },
             openImages = { images, index -> viewer = ViewerRequest(images, index) },
             menu = messageMenu, retryLineId = retryId, onRetry = { currentSend(continueText) }, imageDescription = imageDescription,
             thumbnails = chrome.files?.let { files ->
@@ -622,18 +637,23 @@ private fun ChatPage(
                 ({ path -> "${key.machineId}\n$cwd\n$path" to { pixels: Int -> files.thumbnail(key.machineId, cwd, path, pixels) } })
             })
     }
-    LaunchedEffect(snapshot.items) {
-        // Replies render each text part under "<item id>/<part index>" (MessageContent), so prewarm those keys, each with
-        // the source its row parses there (MarkdownText.source): the same key and source, so the row finds the parse.
-        val items = snapshot.items
-        val paths = rowActions.paths?.takeIf { rowActions.openPath != null }
-        val (latest, earlier) = withContext(Dispatchers.Default) {
-            markdownSplit.split(items).let { (latest, earlier) -> latest.map { it.key to it.source(paths) } to earlier.map { it.key to it.source(paths) } }
+    val currentMarkdownPaths by rememberUpdatedState(rowActions.paths?.takeIf { rowActions.openPath != null })
+    LaunchedEffect(liveItems) {
+        liveItems.revisions.collect { revision ->
+            // Replies render each text part under "<item id>/<part index>" (MessageContent), so prewarm those keys, each with
+            // the source its row parses there (MarkdownText.source): the same key and source, so the row finds the parse.
+            val items = revision.items
+            val paths = currentMarkdownPaths
+            val (latest, earlier) = withContext(Dispatchers.Default) {
+                val split = if (revision.lastTextOnly) markdownSplit.splitLast(items) else markdownSplit.split(items)
+                split.let { (latest, earlier) -> latest.map { it.key to it.source(paths) } to earlier.map { it.key to it.source(paths) } }
+            }
+            markdownCache.keep(latest.map { it.first } + earlier.map { it.first })
+            latest.forEach { (id, source) -> markdownCache.parse(id, source) }
+            // Readiness still describes the structural snapshot, never the lazy live overlay's list identity.
+            markdownReadyFor = revision.base
+            earlier.forEach { (id, source) -> markdownCache.parse(id, source) }
         }
-        markdownCache.keep(latest.map { it.first } + earlier.map { it.first })
-        latest.forEach { (id, source) -> markdownCache.parse(id, source) }
-        markdownReadyFor = items
-        earlier.forEach { (id, source) -> markdownCache.parse(id, source) }
     }
     // A task's detail or the dock's "All", open over the conversation; kept across the host being made again.
     val taskSheet = remember(key) { mutableStateOf<TaskSheet?>(null) }
@@ -774,7 +794,7 @@ private fun ChatPage(
             (unreadEntry == null || markdownReadyFor == snapshot.items), entry = unreadEntry,
         rowAliases = lines.associate { it.id to it.contentKey },
         hasOlder = snapshot.hasOlder, loadingOlder = snapshot.loadingOlder,
-        onFreeze = { timeline.freeze(currentItems); timelineVersion++ },
+        onFreeze = { timeline.freeze(liveItems.current()); timelineVersion++ },
         onFollow = { timeline.follow(); timelineVersion++ },
         loadOlder = {
             try { repository.loadOlder(key) } catch (e: CancellationException) { throw e }
@@ -853,7 +873,7 @@ private fun ChatPage(
                                 onFiles = chrome.onFiles, onGit = chrome.onGit, gitLabel = chrome.gitLabel,
                                 statusState = status, onDetails = { statusSheet = true },
                                 onOpenTodo = chrome.onOpenTodo, agentShares = chrome.agentShares,
-                                onSearch = { search.open(chatList) { timeline.freeze(currentItems); timelineVersion++ } }) {
+                                onSearch = { search.open(chatList) { timeline.freeze(liveItems.current()); timelineVersion++ } }) {
                                 // A session without a terminal (a Codex thread, an agent runtime's) has nothing to open or explain.
                                 if (!readOnly && canTerminal && renderStyle != ChatRenderStyle.Assistant) JIconButton(PhIcons.TerminalWindow, stringResource(if (terminal != null) R.string.chat_screen_open_terminal else R.string.chat_screen_terminal_help),
                                     terminal ?: { terminalHelp = true })
@@ -866,7 +886,7 @@ private fun ChatPage(
                             if (showTopBar) ChatGoalBar(session?.goal)
 
                             ChatTasks(projection.tasks, lines, chatList,
-                                onFreeze = { timeline.freeze(currentItems); timelineVersion++ },
+                                onFreeze = { timeline.freeze(liveItems.current()); timelineVersion++ },
                                 onVisibilityChanged = { taskPageVisible = it },
                                 onExpandFold = ::expand, foldErrors = foldErrors,
                                 // While the link card peeks, the composer needs the room more (glass laid them over each other).
@@ -1090,7 +1110,7 @@ private fun ChatPage(
                                 val progress = remember(anchor.plan.todos) { planProgress(anchor.plan.todos) }
                                 PlanPill(progress.step, progress.total, progress.done, onClick = {
                                     scope.launch {
-                                        timeline.freeze(currentItems); timelineVersion++
+                                        timeline.freeze(liveItems.current()); timelineVersion++
                                         chatList.scrollToRecord(anchor.lineId)
                                     }
                                 }, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = padding.calculateBottomPadding() + Tokens.Space.l))
