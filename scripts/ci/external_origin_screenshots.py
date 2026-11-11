@@ -35,9 +35,6 @@ def main():
 
     assert args.serial.startswith("emulator-")
     assert adb("shell", "getprop", "ro.kernel.qemu").strip() == "1"
-    adb("shell", "pm", "clear", APP)
-    adb("shell", "pm", "grant", APP, "android.permission.POST_NOTIFICATIONS")
-    adb("shell", "cmd", "locale", "set-app-locales", APP, "--user", "0", "--locales", "en")
     previous_font = adb("shell", "settings", "get", "system", "font_scale").strip()
     previous_animations = {key: adb("shell", "settings", "get", "global", key).strip() for key in
                            ("animator_duration_scale", "transition_animation_scale", "window_animation_scale")}
@@ -117,6 +114,10 @@ for index, (origin, title, request) in enumerate([
 
     def launch(style, theme, session):
         adb("shell", "am", "force-stop", APP)
+        # Each case starts with the same empty app data, before pairing and applying its route.
+        adb("shell", "pm", "clear", APP)
+        adb("shell", "pm", "grant", APP, "android.permission.POST_NOTIFICATIONS")
+        adb("shell", "cmd", "locale", "set-app-locales", APP, "--user", "0", "--locales", "en")
         sid = "f00d0001-0000-4000-8000-%012d" % (session + 1)
         command = ["shell", "am", "start", "-W", "-n", APP + "/persona.android.debug.DebugEntryActivity",
                    "--es", "debug.mockAddress", "http://127.0.0.1:" + str(port),
