@@ -37,6 +37,11 @@ final class DuoOpenChromeTests: XCTestCase {
 
     @MainActor private func element(_ id: String) -> XCUIElement { app.descendants(matching: .any)[id].firstMatch }
 
+    /// Persona's face over its name: `persona-avatar` on a hub with several assistants (the mock hub's), else `assistant-menu`.
+    @MainActor private var face: XCUIElement {
+        app.buttons.matching(NSPredicate(format: "identifier IN %@", ["assistant-menu", "persona-avatar"])).firstMatch
+    }
+
     @MainActor private func shot(_ name: String) {
         XCTContext.runActivity(named: "duo-shot \(name)") { _ in
             if let hold = ProcessInfo.processInfo.environment["PERSONA_HOLD"].flatMap(UInt32.init) { sleep(hold) }
@@ -46,7 +51,7 @@ final class DuoOpenChromeTests: XCTestCase {
     /// No tab bar and no switch: the face at the top of Persona's page, the fold in the column's header over the places.
     /// Folding the column and bringing it back from the page.
     @MainActor func testTheFaceIsOnTopAndNoSwitch() {
-        let main = element("sidebar-main"), face = element("assistant-menu"), collapse = element("assistant-sidebar-collapse")
+        let main = element("sidebar-main"), face = self.face, collapse = element("assistant-sidebar-collapse")
         XCTAssertTrue(main.waitForExistence(timeout: 20), "no main row:\n\(app.debugDescription)")
         XCTAssertEqual(app.tabBars.count, 0, "the system's tab bar is still there:\n\(app.debugDescription)")
         XCTAssertFalse(element("shell-assistant").exists || element("page-tab-switch").exists, "the Assistant | Agents switch is still there")
@@ -111,7 +116,7 @@ final class DuoOpenChromeTests: XCTestCase {
         }
         shot("main-menu")
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.5)).tap() // the menu away
-        let face = element("assistant-menu")
+        let face = self.face
         XCTAssertTrue(face.waitForExistence(timeout: 5) && face.isHittable, "no face at the top:\n\(app.debugDescription)")
         face.tap()
         for label in ["详细信息", "拷贝目录", "拷贝信息"] {

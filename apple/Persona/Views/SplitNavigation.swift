@@ -87,6 +87,10 @@ struct SplitNavigation<Sidebar: View, Empty: View, Destinations: ViewModifier>: 
                         .accessibilityHidden(path.isEmpty)
                         if path.isEmpty { home }
                     }
+                    // The page beside the column, not under it: given no width of its own, the split laid the column over
+                    // the page, dimmed, on the open Duo held upright (669 pt; #4206). A least width lets it tile; the ideal is
+                    // the same, so the column keeps the system's width and the page takes the rest.
+                    .navigationSplitViewColumnWidth(min: Theme.Size.splitDetailMin, ideal: Theme.Size.splitDetailMin)
                 } else {
                     NavigationStack(path: $path) {
                         empty.modifier(destinations)

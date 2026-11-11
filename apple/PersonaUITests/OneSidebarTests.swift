@@ -78,6 +78,15 @@ final class OneSidebarTests: XCTestCase {
         XCTAssertLessThan(inbox.frame.minY, more.frame.minY)
         XCTAssertLessThan(more.frame.minY, recent.frame.minY, "Recent is not under the places")
         XCTAssertLessThan(main.frame.maxX, window.midX + 100, "the column is not on the left")
+        // The page beside the column, not under it: upright on the open Duo the split once laid the column over the page,
+        // dimmed. Its face is in the middle of the page, at least 300 pt wide, so well past the column's edge.
+        let face = app.buttons.matching(NSPredicate(format: "identifier IN %@", ["assistant-menu", "persona-avatar"])).firstMatch
+        XCTAssertTrue(face.exists, "no face on the page:\n\(app.debugDescription)")
+        XCTAssertGreaterThan(face.frame.midX, collapse.frame.maxX + 100, "the page is under the column, not beside it")
+        // The fold and the page's New Chat on one line (2026-11-11, the owner).
+        let pageNew = element("assistant-new")
+        XCTAssertTrue(pageNew.exists, "no New Chat on the page")
+        XCTAssertEqual(pageNew.frame.midY, collapse.frame.midY, accuracy: 2, "the fold and the page's New Chat are not on one line")
         // The rarer places wait under More.
         XCTAssertFalse(element("sidebar-machines").exists, "Machines shows before More is opened")
         // The foot: New Chat on the left, search and Settings on the right, in one row at the column's foot.

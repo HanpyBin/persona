@@ -656,6 +656,8 @@ sidebar. Code in `Persona/Views/OneSidebar.swift`; the column is the Agents list
 - **Beside it** the detail column shows the agent's chat while one is open, and otherwise its home (`SplitNavigation.home`, `OneSidebarHome`): Persona's page, or
   Messages while its row is the one picked (`selectedTab == .feishu`). Each has its own `NavigationStack`: the home is not a page of the column's stack, since
   stacks cannot nest. A Persona row closes the agent and shows its page there; opening an agent sets `selectedTab` to `.chats`, closing it back to `.assistant`.
+  The detail column asks for at least `Theme.Size.splitDetailMin` (300 pt): with no width of its own, the split laid the column over the page, dimmed, on the
+  open Duo held upright (669 pt wide); with it the column sits beside the page in both postures, at the system's width (320 pt on the Duo).
 - **Selection**: one row at a time looks chosen: the main row, a place or a Recent conversation while Persona's page is shown, Messages while it is, the open agent's
   row while an agent is (`Theme.Tree.selected` on cards, `RepoTreeSelected` on tree rows; `.isSelected` for VoiceOver), in every grouping.
 - **Menus**: the main row's long press holds the main conversation's menu, Copy Session ID, Copy Diagnostics and End… (`MainChatRowMenu`, shared with the iPhone's
