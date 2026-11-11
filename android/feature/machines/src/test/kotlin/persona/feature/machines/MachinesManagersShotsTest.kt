@@ -12,6 +12,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -23,6 +24,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Density
 import androidx.navigation3.runtime.NavKey
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -98,7 +100,8 @@ class MachinesManagersShotsTest {
         var shown by mutableStateOf<ManagerRoster?>(roster)
         rule.setContent {
             PersonaTheme(darkTheme = dark, reduceMotion = true, style = style) {
-                CompositionLocalProvider(LocalManagerRoster provides shown) {
+                CompositionLocalProvider(LocalManagerRoster provides shown,
+                    LocalDensity provides Density(LocalDensity.current.density, fontScale = 2f)) {
                     Box(Modifier.testTag("shot").width(400.dp).height(1400.dp).background(PersonaTheme.palette.background)) {
                         MachinesScreen(null, list, navigator)
                     }
