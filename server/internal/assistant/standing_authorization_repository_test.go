@@ -2,6 +2,7 @@ package assistant
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -92,6 +93,30 @@ func TestStandingAuthorizationRepositoryScope(t *testing.T) {
 		}
 	}
 }
+
+func TestStandingAuthorizationRepositoryIdentityUnavailable(t *testing.T) {
+	for _, unavailable := range []bool{true, false} {
+		name := "old_node"
+		if unavailable {
+			name = "unavailable_node"
+		}
+		t.Run(name, func(t *testing.T) {
+			s, f := newQuietService(t)
+			f.answerNode("git.status", func(_ string, _ json.RawMessage) (any, error) {
+				if unavailable {
+					return nil, errors.New("node unavailable")
+				}
+				return proto.RepositoryIdentity{}, nil
+			})
+			for _, cwd := range []string{"/code/app/server", "/code/app/vendor/other", "/code/application"} {
+				got, err := s.standingScopeMatches(t.Context(), "box", "/code/app", cwd)
+				if err != nil || got {
+					t.Errorf("unproven scope %s matched: %v %v", cwd, got, err)
+				}
+			}
+		})
+	}
+}
 func TestStandingAuthorizationRepositoryOriginScope(t *testing.T) {
 	s, f := newQuietService(t)
 	f.answerNode("git.status", func(_ string, args json.RawMessage) (any, error) {
@@ -124,37 +149,49 @@ func TestStandingAuthorizationRepositoryOriginScope(t *testing.T) {
 func TestStandingAuthorizationWorktreeDispatch(t *testing.T) {
 	fixture := newStandingRepositoryFixture(t)
 	for _, method := range []string{"task_plan", "agent_send"} {
-		t.Run(method, func(t *testing.T) {
-			database := taskRecoveryDatabase(t)
-			grant := dispatchAuthorization()
-			grant.Directory = fixture.main
-			saveDispatchAuthorizations(t, database, grant)
-			s, f := newQuietServiceOn(t, database)
-			t.Cleanup(func() { settleService(t, s) })
-			standingFixtureNode(t, f)
-			if method == "task_plan" {
-				task := PlanTask{Title: "Fix the app", Prompt: "Fix the app and report the tests.", Machine: "box", Cwd: fixture.tree, Permission: "bypassPermissions", UserRequested: true}
-				if _, err := s.toolTaskPlan(t.Context(), "conv1", readonlyTaskArgs(t, task)); err != nil {
-					t.Fatal(err)
+		for _, scope := range []struct {
+			name, directory string
+			want            bool
+		}{
+			{"same_worktree", fixture.tree, true},
+			{"different_repository_similar_prefix", fixture.other, false},
+			{"unavailable_nested_repository", filepath.Join(fixture.main, "vendor", "other"), false},
+		} {
+			t.Run(method+"/"+scope.name, func(t *testing.T) {
+				database := taskRecoveryDatabase(t)
+				grant := dispatchAuthorization()
+				grant.Directory = fixture.main
+				saveDispatchAuthorizations(t, database, grant)
+				s, f := newQuietServiceOn(t, database)
+				t.Cleanup(func() { settleService(t, s) })
+				standingFixtureNode(t, f)
+				if scope.name == "unavailable_nested_repository" {
+					f.answerNode("git.status", func(_ string, _ json.RawMessage) (any, error) { return nil, errors.New("node unavailable") })
 				}
-				waitFor(t, "worktree task dispatch", func() bool { return len(f.started()) == 1 })
-				text, _ := f.started()[0]["prompt"].(string)
-				assertDispatchAuthorization(t, text, grant, true)
-				t.Logf("WORKTREE_TASK_INSTRUCTIONS\n%s", text)
-			} else {
-				secretary(f)
-				f.mu.Lock()
-				f.sessions["box"][0].Cwd = fixture.tree
-				f.mu.Unlock()
-				if _, err := runJSON(t, s, "conv1", "agent_send", map[string]any{"machine": "box", "session_id": "sec00001", "text": "Fix the app.", "task": map[string]any{"title": "Fix the app"}}); err != nil {
-					t.Fatal(err)
+				if method == "task_plan" {
+					task := PlanTask{Title: "Fix the app", Prompt: "Fix the app and report the tests.", Machine: "box", Cwd: scope.directory, Permission: "bypassPermissions", UserRequested: true}
+					if _, err := s.toolTaskPlan(t.Context(), "conv1", readonlyTaskArgs(t, task)); err != nil {
+						t.Fatal(err)
+					}
+					waitFor(t, "worktree task dispatch", func() bool { return len(f.started()) == 1 })
+					text, _ := f.started()[0]["prompt"].(string)
+					assertDispatchAuthorization(t, text, grant, scope.want)
+					t.Logf("WORKTREE_TASK_INSTRUCTIONS\n%s", text)
+				} else {
+					secretary(f)
+					f.mu.Lock()
+					f.sessions["box"][0].Cwd = scope.directory
+					f.mu.Unlock()
+					if _, err := runJSON(t, s, "conv1", "agent_send", map[string]any{"machine": "box", "session_id": "sec00001", "text": "Fix the app.", "task": map[string]any{"title": "Fix the app"}}); err != nil {
+						t.Fatal(err)
+					}
+					sent := sentToAgent(f)
+					if len(sent) != 1 {
+						t.Fatalf("sent: %v", sent)
+					}
+					assertDispatchAuthorization(t, sent[0], grant, scope.want)
 				}
-				sent := sentToAgent(f)
-				if len(sent) != 1 {
-					t.Fatalf("sent: %v", sent)
-				}
-				assertDispatchAuthorization(t, sent[0], grant, true)
-			}
-		})
+			})
+		}
 	}
 }

@@ -560,7 +560,8 @@ Directories are specific absolute paths on one computer, matched by path segment
 subdirectories but not `/code/example-copy`. Roots, single-level paths and wildcards are rejected. The node verifies repository identity through local Git metadata: matching common Git directories or normalized
 origin remotes cover worktrees and clones outside that path. A subdirectory grant retains its relative directory
 boundary across worktrees. Different origins and similar path prefixes do not match; repository basenames never
-establish identity. With an older node that cannot return identity, only existing path scopes are available.
+establish identity. If an older or unavailable node cannot return identity, only the exact registered directory
+matches. A child directory may contain an independent repository, so a path prefix alone cannot extend a grant.
 
 At actual `task_plan` dispatch and `agent_send` with `task`, the manager reads matching grants and appends the prompt
 template containing scope, actions, conditions and the user's words. No other repository receives them. Pending plans

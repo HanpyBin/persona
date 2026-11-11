@@ -30,6 +30,13 @@ func TestRecordedStandingReplay(t *testing.T) {
 		t.Skip("set PERSONA_RECORDED_REPLAY_INPUT and PERSONA_RECORDED_REPLAY_OUTPUT for real-model replay")
 	}
 	launcher, modelName := os.Getenv("PERSONA_RECORDED_REPLAY_LAUNCHER"), os.Getenv("PERSONA_RECORDED_REPLAY_MODEL")
+	fixedRepository := os.Getenv("PERSONA_RECORDED_REPLAY_REPOSITORY")
+	if fixedRepository == "" {
+		fixedRepository = "repository-006"
+	}
+	if !regexp.MustCompile(`^repository-[0-9]+$`).MatchString(fixedRepository) {
+		t.Fatal("fixed replay repository must be an anonymized repository identifier")
+	}
 	if launcher == "" || modelName == "" {
 		t.Fatal("set the launcher and model from the configured agent.delegate purpose")
 	}
@@ -101,7 +108,7 @@ func TestRecordedStandingReplay(t *testing.T) {
 							r.Reason += " Card names multiple distinct PR targets."
 						}
 					}
-					r.FixedGrantWouldApprove = r.WouldApprove && strings.Trim(recordedRepositoryID.FindString(ix.Cwd), "/") == "repository-006"
+					r.FixedGrantWouldApprove = r.WouldApprove && strings.Trim(recordedRepositoryID.FindString(ix.Cwd), "/") == fixedRepository
 				}
 				results[i] = r
 				data, _ := json.MarshalIndent(r, "", "  ")
@@ -122,7 +129,7 @@ func TestRecordedStandingReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	var report strings.Builder
-	report.WriteString("# Recorded card replay\n\nFrozen anonymized cards classified through production ai.Client.JSON, running inside the configured managed launcher. Per-card scenario: independently assume a merge/push/deploy-test grant for that card's current repository. Fixed-grant scenario: only /code/repository-006 is authorized; this repository was selected before seeing model results, and all other repositories are denied. Both scenarios independently assume green CI and no conflicts. Main-checkout/worktree relationships use frozen anonymous repository identifiers, not live Git lookups. Full original task descriptions were not collected; cwd and anonymized task titles supply context. These are replay assumptions, not production verification. No card was answered and no user-facing state changed. Each card JSON retains the JSON object returned by production ai.Client.JSON.\n\n| Card | Type | Actions | Per-card grant approval | Fixed grant approval | Reason (original model text) |\n| --- | --- | --- | --- | --- | --- |\n")
+	fmt.Fprintf(&report, "# Recorded card replay\n\nFrozen anonymized cards classified through production ai.Client.JSON, running inside the configured managed launcher. Per-card scenario: independently assume a merge/push/deploy-test grant for that card's current repository. Fixed-grant scenario: only /code/%s is authorized; the repository is selected before this run, and all other repositories are denied. Retain and disclose earlier attempts alongside this report. Both scenarios independently assume green CI and no conflicts. Main-checkout/worktree relationships use frozen anonymous repository identifiers, not live Git lookups. Full original task descriptions were not collected; cwd and anonymized task titles supply context. These are replay assumptions, not production verification. No card was answered and no user-facing state changed. Each card JSON retains the JSON object returned by production ai.Client.JSON.\n\n| Card | Type | Actions | Per-card grant approval | Fixed grant approval | Reason (original model text) |\n| --- | --- | --- | --- | --- | --- |\n", fixedRepository)
 	approved, fixedApproved, modelFailures, called, validationRejections, approvedMergePush, approvedSensitive := 0, 0, 0, 0, 0, 0, 0
 	for _, r := range results {
 		if r.FixedGrantWouldApprove {

@@ -27,8 +27,9 @@ func (s *Service) standingScopeMatches(ctx context.Context, machine, directory, 
 		return s.call(ctx, machine, "git.status", map[string]any{"cwd": dir, "identity_only": true}, out) == nil && out.Version == 1 && path.IsAbs(out.Cwd)
 	}
 	if !read(directory, &grant) || !read(cwd, &task) {
-		// An older or unavailable node cannot prove a cross-directory identity. Existing lexical scopes still work.
-		return standingDirectoryContains(directory, cwd), nil
+		// A path below the grant may be a nested independent repository. Without
+		// identities, even lexical containment cannot prove a cross-directory scope.
+		return false, nil
 	}
 	if !grant.IsRepo {
 		return standingDirectoryContains(grant.Cwd, task.Cwd), nil
