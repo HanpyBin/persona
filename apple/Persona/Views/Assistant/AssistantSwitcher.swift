@@ -7,8 +7,8 @@ import SwiftUI
 // agents waiting and its inbox's Needs You), then New Assistant and Manage Assistants… (Settings › Assistants). The
 // header's face carries a mark while another assistant has something waiting. Picking one makes it the current
 // assistant on this device (`AppModel.selectAssistantManager`, kept for each hub across launches); picking one still
-// installing shows how to install it. The header shows with one assistant too; a hub without a roster keeps the plain
-// name it had.
+// installing shows how to install it. It shows from two installed assistants on (`AppModel.showsAssistantIdentity`):
+// with one, or on a hub without a roster, the sidebar has no assistant identity (#3975).
 
 /// What the switcher says and how it marks an assistant, kept apart from the views to test.
 enum AssistantSwitcherText {

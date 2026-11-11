@@ -54,7 +54,8 @@ internal fun mergedSessions(stacks: GroupStacks): SessionsRepository = object : 
             .groupBy({ it.key }, { it.value }).mapValues { (_, values) -> values.sum() }
         SessionListStatus(
             paged = statuses.any { it.paged }, loaded = statuses.isNotEmpty() && statuses.all { it.loaded },
-            loading = statuses.any { it.loading }, hasMore = statuses.any { it.hasMore }, hasPrevious = statuses.any { it.hasPrevious },
+            loading = statuses.any { it.loading }, failed = statuses.any { it.failed },
+            hasMore = statuses.any { it.hasMore }, hasPrevious = statuses.any { it.hasPrevious },
             total = statuses.sumOf { it.total },
             counts = SessionListCounts(total = statuses.sumOf { it.counts.total }, machine = totals({ it.machine }),
                 project = totals({ it.project }), group = totals({ it.group }), state = totals({ it.state }),
@@ -285,6 +286,7 @@ internal class MergedShellServices(private val stacks: GroupStacks) {
         override suspend fun verify(session: Session, action: ChatAction) = of(session).verify(session, action)
         override suspend fun editQueue(session: Session, keep: List<Int>) = of(session).editQueue(session, keep)
         override suspend fun info(session: Session) = of(session).info(session)
+        override suspend fun restoreModel(session: Session) = of(session).restoreModel(session)
         override suspend fun fork(session: Session, atItemId: String) = of(session).fork(session, atItemId)
         override suspend fun rewind(session: Session, target: RewindTarget, restore: RewindRestore) = of(session).rewind(session, target, restore)
     }
@@ -388,6 +390,11 @@ internal fun mergedAgentsState(list: List<GroupNames>, states: List<AgentsWiring
         override suspend fun newAgentModel() = creations.getOrNull(chosen)?.newAgentModel()
         override suspend fun launcherModels(machineId: String, launcher: String, refresh: Boolean) =
             creation(of(machineId)).launcherModels(machineId, launcher, refresh)
+        override suspend fun worktreeStatus(machineId: String, cwd: String) = creation(of(machineId)).worktreeStatus(machineId, cwd)
+        override suspend fun addWorktree(machineId: String, cwd: String, nameHint: String, branch: String) =
+            creation(of(machineId)).addWorktree(machineId, cwd, nameHint, branch)
+        override suspend fun removeWorktree(machineId: String, path: String, deleteBranch: Boolean, force: Boolean) =
+            creation(of(machineId)).removeWorktree(machineId, path, deleteBranch, force)
     }
     return AgentsWiringState(
         scope = scope,

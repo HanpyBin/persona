@@ -147,10 +147,12 @@ struct AssistantScopeTests {
         #expect(model.scopedInteractions.map(\.id) == ["y"])
     }
 
-    /// The tabs count the current assistant's cards alone, and count again when another becomes current.
+    /// The tabs count the current assistant's alone, and count again when another becomes current: the Persona tab its
+    /// conversations' cards, the Agents tab its sessions that wait (one per session, however many cards).
     @Test func theTabBadgesCountTheCurrentAssistantsCards() throws {
         let model = try model()
         let sessions = [try session("a", on: "server", manager: "assistant"), try session("b", on: "MacBook", manager: "m-1"),
+                        try session("c", on: "MacBook", manager: "m-1", state: "needs_you"),
                         try session("main", on: "MacBook", manager: "m-1", assistant: true)]
         model.applySessions(Dictionary(grouping: sessions, by: \.machineRef))
         model.replaceInteractions("", [try card("x1", on: "server", session: "a", manager: "assistant"),
@@ -159,7 +161,7 @@ struct AssistantScopeTests {
                                        try card("x4", on: "MacBook", session: "main", manager: "m-1")])
         #expect(model.badges == TabBadges(assistant: 0, agents: 1))
         model.selectAssistantManager("m-1")
-        #expect(model.badges == TabBadges(assistant: 1, agents: 2))
+        #expect(model.badges == TabBadges(assistant: 1, agents: 2), "b with its two cards, and c waiting in its terminal")
         model.selectAssistantManager(nil)
         #expect(model.badges == TabBadges(assistant: 0, agents: 1))
         model.managerRosters[""] = Self.one

@@ -1,4 +1,5 @@
 from contextlib import redirect_stdout
+import gzip
 import hashlib
 import io
 import ipaddress
@@ -7,6 +8,7 @@ import plistlib
 import struct
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -385,7 +387,7 @@ class GoDependenciesTests(unittest.TestCase):
 class BundleScanIntegrationTests(unittest.TestCase):
     def scan(self, text, words=(), public=True, config=None, dependencies=DEPENDENCIES):
         with tempfile.TemporaryDirectory(prefix="bundle-privacy-test-") as directory:
-            (Path(directory) / "binary").write_bytes(text.encode())
+            (Path(directory) / "binary").write_bytes(text if isinstance(text, bytes) else text.encode())
             output = io.StringIO()
             args = ["check_bundle_privacy.py"] + (["--whole-short"] if public else []) + [directory]
             with patch.object(sys, "argv", args), patch.object(cbp.pc, "module_paths", return_value=None), \
@@ -442,6 +444,38 @@ class BundleScanIntegrationTests(unittest.TestCase):
         self.assertNotIn(EMAIL, output)
         self.assertNotIn(address, output)
 
+    def test_gzip_members_in_a_binary_are_scanned_inflated(self):
+        # A Go build embeds the runtime packages as gzipped tars (server/internal/runtimepkg): their text must count.
+        def member(text):
+            archive = io.BytesIO()
+            with tarfile.open(fileobj=archive, mode="w") as tar:
+                data = text.encode()
+                info = tarfile.TarInfo("runtime-sdk/lib/runtime.js")
+                info.size = len(data)
+                tar.addfile(info, io.BytesIO(data))
+            return gzip.compress(archive.getvalue(), compresslevel=9, mtime=0)
+
+        word = "privatehost"
+        plain = member("const a = 1;\n" * 50)
+        # Filler that does not compress to nothing, so half the member still holds the start of the file.
+        long = member("// " + word + " " + "".join("%x" % i for i in range(3000)))
+        for name, data in (
+                ("alone", member("export const host = '" + word + "'")),
+                ("inside a binary", b"\x7fELF\x00" * 64 + member("// " + word) + b"\x00\x1f\x8b\x08junk" * 8),
+                ("after another member", plain + member("// " + word)),
+                ("cut short", long[:len(long) // 2])):
+            with self.subTest(name):
+                self.assertNotIn(word.encode(), data)
+                code, output = self.scan(data, words=(word,))
+                self.assertNotEqual(code, 0)
+                self.assertIn("private value", output)
+                self.assertNotIn(word, output)
+        code, output = self.scan(member("mail " + EMAIL))
+        self.assertNotEqual(code, 0)
+        self.assertIn("email", output)
+        code, output = self.scan(plain + b"\x1f\x8b\x08\x00" * 4, words=(word,))
+        self.assertEqual(code, 0, output)
+
     def test_app_accepts_only_the_exact_configured_public_relay_url(self):
         relay = "https://relay.example.test/relay"
         config = {"app": {"push_relay": relay}}
@@ -493,6 +527,20 @@ class BundleScanIntegrationTests(unittest.TestCase):
             with self.subTest(site=bad):
                 code, _ = self.scan(bad + "/dl", words=(bad + "/dl",), config={"publish": {"site_url": bad}})
                 self.assertNotEqual(code, 0)
+
+    def test_published_binary_accepts_only_the_exact_configured_update_url(self):
+        # publish.update_url (#4522): the binaries carry it instead of <site>/dl, exactly as configured.
+        url = "https://releases.example.test/owner/repo/releases/latest/download"
+        words = ("releases.example.test",)
+        config = {"publish": {"site_url": "https://site.example.test", "update_url": url + "/"}}
+        code, output = self.scan(url, words=words, config=config)
+        self.assertEqual(code, 0, output)
+        for text in (url + "/private", url + "?token=placeholder", "https://releases.example.test/owner",
+                     "https://site.example.test/dl", "person@releases.example.test"):
+            with self.subTest(text=text):
+                code, output = self.scan(text, words=words + ("site.example.test",), config=config)
+                self.assertNotEqual(code, 0)
+                self.assertIn("private value", output)
 
     def test_the_app_ssh_algorithm_names_are_not_emails(self):
         names = "\n".join(a + "@" + d for a, d in (("aes256-gcm", "openssh.com"), ("curve25519-sha256", "libssh.org"),

@@ -677,6 +677,7 @@ struct NewChatView: View {
         }
         .buttonStyle(.plain)
         .disabled(!m.online)
+        .accessibilityIdentifier("newChat.machine.\(m.ref.path)")
     }
 
     /// The model purpose a new Agent inherits.
@@ -832,6 +833,7 @@ struct NewChatView: View {
             .accessibilityIdentifier("newChat.model")
         } else if let c = modelChoice, c.showsLocked, let locked = c.list.locked {
             modelLabel(title: String(localized: "Default Model"), detail: locked, trailing: Theme.Icon.locked)
+                .accessibilityElement(children: .combine) // one row, read with why, like the pickable one
                 .accessibilityIdentifier("newChat.model.locked")
         } else if modelsLoading {
             modelLabel(title: String(localized: "Model [Assistant View c98e11]"), detail: String(localized: "Loading models for \(runLauncher)…"), trailing: nil)

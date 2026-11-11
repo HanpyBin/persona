@@ -81,7 +81,7 @@ nonisolated enum AssistantBadges {
             guard counts(key, session) else { continue }
             agents[roster.owner(ix.manager ?? session?.manager), default: []].insert(key)
         }
-        for s in bySession.values where !s.assistant && s.state == .needsYou && counts(s.key, s) {
+        for s in bySession.values where !s.assistant && s.countedState == .needsYou && counts(s.key, s) {
             agents[roster.owner(s.manager), default: []].insert(s.key)
         }
         for (manager, keys) in agents { tally[manager, default: 0] += keys.count }
