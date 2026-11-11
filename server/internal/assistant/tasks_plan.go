@@ -65,17 +65,13 @@ func (s *Service) taskPlanFrom(ctx context.Context, machine, sessionID string, a
 	if len(a.Tasks) > 8 {
 		return "", fmt.Errorf("at most 8 tasks in one plan")
 	}
-	if scope != nil {
-		if err := s.checkLeaderRoom(ctx, scope, len(a.Tasks)); err != nil {
-			return "", err
-		}
-	}
 	reused := map[string]bool{}
 	modes := map[string]string{} // each computer's Claude Code default mode, read once for this plan
 	for i := range a.Tasks {
 		t := &a.Tasks[i]
 		t.normalizeReadonlyPermission()
 		t.TodoID, t.Error, t.ErrorCode, t.ErrorArgs = "", "", "", nil
+		t.QueuedAt, t.Resume = nil, false
 		t.WorkspaceResolved, t.ReservedTodoID, t.WorkspaceInferred = nil, "", false
 		// Reroute is hub-owned: drop any reroute a model passes in task_plan args, so healthyPlace seeds it only from a
 		// real health detour and its first-detour guard keeps the true original machine (#2271).
@@ -200,6 +196,8 @@ func (s *Service) taskPlanFrom(ctx context.Context, machine, sessionID string, a
 		for _, t := range started.Tasks {
 			if t.Error != "" {
 				fmt.Fprintf(&b, "- %s on %s: dispatch failed: %s\n", t.Title, t.Machine, t.Error)
+			} else if t.QueuedAt != nil {
+				fmt.Fprintf(&b, "- %s → todo %s on %s (queued: waiting for capacity)\n", t.Title, t.TodoID, t.Machine)
 			} else {
 				fmt.Fprintf(&b, "- %s → todo %s on %s (dispatching)\n", t.Title, t.TodoID, t.Machine)
 			}
@@ -247,6 +245,8 @@ func (s *Service) taskPlanFrom(ctx context.Context, machine, sessionID string, a
 	for _, t := range started.Tasks {
 		if t.Error != "" {
 			fmt.Fprintf(&b, "- %s on %s: dispatch failed: %s\n", t.Title, t.Machine, t.Error)
+		} else if t.QueuedAt != nil {
+			fmt.Fprintf(&b, "- %s → todo %s on %s (queued: waiting for capacity)\n", t.Title, t.TodoID, t.Machine)
 		} else {
 			fmt.Fprintf(&b, "- %s → todo %s on %s (dispatching)\n", t.Title, t.TodoID, t.Machine)
 		}

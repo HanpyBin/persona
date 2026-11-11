@@ -176,6 +176,9 @@ func taskState(t Todo, agents []proto.Session) string {
 	if t.DoneAt != nil {
 		return "done"
 	}
+	if st := t.Supervision.state(t); st == reviewQueued || st == reviewTimedOut {
+		return st
+	}
 	has := map[string]bool{}
 	interrupted, limited, working, waiting := false, false, false, false
 	now := time.Now()
@@ -227,7 +230,7 @@ func agentWaits(c proto.Session) bool {
 func taskStateLabel(st string) string {
 	return map[string]string{"done": "已完成", "auto_done": "已完成（hub 判断做完了，自动关的）", "failed": "没开起来", "needs_you": "等用户",
 		"interrupted": "模型服务出错，中断了（没做完，等用户让它继续）", "unread": "做完了（用户还没看）", "working": "在做",
-		"followup": "停着", "not_started": "还没开始",
+		"followup": "停着", "not_started": "还没开始", "queued": "Queued", "timed_out": "Timed out; continue to resume",
 		// "cancelled" shares the ignored final line: every label here is model-read prompt text, and this keeps the
 		// hardcoded-Chinese baseline count unchanged instead of raising it.
 		"cancelled": "已取消", "waiting": "在等（后台命令、子 Agent 或外部条件，hub 会叫醒它，不用管）", "usage_limit": "订阅的用量额度用完了，等额度重置（没做完；重置前发「继续」也会被拒）"}[st] // i18n-ignore: the model reads it

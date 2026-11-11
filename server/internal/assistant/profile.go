@@ -41,10 +41,19 @@ func (s *Service) assistantRel() string {
 // writes them itself; another hub sharing the database might too).
 const settingsFresh = 5 * time.Second
 
+// TaskConcurrency is the live admission limit. Lowering it lets existing work finish.
+type TaskConcurrency struct {
+	WorkersPerTask int `json:"workers_per_task"`
+	Leaders        int `json:"leaders"`
+}
+
+func (v TaskConcurrency) valid() bool { return v.WorkersPerTask > 0 && v.Leaders > 0 }
+
 // Settings are the assistant's settings, as saved.
 type Settings struct {
-	MachineID string `json:"machine_id"`
-	Launcher  string `json:"launcher"`
+	TaskConcurrency *TaskConcurrency `json:"task_concurrency,omitempty"`
+	MachineID       string           `json:"machine_id"`
+	Launcher        string           `json:"launcher"`
 	// DefaultPermissionMode applies only to new non-guest conversations without an explicit mode.
 	// Empty keeps the runtime's existing default; it never changes an existing conversation.
 	DefaultPermissionMode string `json:"default_permission_mode,omitempty"`
@@ -192,6 +201,9 @@ func (s *Service) settings(ctx context.Context) Settings {
 }
 
 func (s *Service) effective(ctx context.Context, v Settings) Settings {
+	if v.TaskConcurrency == nil || !v.TaskConcurrency.valid() {
+		v.TaskConcurrency = &TaskConcurrency{WorkersPerTask: 4, Leaders: 6}
+	}
 	def := s.hello(ctx).Assistant
 	if v.MachineID == "" || !slices.Contains(def.Machines, v.MachineID) {
 		v.MachineID = def.MachineID

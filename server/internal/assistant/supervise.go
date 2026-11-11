@@ -26,6 +26,8 @@ import (
 // A supervised todo is never closed by the hub's judge (done.go): a finished stretch of work waits for review instead.
 
 const (
+	reviewQueued    = "queued"
+	reviewTimedOut  = "timed_out"
 	reviewPending   = "pending_review"
 	reviewAccepted  = "accepted"
 	reviewRework    = "rework"
@@ -246,9 +248,17 @@ func (s *Service) superviseTodo(ctx context.Context, id, supervisor string, done
 // updateSupervision changes todo id's ledger (a new one when it has none) with change, which says whether it changed
 // anything; the ledger as it is then. Writes are one at a time.
 func (s *Service) updateSupervision(ctx context.Context, id string, change func(*Supervision) bool) (Supervision, bool, error) {
+	return s.updateSupervisionAt(ctx, id, time.Now().UTC(), change)
+}
+
+func (s *Service) updateSupervisionAt(ctx context.Context, id string, at time.Time, change func(*Supervision) bool) (Supervision, bool, error) {
 	b := &s.supervise
 	b.writeMu.Lock()
 	defer b.writeMu.Unlock()
+	return s.updateSupervisionLockedAt(ctx, id, at, change)
+}
+
+func (s *Service) updateSupervisionLockedAt(ctx context.Context, id string, at time.Time, change func(*Supervision) bool) (Supervision, bool, error) {
 	t, ok := s.todoNow(id)
 	if !ok {
 		return Supervision{}, false, db.ErrTodoNotFound
@@ -261,7 +271,7 @@ func (s *Service) updateSupervision(ctx context.Context, id string, change func(
 		return *v, false, nil
 	}
 	v.Criteria = db.AlignTodoCriteria(v.DoneWhen, v.Criteria)
-	v.UpdatedAt = time.Now().UTC()
+	v.UpdatedAt = at.UTC()
 	if st := s.supervisionDB(); st != nil && s.todoDB() != nil {
 		if err := st.PutTodoSupervision(ctx, v.row(id)); err != nil {
 			return Supervision{}, false, err
@@ -308,6 +318,10 @@ func taskHealth(t Todo, agents []proto.Session, now time.Time) (string, int) {
 		return "", 5
 	}
 	switch v.state(t) {
+	case reviewQueued:
+		return "Queued", 6
+	case reviewTimedOut:
+		return "Timed out; continue to resume", 6
 	case reviewNeedsUser:
 		return "等你决定", 0
 	case reviewPending:

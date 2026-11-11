@@ -18,6 +18,7 @@ const (
 	sigIdle        = "idle"        // its agents stopped, and the work is not finished
 	sigUnjudged    = "unjudged"    // its agents stopped, and the judge could not say whether the work is finished
 	sigNeedsYou    = "needs_you"   // an agent waits for an answer
+	sigTimedOut    = "timed_out"   // terminal agents closed after unattended lack of progress
 	sigStalled     = "stalled"     // working, but nothing moved for long
 	sigInterrupted = "interrupted" // the model service cut its turn off
 	sigFailed      = "failed"      // its agent did not start
@@ -283,6 +284,10 @@ func watchSignals(t Todo, agents []proto.Session, now time.Time) []superviseSign
 		return nil
 	}
 	switch v.state(t) {
+	case reviewQueued:
+		return nil
+	case reviewTimedOut:
+		return []superviseSignal{{Todo: t.ID, Kind: sigTimedOut, Key: reviewKey(v)}}
 	case reviewPending:
 		return []superviseSignal{{Todo: t.ID, Kind: sigReview, Key: reviewKey(v)}}
 	case reviewNeedsUser:
@@ -356,6 +361,10 @@ func (s *Service) superviseWatch(ctx context.Context, now time.Time) {
 			continue
 		}
 		s.remedyWatch(ctx, t, now) // a failed start's kept tab expired (start_remedy.go)
+		s.closeStalledTask(ctx, t, now)
+		if current, ok := s.todoNow(t.ID); ok {
+			t = current
+		}
 		for _, g := range watchSignals(t, s.taskAgents(ctx, t), now) {
 			if g.Kind == sigNeedsYou && routed[[2]string{g.Machine, g.Session}] {
 				continue // its card is with the supervisor as an ask already
@@ -370,6 +379,7 @@ func (s *Service) superviseWatch(ctx context.Context, now time.Time) {
 		}
 		s.briefClock(ctx, t, now) // past its brief's clock with no end (task_brief_scope.go)
 	}
+	s.drainTaskQueue(ctx)
 	b := &s.supervise
 	b.mu.Lock()
 	changed := false

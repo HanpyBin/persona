@@ -75,7 +75,7 @@ func (s *Service) recoverTaskStarts(ctx context.Context, before time.Time) error
 			continue
 		}
 		for i, pt := range p.Tasks {
-			if pt.TodoID == "" || pt.Error != "" || pt.Start != nil {
+			if pt.TodoID == "" || pt.Error != "" || pt.Start != nil || pt.QueuedAt != nil {
 				continue
 			}
 			failed, err := s.failTodoIf(ctx, pt.TodoID, reason, func(t Todo) bool {

@@ -30,6 +30,8 @@ func (s *Service) startPlan(ctx context.Context, id string, edits []PlanTask, re
 	if err := s.ensureTodosLoaded(ctx); err != nil {
 		return nil, err
 	}
+	s.tasks.admissionMu.Lock()
+	defer s.tasks.admissionMu.Unlock()
 	p, err := s.loadPlan(ctx, id)
 	if err != nil {
 		return nil, err
@@ -62,6 +64,12 @@ func (s *Service) startPlan(ctx context.Context, id string, edits []PlanTask, re
 		}
 		if err := s.resolveTaskWorkspace(ctx, &p.Tasks[i]); err != nil {
 			return nil, planInvalid{err}
+		}
+	}
+	for i := range p.Tasks {
+		if limitedTask(p.Tasks[i]) {
+			at := time.Now().UTC()
+			p.Tasks[i].QueuedAt = &at
 		}
 	}
 	p.State = planStarted
@@ -115,6 +123,11 @@ func (s *Service) startPlan(ctx context.Context, id string, edits []PlanTask, re
 			}
 			s.superviseTodo(ctx, todo.ID, sup, t.DoneWhen, t.ExpectMinutes)
 		}
+		if t.QueuedAt != nil {
+			if _, _, err := s.updateSupervision(ctx, todo.ID, func(v *Supervision) bool { v.State = reviewQueued; return true }); err != nil {
+				return nil, err
+			}
+		}
 		if t.Parent != "" { // a task leader's worker: supervised by its leader's agent, with no conversation to show a card in
 			s.superviseTodo(ctx, todo.ID, p.Conversation, t.DoneWhen, t.ExpectMinutes)
 			continue
@@ -126,21 +139,22 @@ func (s *Service) startPlan(ctx context.Context, id string, edits []PlanTask, re
 			s.logf("task %s: feed: %v", todo.ID, err)
 		}
 	}
-	if _, err := s.movePlan(ctx, p, planStarted); err != nil { // keep the todo ids
-		s.logf("plan %s: %v", p.ID, err)
+	if _, err := s.movePlan(ctx, p, planStarted); err != nil { // keep the todo ids before starting any agent
+		return nil, err
 	}
 	if remember {
 		s.trustKinds(ctx, p.Tasks)
 	}
 	s.event(ctx, map[string]any{"type": "task_plan", "plan": p})
 	for i := range p.Tasks {
-		if task := p.Tasks[i]; task.TodoID != "" {
+		if task := p.Tasks[i]; task.TodoID != "" && task.QueuedAt == nil {
 			s.startPlanTaskAsync(p.ID, p.Conversation, i, task, false, func() {
 				s.releaseTakenTodo(task.ReuseTodo) // linked or failed: the todo is no longer in the gap
 			})
 		}
 	}
-	return p, nil
+	s.drainTaskQueueLocked(ctx)
+	return s.loadPlan(ctx, p.ID)
 }
 
 // notReusable is the refusal of a todo_id: it says why, so the assistant can plan again without it.
@@ -265,6 +279,17 @@ func (s *Service) runPlanTaskStart(planID, conversation string, i int, t PlanTas
 	defer s.releaseTaskWorkspace(t.TodoID)
 	ctx, cancel := context.WithTimeout(context.Background(), taskStartTimeout)
 	defer cancel()
+	if t.Resume {
+		task, ok := s.todoNow(t.TodoID)
+		if !ok || task.DoneAt != nil {
+			return
+		}
+		if err := s.resumeTimedOutTask(ctx, task); err != nil {
+			s.logf("task %s: continue timed-out session: %v", task.ID, err)
+			_, _, _ = s.updateSupervision(ctx, task.ID, func(v *Supervision) bool { v.State = reviewTimedOut; return true })
+		}
+		return
+	}
 	placed, placedWhy := t.Machine, t.Why
 	if t.Role == roleLeader { // its tools are listed once it is linked: a list asked for meanwhile waits (task_leader.go)
 		s.leaderStarts.Add(1)
@@ -469,6 +494,12 @@ func (s *Service) retryTask(ctx context.Context, todoID string) (json.RawMessage
 		s.logf("plan %s: %v", p.ID, err)
 	}
 	s.logf("task %s: retrying its start on %s", todoID, m.ID)
+	if limitedTask(t) {
+		if err := s.queueRetry(ctx, p.ID, i, t); err != nil {
+			return nil, err
+		}
+		return s.todoView(ctx, todoID)
+	}
 	started = true
 	s.startPlanTaskAsync(p.ID, p.Conversation, i, t, true, func() {
 		s.tasks.mu.Lock()
@@ -489,6 +520,9 @@ var continueHold = 30 * time.Second
 // one is on its way, or before the agent took it up, answer the todo as it is, as does a task with no agent cut off.
 // The agent's machine offline is refused.
 func (s *Service) continueTask(ctx context.Context, cur Todo) (json.RawMessage, error) {
+	if cur.Supervision.state(cur) == reviewTimedOut {
+		return s.continueTimedOut(ctx, cur)
+	}
 	var cut proto.Session
 	for _, c := range s.taskAgents(ctx, cur) {
 		if c.TurnError != "" && (cut.SessionID == "" || c.UpdatedAt.After(cut.UpdatedAt)) {

@@ -271,32 +271,6 @@ func TestTaskLeaderTaskPlanCallEnforcement(t *testing.T) {
 	refused("a closed task's leader", call("s1", workerArgs(nil)))
 }
 
-// The room is bounded: a leader cannot keep more than leaderWorkersMost workers open. Workers count by the task they
-// belong to, so a leader started again (a new session) does not get a new allowance.
-func TestTaskLeaderWorkersAreBounded(t *testing.T) {
-	s, f := newQuietService(t)
-	ctx := context.Background()
-	leader := startTaskLeader(t, s, f)
-	for i := 0; i < leaderWorkersMost; i++ {
-		w, err := s.createTaskTodo(ctx, "worker", "", "box/s1", "", "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if i%2 == 0 { // ledger names this leader
-			s.superviseTodo(ctx, w.ID, "box/s1", nil, 0)
-		} else { // an older leader session, linked to the same leader task
-			s.superviseTodo(ctx, w.ID, "box/old", nil, 0)
-			if err := s.linkTodoAgentWithSource(ctx, w.ID, "box", "old-worker-"+w.ID, "worker", "/code/app", "", "", sourceWorker, leader.ID); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
-	res := s.mcpCall(ctx, "box", "s1", "task_plan", workerArgs(nil), false)
-	if !res.IsError || !strings.Contains(res.Content[0].Text, "at most 8 workers") {
-		t.Fatalf("a ninth open worker: %+v", res)
-	}
-}
-
 // An agent that asks for its tools with no session (a pane the node cannot name) gets none and does not wait for a
 // leader being started.
 func TestToolListWithNoSessionDoesNotWait(t *testing.T) {

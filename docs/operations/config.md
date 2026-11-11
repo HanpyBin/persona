@@ -400,6 +400,13 @@ A manager's own sections of the configuration are in its `manager.json`, not in 
   before the selection, so a document is deleted only once you set days for its rule or for it; with the defaults none is.
   The knowledge base belongs to the manager, which reads the whole section here (`ai` included: it is the default of its `kb.*` model purposes);
   an assistant run elsewhere (`assistant.external`) reads the `manager.json` on its own machine, and its `extra_dirs` are paths there (`docs/assistant/knowledge.md` ("Who owns what")).
+- Task admission limits live in the manager's assistant settings, not `hub.json` or `manager.json`.
+  Read `GET /api/v1/assistant` and update `PUT /api/v1/assistant` with
+  `{"task_concurrency":{"workers_per_task":4,"leaders":6}}` using the selected manager and a full-access token.
+  Both values must be positive integers. Read the response to confirm the saved values. The default is four workers
+  per leader task and six task leaders across the manager. Changes take effect on the next supervision pass within
+  30 seconds, without redeployment or restart. Existing agents are allowed to finish when a limit is lowered.
+  To undo a change, send the previous pair of values through the same endpoint.
 - `agents.triage`: triage after a round stops ([agent-work.md](../assistant/agent-work.md) ("Switches")). Switches are under **Settings › Session Triage** in the App (stored in the manager's settings, all off by default but `transient_retry`),
   and only limits live here: `max_retries` (maximum consecutive automatic continuations after transient errors, default 5), `retry_base_seconds` (the first continuation's backoff, doubled for each next one, default 15), `max_wakes` (maximum wakes, default 6), `settle_seconds` (delay after stopping before triage, default 15);
   `enabled` / `auto_continue` / `wake` / `decide` / `tool_loop` / `closeout` / `closeout_ask` / `transient_retry` are merely initial values if never saved in the App (omitted means off, but `transient_retry` on). Triage is done by the manager (assistant process), which reads this section here; for hand edits see **Edits** above.

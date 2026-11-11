@@ -80,7 +80,7 @@ func (s *Service) superviseJudged(ctx context.Context, t Todo, work time.Time, c
 		s.signal(superviseSignal{Todo: t.ID, Kind: sigReview, Key: reviewKey(&v), Detail: detail})
 		return
 	}
-	if st == reviewNeedsUser || st == reviewParked {
+	if st == reviewNeedsUser || st == reviewParked || st == reviewQueued || st == reviewTimedOut {
 		return // the supervisor knows it waits: for the user, or parked until its time (parked.go)
 	}
 	if v := t.Supervision; t.DoneAt == nil && (v.State == reviewAccepted || v.State == reviewCancelled) {

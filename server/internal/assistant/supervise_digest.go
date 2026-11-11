@@ -334,6 +334,10 @@ func (s *Service) digestEntry(ctx context.Context, g superviseSignal, web string
 	v := t.Supervision
 	st := v.state(t)
 	switch g.Kind {
+	case sigTimedOut:
+		if st != reviewTimedOut {
+			return prompts.SuperviseEntry{}, false
+		}
 	case sigReview:
 		if st != reviewPending {
 			return prompts.SuperviseEntry{}, false
@@ -357,8 +361,8 @@ func (s *Service) digestEntry(ctx context.Context, g superviseSignal, web string
 			return prompts.SuperviseEntry{}, false // re-scoped, with the owner, or parked meanwhile
 		}
 	case sigIdle, sigUnjudged, sigStalled:
-		if st == reviewParked {
-			return prompts.SuperviseEntry{}, false // parked meanwhile: it waits on purpose (parked.go)
+		if st == reviewParked || st == reviewTimedOut || st == reviewQueued {
+			return prompts.SuperviseEntry{}, false // parked or held meanwhile: it waits on purpose (parked.go)
 		}
 	case sigParkedDue:
 		if r := v.parking(); st != reviewParked || r == nil || parkKey(r) != g.Key {
@@ -484,7 +488,7 @@ func (s *Service) digestEntry(ctx context.Context, g superviseSignal, web string
 
 // sortEntries puts what waits on a decision first.
 func sortEntries(list []prompts.SuperviseEntry) []prompts.SuperviseEntry {
-	rank := map[string]int{sigNeedsYou: 0, sigAsk: 0, sigEscalated: 0, sigDecide: 0, sigOwnerCannot: 0, sigUndecidable: 1, sigRecheck: 1, sigParkedDue: 2, sigIdle: 2, sigUnjudged: 2, sigFailed: 3, sigStarted: 3, sigInterrupted: 4, sigOrphaned: 4, sigReview: 5, sigStalled: 6, sigLeaderStuck: 6, sigOverdue: 6, sigInbox: 6, sigReport: 7}
+	rank := map[string]int{sigNeedsYou: 0, sigAsk: 0, sigEscalated: 0, sigDecide: 0, sigOwnerCannot: 0, sigUndecidable: 1, sigRecheck: 1, sigParkedDue: 2, sigIdle: 2, sigUnjudged: 2, sigFailed: 3, sigStarted: 3, sigInterrupted: 4, sigOrphaned: 4, sigTimedOut: 4, sigReview: 5, sigStalled: 6, sigLeaderStuck: 6, sigOverdue: 6, sigInbox: 6, sigReport: 7}
 	at := func(e prompts.SuperviseEntry) int {
 		switch {
 		case e.Kind != sigReport:

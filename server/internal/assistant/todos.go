@@ -684,8 +684,9 @@ func (s *Service) completedTodo(ctx context.Context, mid, sid string) (bool, err
 	}
 	s.todos.mu.RLock()
 	defer s.todos.mu.RUnlock()
-	if _, open := s.todos.activeBySession[[2]string{mid, sid}]; open {
-		return false, nil
+	if id, open := s.todos.activeBySession[[2]string{mid, sid}]; open {
+		t := s.todos.todos[id]
+		return t != nil && (t.Supervision.state(*t) == reviewTimedOut || t.Supervision.state(*t) == reviewQueued), nil
 	}
 	for _, t := range s.todos.todos {
 		if t.DoneAt == nil {

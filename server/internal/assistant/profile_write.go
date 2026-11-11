@@ -47,6 +47,10 @@ func (s *Service) putSettings(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, http.StatusBadRequest, errors.New("task_workspace_preference must be prefer-existing or prefer-new"))
 		return
 	}
+	if in.TaskConcurrency != nil && !in.TaskConcurrency.valid() {
+		apierr.Write(w, http.StatusBadRequest, errors.New("task_concurrency limits must be positive"))
+		return
+	}
 	before := s.settings(ctx)
 	machine := before.MachineID
 	if in.MachineID != "" {
@@ -156,6 +160,10 @@ func (s *Service) putSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if in.StartRequestedTasks != nil {
 			v.StartRequestedTasks = in.StartRequestedTasks
+		}
+		if in.TaskConcurrency != nil {
+			limits := *in.TaskConcurrency
+			v.TaskConcurrency = &limits
 		}
 		if in.TaskWorkspacePreference != "" {
 			v.TaskWorkspacePreference = in.TaskWorkspacePreference

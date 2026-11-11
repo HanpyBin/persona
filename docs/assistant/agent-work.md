@@ -189,6 +189,39 @@ to resume follow-ups while keeping the completed link, reopen the to-do or link 
 `docs/assistant/todos.md`, "Close Agents for completed tasks"). If the to-do state cannot be read, triage and wakes retry
 later without sending.
 
+### Task concurrency and queueing
+
+The manager admits task leaders and their workers through a persistent FIFO queue. The live assistant setting
+`task_concurrency` defaults to `{"workers_per_task":4,"leaders":6}`. Each leader task has its own worker pool;
+the leader limit applies across the manager's tasks, including different supervising conversations and computers.
+The eight-task limit on a single `task_plan` call remains a batch limit.
+
+A queued task already has a to-do, with `supervision.state: "queued"`, but no Agent is started. Its saved plan task
+has `queued_at`, the FIFO ticket. `task_plan` identifies queued tasks in its response. Task cards and the task snapshot
+expose the state; clients may use the supervision field without a new session or placeholder Agent.
+Acceptance, cancellation, a confirmed terminal-session retirement, and start failure release capacity. The supervision
+pass admits waiting tasks within 30 seconds, in FIFO order within each pool. A full pool does not block unrelated
+pools. Starting agents reserve slots before their asynchronous start; an unavailable session keeps its slot until its
+state can be confirmed. Lowering a limit lets existing work finish. Increasing it admits more queued work on the next pass.
+Queued tickets survive manager restarts and are excluded from interrupted-start recovery. Retries use the same limits.
+
+### Stalled tasks close without automatic continuation
+
+The existing stalled reminder still starts after `max(20 minutes, expect_minutes × 1.5)` without session progress.
+If the task remains unattended until `max(60 minutes, expect_minutes × 3)`, the manager closes its Agent and records
+`supervision.state: "timed_out"`. Session activity, a progress report, or an updated supervision ledger resets this
+clock. Tasks waiting for review, the user, or a parked prerequisite are excluded.
+
+Closure applies only to Persona-started herdr sessions. Paseo, other runtimes, unknown hosts, and assistant conversations
+receive the existing reminders and are never stopped by this mechanism. A close error leaves the task open for retry
+and does not claim a successful timeout. The to-do remains open, retains its Agent links and transcript, and sends its
+supervisor one timeout notice per closure. Automatic triage continuations, wakeups, completion judgments, and orphan
+reminders stay held until continuation.
+
+Use the task's **Continue** action to resume the original session. A limited task re-enters the FIFO queue before
+continuing; it does not start another Agent. The node resumes from its retained launch state and directory. No archive
+or workspace deletion is requested.
+
 ### Transient errors: automatic continuation
 
 - On by default and independent of the main switch (`transient_retry`, #3208): it is a rule, with no triage model call. With the main switch off, only

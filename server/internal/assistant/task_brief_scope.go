@@ -244,7 +244,7 @@ func (s *Service) briefClock(ctx context.Context, t Todo, now time.Time) {
 	if v == nil || t.DoneAt != nil {
 		return
 	}
-	if st := v.state(t); st == reviewNeedsUser || st == reviewPending || st == reviewParked {
+	if st := v.state(t); st == reviewNeedsUser || st == reviewPending || st == reviewParked || st == reviewTimedOut || st == reviewQueued {
 		return
 	}
 	brief, ok := s.briefOfTodo(t.ID)

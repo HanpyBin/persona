@@ -467,6 +467,7 @@ func TestGoldenSupervise(t *testing.T) {
 			Last: "API Error: 400 prompt is too long", DoneWhen: []string{"CI 通过"}},
 		{ID: "todo_11", Title: "清理旧分支", Kind: sigOrphaned, Orphan: orphanClosed, Machine: "box", Session: "d4e5f6a7", Last: "删了 12 个，还剩 3 个要确认"},
 		{ID: "todo_12", Title: "跑回归", Kind: sigOrphaned, Orphan: orphanOffline, Machine: "laptop"},
+		{ID: "todo_13", Title: "Update dependencies", Kind: sigTimedOut, Machine: "box", Session: "stalled"},
 	})}))
 	golden(t, "supervise.rework", prompts.RenderSuperviseRework(prompts.SuperviseRework{Round: 1, Max: 2, Note: "补深色截图",
 		Checks: []prompts.SuperviseCheck{{Criterion: "PR 合并到 master", Met: true, Evidence: "pull/901 merged"}, {Criterion: "浅色 / 深色截图贴进 PR", Evidence: "只有浅色"}}}))

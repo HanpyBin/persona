@@ -40,8 +40,6 @@ const (
 	// permBypass is the only permission a task that changes files may be planned with: it starts at once, with nobody
 	// there to answer a permission prompt.
 	permBypass = "bypassPermissions"
-	// leaderWorkersMost bounds the workers of one leader that are open at a time.
-	leaderWorkersMost = 8
 )
 
 // leaderListWait bounds how long a tool list asked for by an agent that is no task's yet waits for a task leader being
@@ -297,34 +295,6 @@ func (l *leaderScope) workerTasks(args json.RawMessage) ([]PlanTask, error) {
 		out = append(out, pt)
 	}
 	return out, nil
-}
-
-// checkLeaderRoom refuses a plan that would leave the leader's task with more than leaderWorkersMost open workers. The
-// workers are counted by the task they belong to (the supervisor ref or a worker row via the leader's task), so a leader
-// started again does not get a new allowance.
-func (s *Service) checkLeaderRoom(ctx context.Context, scope *leaderScope, adding int) error {
-	ref := leaderRef(scope.agent.MachineID, scope.agent.SessionID)
-	_ = s.ensureTodosLoaded(ctx)
-	open := 0
-	s.todos.mu.RLock()
-	for _, t := range s.todos.todos {
-		if t.DoneAt != nil || t.Supervision == nil && !slices.ContainsFunc(t.Agents, func(a TodoAgent) bool { return a.Source == sourceWorker }) {
-			continue
-		}
-		belongs := t.Supervision != nil && t.Supervision.Supervisor == ref
-		for _, a := range t.Agents {
-			belongs = belongs || a.Source == sourceWorker && a.Via == scope.task.ID && a.active()
-		}
-		if belongs {
-			open++
-		}
-	}
-	s.todos.mu.RUnlock()
-	if open+adding > leaderWorkersMost {
-		return fmt.Errorf("at most %d workers of your task are open at a time (%d now): wait for some to finish; nothing was planned",
-			leaderWorkersMost, open)
-	}
-	return nil
 }
 
 // ---- supervision messages ----

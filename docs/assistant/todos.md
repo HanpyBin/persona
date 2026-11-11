@@ -263,6 +263,14 @@ Under herdr, to-do associations map to pane markers (shown in the sidebar):
 - **Source/namespace protection**: all writes/cleanup use `--source persona`. Reconciliation only touches `persona_todo`, `persona_todo_ref` and `persona_from`, never user or other plugin metadata.
 - **Periodic reconciliation**: assistant sends expected markers by session ID (node RPC `todo.sync_session_tokens`, via `device.call`): immediately for computers whose associations changed, no resend otherwise; on a new node/hub connection (`connected` in `sessions.changed` changes: node may have restarted, do not touch markers until received), resend all with the first session list on that connection, like hub's former immediate resend after node reconnect. node resolves live panes dynamically only from currently living sessions and host-reported current Agent sessions, compares herdr's markers with expectations, fills missing and removes surplus markers. If two sessions map to one pane, only the live one counts. node reconciles every 30 seconds; after herdr restart, pane-ID change or hot handoff, markers restore on the correct new pane without old exited sessions contaminating it.
 
+## Queued and timed-out tasks
+
+`supervision.state` also exposes `queued` for tasks waiting for a concurrency slot and `timed_out` for unattended
+stalled terminal tasks whose Agents were closed. Both keep the to-do open. A queued task has no new Agent until admitted;
+a timed-out task retains its Agent links for **Continue** in the original session. Saved plan tasks carry `queued_at`
+for FIFO order and `resume` for a queued continuation. These are manager-owned fields, ignored in tool-call input.
+See [agent-work.md](agent-work.md), "Task concurrency and queueing" and "Stalled tasks close without automatic continuation".
+
 ## State calculation rules
 
 Clients calculate to-do runtime state live from linked active Agents; it is not persisted. Use the first matching state in this priority order:
