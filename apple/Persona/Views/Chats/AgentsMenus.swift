@@ -386,6 +386,25 @@ struct AgentsGroupingMenu: View {
     }
 }
 
+/// The one sidebar's grouping (#4206): the web's segments under the Agents heading (`GroupingBar`), one tap each, where a
+/// phone has the pill (`AgentsGroupingMenu`). No segment is lit for By App or Recently Used, which the ⋯ menu still offers.
+struct AgentsGroupingSegments: View {
+    @StoredValue("dev.grouping") private var grouping: DevGrouping = .standard
+
+    var body: some View {
+        let todos = TodoStore.shared.isSupported
+        let shown = DevGrouping.resolved(grouping, supportsTodos: todos)
+        let segments = DevGrouping.segments(supportsTodos: todos)
+        SegmentedChoice(String(localized: "Group By [Agents Menus 399ee6]"), segments.map { (value: DevGrouping?.some($0), label: $0.segment) },
+                        selection: Binding(get: { segments.contains(shown) ? shown : nil }, set: { g in
+                            guard let g, g != shown else { return }
+                            Haptics.tap()
+                            withAnimation(Theme.Motion.layout) { grouping = g }
+                        }))
+            .accessibilityIdentifier("agents.grouping.segments")
+    }
+}
+
 /// The personal agents page, one tap away beside the grouping (#140): on a phone the shell has no other way there (the
 /// iPad and Mac use the toolbar's button).
 struct AgentsPersonalPill: View {

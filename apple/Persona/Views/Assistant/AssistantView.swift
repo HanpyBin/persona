@@ -39,8 +39,6 @@ struct AssistantView: View {
     @State private var columns = SplitColumns.shown
     /// iPhone Duo's bars down the side: the top bar is the side rail, and the page's top is free.
     @Environment(\.shellRailEdge) private var railEdge
-    /// A phone's tabs (iPhone Duo open): the column's own button folds it, at its top (#2623).
-    @Environment(\.pageTabSwitch) private var pageTabSwitch
     #if os(iOS)
     /// The detail column beside the one sidebar (#4206): only the page; the sidebar is the Agents page's column.
     @Environment(\.oneSidebar) private var oneSidebar
@@ -49,12 +47,12 @@ struct AssistantView: View {
     #else
     private let oneSidebar = false
     #endif
-    /// The iPhone's new conversation (`ShellHome`): the shell, a phone's tabs, and the open iPhone Duo's one sidebar.
+    /// The iPhone's new conversation (`ShellHome`): the shell, and the open iPhone Duo's one sidebar (#3680).
     private var phoneHome: Bool {
         #if os(iOS)
-        shell != nil || pageTabSwitch || (oneSidebar && UIDevice.current.userInterfaceIdiom == .phone)
+        shell != nil || (oneSidebar && UIDevice.current.userInterfaceIdiom == .phone)
         #else
-        shell != nil || pageTabSwitch
+        shell != nil
         #endif
     }
     /// The sidebar is out beside the page: its own column, or the one sidebar's.
@@ -154,8 +152,7 @@ struct AssistantView: View {
                                 onMachines: places ? { show(.machines) } : nil,
                                 onOpenExtension: places ? { show(.extensionPage($0)) } : { r in drawer.close(); openedExtension = r },
                                 openHealth: { drawer.close(); enterHealth() },
-                                startMeeting: Self.startMeeting(places ? { show(.recordings) } : { drawer.close(); showRecordings = true }),
-                                collapse: column && pageTabSwitch ? { toggleSidebar() } : nil)
+                                startMeeting: Self.startMeeting(places ? { show(.recordings) } : { drawer.close(); showRecordings = true }))
     }
 
     /// The sidebar's Meeting Recording: records the meeting (opening Recordings), or `open`s the recording running already.
@@ -186,6 +183,22 @@ struct AssistantView: View {
         }
     }
 
+    /// A request not shown yet, marked shown. The iPad's router keeps the count (`PadRouter.handled`): beside the one
+    /// sidebar this page is built again each time an agent closes (#4206), and a count of its own started over and showed
+    /// the last request again (the Inbox came back over Main Chat).
+    private func take(_ serial: Int) -> Bool {
+        #if os(iOS)
+        if shell == nil, let padRouter {
+            guard serial > padRouter.handled else { return false }
+            padRouter.handled = serial
+            return true
+        }
+        #endif
+        guard serial > handledRequest else { return false }
+        handledRequest = serial
+        return true
+    }
+
     /// Nothing pushed on the page: the sidebar's drag only works here (pushed pages have their own back swipe).
     private var atRoot: Bool {
         var pushed = showProfile || showKnowledge || showRoutines || showTodos || openedExtension != nil || showHealth || showRecordings
@@ -212,8 +225,8 @@ struct AssistantView: View {
                         // The iPad draws the shell's composer too (`ChatComposerKind.padCard`): the assistant's, as on the iPhone.
                         .environment(\.shellChat, shell != nil || ChatComposerKind.padCard)
                 } else if phoneHome {
-                    // A phone's tabs too (iPhone Duo open, #3680): the iPhone's new conversation, with what needs the user
-                    // over the composer. The iPad keeps `AssistantHome`.
+                    // The open iPhone Duo too (#3680): the iPhone's new conversation, with what needs the user over the
+                    // composer. The iPad keeps `AssistantHome`.
                     ShellHome(pending: shownStart, error: shownFailure?.reason, launcher: $starterLauncher, mode: $starterMode,
                               effort: $starterEffort, openInbox: { path.append($0) }, resend: resend, delete: deleteFailed) { text, images in
                         Task { await start(text, images) }
@@ -284,8 +297,7 @@ struct AssistantView: View {
             // On appear too (a cold launch onto Inbox asks before this page exists), but each request once: the root
             // appears again after every pop, and replaying the last request pushed the inbox right back.
             .onChange(of: request?.serial, initial: true) { _, serial in
-                guard let serial, serial > handledRequest else { return }
-                handledRequest = serial
+                guard let serial, take(serial) else { return }
                 show(request?.page)
             }
             .onChange(of: atRoot, initial: true) { _, root in shell?.chatAtRoot = root }

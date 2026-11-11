@@ -152,8 +152,13 @@ struct ChatView: View {
     /// In the detail column of a split (iPhone Duo open): the list is beside the chat, the tab bar stays.
     @Environment(\.splitDetail) private var split
     @Environment(\.splitShowList) private var showList
-    /// A phone's tabs (iPhone Duo open, #2623): on its side the system's Show Sidebar brings a folded list back (#3680).
-    @Environment(\.pageTabSwitch) private var pageTabSwitch
+    #if os(iOS)
+    /// Beside the one sidebar (#4206): on an open iPhone Duo on its side the system's Show Sidebar brings a folded list back
+    /// (#3680).
+    @Environment(\.oneSidebar) private var oneSidebar
+    #else
+    private let oneSidebar = false
+    #endif
     /// The Persona conversation in the shell (docs/apple/ios.md「New shell」).
     @Environment(\.shellChat) private var shellChat
     @Environment(\.shell) private var shell
@@ -3352,8 +3357,8 @@ struct ChatView: View {
     private var backShowsList: Bool {
         host == nil && split?.isFirstPage == true && split?.listHidden == true && !systemShowsList && pane == .chat
     }
-    /// The system's Show Sidebar is on screen beside a folded list: the side bars' column on a phone's tabs.
-    private var systemShowsList: Bool { pageTabSwitch && sideBars }
+    /// The system's Show Sidebar is on screen beside a folded list: the side bars' column of the open Duo's one sidebar.
+    private var systemShowsList: Bool { oneSidebar && sideBars }
 
     /// The header's leading button: back to the chat from files / Git; on the chat ‹, or a hosting page's ✕ / ‹.
     private var backSymbol: String { pane == .git || pane == .files ? Theme.Icon.back : host?.leaveSymbol ?? Theme.Icon.back }

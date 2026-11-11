@@ -1,14 +1,14 @@
 import XCTest
 
-/// iPhone Duo open, the inner screen, laid out as ChatGPT's (#2623):
-/// - the Assistant | Agents switch at the top of the page, with no tab bar down the side;
-/// - the button that folds the sidebar at the sidebar's top;
-/// - Search at its foot, beside Persona's name and where it runs;
-/// - the face's menu (Knowledge, Details, the copies; whose Persona, with several hubs) on the main conversation's long press;
-/// - the switch over an agent opened on Agents too, and the iPhone's new conversation with Needs You (#3680).
+/// iPhone Duo open, the inner screen, laid out as ChatGPT's (#2623), in the one sidebar (#4206, `OneSidebarTests` for the
+/// column itself):
+/// - no tab bar down the side, and the face back at the top of Persona's page (the switch that had its place is gone);
+/// - the face's menu (Knowledge, Details, the copies) at the top, the main conversation's own on its row's long press;
+/// - search over the whole window, its field at the foot (#3705);
+/// - the iPhone's new conversation with Needs You (#3680), and Settings over the window (#3701).
 ///
 /// A phone at regular width only: the Duo simulator opened in Xcode's Device Hub, on its side
-/// (TEST_RUNNER_PERSONA_ORIENTATION=landscape) or upright. The iPad keeps its tab bar (IPadSidebarTests).
+/// (TEST_RUNNER_PERSONA_ORIENTATION=landscape) or upright. The iPad has the same column (IPadSidebarTests).
 /// Taps and long presses only (upright, synthetic drags miss on the open Duo). Against scripts/mock/mock_hub.py
 /// (PERSONA_MOCK_HUB).
 /// TEST_RUNNER_PERSONA_HOLD=<seconds> holds each state, named in an activity `duo-shot <name>`, for
@@ -18,7 +18,7 @@ final class DuoOpenChromeTests: XCTestCase {
 
     override func setUpWithError() throws {
         continueAfterFailure = false
-        guard UIDevice.current.userInterfaceIdiom == .phone else { throw XCTSkip("a phone's tabs only (iPhone Duo open)") }
+        guard UIDevice.current.userInterfaceIdiom == .phone else { throw XCTSkip("a phone at regular width only (iPhone Duo open)") }
         guard let hub = ProcessInfo.processInfo.environment["PERSONA_MOCK_HUB"] else {
             throw XCTSkip("needs scripts/mock/mock_hub.py (PERSONA_MOCK_HUB)")
         }
@@ -43,41 +43,35 @@ final class DuoOpenChromeTests: XCTestCase {
         }
     }
 
-    /// The switch at the top of the page and no tab bar; the fold at the sidebar's top, Search at its foot. Folding the
-    /// sidebar and bringing it back from the page; Search opening over the window (`testSearchCoversTheWindow…`).
-    @MainActor func testTheSwitchIsOnTopAndSearchAtTheFoot() {
-        let assistant = element("shell-assistant"), agents = element("shell-agents")
-        XCTAssertTrue(assistant.waitForExistence(timeout: 20), "no switch on the page:\n\(app.debugDescription)")
-        XCTAssertTrue(agents.exists, "no Agents in the switch")
+    /// No tab bar and no switch: the face at the top of Persona's page, the fold in the column's header over the places.
+    /// Folding the column and bringing it back from the page.
+    @MainActor func testTheFaceIsOnTopAndNoSwitch() {
+        let main = element("sidebar-main"), face = element("assistant-menu"), collapse = element("assistant-sidebar-collapse")
+        XCTAssertTrue(main.waitForExistence(timeout: 20), "no main row:\n\(app.debugDescription)")
         XCTAssertEqual(app.tabBars.count, 0, "the system's tab bar is still there:\n\(app.debugDescription)")
+        XCTAssertFalse(element("shell-assistant").exists || element("page-tab-switch").exists, "the Assistant | Agents switch is still there")
+        XCTAssertTrue(face.exists, "no face at the top of the page:\n\(app.debugDescription)")
         let window = app.windows.firstMatch.frame
-        XCTAssertLessThan(assistant.frame.minY, window.minY + 100, "the switch is not at the top")
-        let collapse = element("assistant-sidebar-collapse"), search = element("assistant-sidebar-search"), main = element("sidebar-main")
-        XCTAssertTrue(collapse.exists && search.exists && main.exists, "no fold, Search or main row:\n\(app.debugDescription)")
-        XCTAssertLessThan(collapse.frame.maxY, main.frame.minY, "the fold is not at the sidebar's top")
-        XCTAssertLessThan(collapse.frame.maxX, assistant.frame.minX, "the fold is not in the sidebar, left of the switch")
-        XCTAssertGreaterThan(search.frame.minY, window.maxY - 160, "Search is not at the sidebar's foot")
+        XCTAssertLessThan(face.frame.minY, window.minY + 100, "the face is not at the top")
+        XCTAssertGreaterThan(face.frame.minX, main.frame.maxX - 1, "the face is not on the page beside the column")
+        XCTAssertLessThan(collapse.frame.maxY, main.frame.minY + 1, "the fold is not at the column's top")
         let back = element("assistant-sidebar-button")
-        XCTAssertFalse(back.exists && back.isHittable, "the page's Chat History shows beside the sidebar")
+        XCTAssertFalse(back.exists && back.isHittable, "the page's Chat History shows beside the column")
         shot("chrome")
 
         collapse.tap()
-        XCTAssertTrue(collapse.waitForNonExistence(timeout: 5), "the sidebar did not fold")
-        XCTAssertTrue(back.waitForExistence(timeout: 5) && back.isHittable, "nothing on the page brings the sidebar back")
-        XCTAssertTrue(assistant.exists, "the switch went with the sidebar")
+        XCTAssertTrue(collapse.waitForNonExistence(timeout: 5), "the column did not fold")
+        XCTAssertTrue(back.waitForExistence(timeout: 5) && back.isHittable, "nothing on the page brings the column back")
         shot("folded")
         back.tap()
-        XCTAssertTrue(collapse.waitForExistence(timeout: 5), "the sidebar did not come back")
-
-        search.tap()
-        XCTAssertTrue(element("full-search-field").waitForExistence(timeout: 5), "Search opened no field:\n\(app.debugDescription)")
+        XCTAssertTrue(collapse.waitForExistence(timeout: 5), "the column did not come back")
     }
 
     /// Search covers the window, as ChatGPT's (#3705): its field at the foot over the keyboard with × beside it, the
     /// conversations above; what is typed narrows them, a row opens its conversation, × closes.
     @MainActor func testSearchCoversTheWindowWithItsFieldAtTheFoot() {
-        let search = element("assistant-sidebar-search")
-        XCTAssertTrue(search.waitForExistence(timeout: 20), "no Search at the sidebar's foot:\n\(app.debugDescription)")
+        let search = element("sidebar-search")
+        XCTAssertTrue(search.waitForExistence(timeout: 20), "no Search at the column's foot:\n\(app.debugDescription)")
         search.tap()
         let field = element("full-search-field"), close = app.buttons["full-search-close"].firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: 5), "Search opened no field:\n\(app.debugDescription)")
@@ -106,16 +100,24 @@ final class DuoOpenChromeTests: XCTestCase {
         XCTAssertTrue(field.waitForNonExistence(timeout: 5), "× did not close the search")
     }
 
-    /// The main conversation's long press holds the face's menu: Knowledge, Details and the copies.
-    @MainActor func testTheMainRowHoldsTheFacesMenu() {
+    /// The main conversation's long press holds its own menu (the copies), as in the drawer; the face at the top keeps
+    /// Details and the copies of where it runs.
+    @MainActor func testTheMainRowAndTheFaceHoldTheirMenus() {
         let main = element("sidebar-main")
         XCTAssertTrue(main.waitForExistence(timeout: 20), "no main row:\n\(app.debugDescription)")
         main.press(forDuration: 1.2)
-        // Not Knowledge: the column has a row of that name too.
-        for label in ["详细信息", "拷贝目录", "拷贝信息"] {
+        for label in ["拷贝会话 ID", "拷贝诊断"] {
             XCTAssertTrue(app.buttons[label].firstMatch.waitForExistence(timeout: 5), "no \(label) in the main row's menu:\n\(app.debugDescription)")
         }
         shot("main-menu")
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.5)).tap() // the menu away
+        let face = element("assistant-menu")
+        XCTAssertTrue(face.waitForExistence(timeout: 5) && face.isHittable, "no face at the top:\n\(app.debugDescription)")
+        face.tap()
+        for label in ["详细信息", "拷贝目录", "拷贝信息"] {
+            XCTAssertTrue(app.buttons[label].firstMatch.waitForExistence(timeout: 5), "no \(label) in the face's menu:\n\(app.debugDescription)")
+        }
+        shot("face-menu")
     }
 
     /// A new conversation is the iPhone's (#3680): what needs the user over the composer (Agents waiting, the Inbox's
@@ -133,7 +135,7 @@ final class DuoOpenChromeTests: XCTestCase {
     /// across, its × at the top right, which closes it.
     @MainActor func testSettingsCoversTheWindowAndCloses() {
         let settings = element("sidebar-settings")
-        XCTAssertTrue(settings.waitForExistence(timeout: 20), "no Settings at the sidebar's foot:\n\(app.debugDescription)")
+        XCTAssertTrue(settings.waitForExistence(timeout: 20), "no Settings at the column's foot:\n\(app.debugDescription)")
         settings.tap()
         let close = app.buttons["settings-close"].firstMatch
         XCTAssertTrue(close.waitForExistence(timeout: 10), "Settings has no ×:\n\(app.debugDescription)")
@@ -147,39 +149,5 @@ final class DuoOpenChromeTests: XCTestCase {
         close.tap()
         XCTAssertTrue(close.waitForNonExistence(timeout: 5), "the × did not close Settings")
         XCTAssertTrue(settings.waitForExistence(timeout: 5) && settings.isHittable, "the page did not come back")
-    }
-
-    /// The switch takes the page to Agents, whose page column has it too, and back.
-    @MainActor func testTheSwitchGoesToAgentsAndBack() {
-        let agents = element("shell-agents")
-        XCTAssertTrue(agents.waitForExistence(timeout: 20), "no switch on the page:\n\(app.debugDescription)")
-        agents.tap()
-        let row = element("page-tab-switch")
-        XCTAssertTrue(row.waitForExistence(timeout: 10), "no switch over Agents' page:\n\(app.debugDescription)")
-        XCTAssertEqual(app.tabBars.count, 0, "the tab bar came back on Agents")
-        shot("agents")
-        let assistant = row.descendants(matching: .any)["shell-assistant"].firstMatch
-        XCTAssertTrue(assistant.exists, "no Assistant in Agents' switch")
-        assistant.tap()
-        XCTAssertTrue(element("sidebar-main").waitForExistence(timeout: 10), "the switch did not go back to Assistant")
-    }
-
-    /// An agent opened on Agents keeps the switch over it, and the switch goes back to Assistant (#3680: the row was an
-    /// inset of the column's stack, which reached only the empty page; an opened chat had no way back to Assistant).
-    @MainActor func testTheSwitchStaysOverAnOpenedAgent() {
-        app.terminate()
-        app.launchArguments += ["-openSession", "macbook/a1f3c2d4-0000-4000-8000-000000000002"]
-        app.launchPinned()
-        let title = element("chat.title")
-        XCTAssertTrue(title.waitForExistence(timeout: 20), "the agent did not open:\n\(app.debugDescription)")
-        let row = element("page-tab-switch")
-        XCTAssertTrue(row.waitForExistence(timeout: 5) && row.isHittable, "no switch over the opened agent:\n\(app.debugDescription)")
-        XCTAssertLessThan(row.frame.minY, title.frame.minY, "the switch is not over the chat")
-        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "page-tab-switch").count, 1, "the switch twice over the chat")
-        shot("agent-open")
-        let assistant = row.descendants(matching: .any)["shell-assistant"].firstMatch
-        XCTAssertTrue(assistant.exists, "no Assistant in the switch over the agent")
-        assistant.tap()
-        XCTAssertTrue(element("sidebar-main").waitForExistence(timeout: 10), "the switch did not go back to Assistant")
     }
 }

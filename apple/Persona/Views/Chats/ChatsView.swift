@@ -99,6 +99,24 @@ extension DevGrouping {
     static func resolved(_ stored: DevGrouping, supportsTodos: Bool) -> DevGrouping {
         stored == .todo && !supportsTodos ? .space : stored
     }
+
+    /// The one sidebar's segments (`AgentsGroupingSegments`, #4206), in the web's order (`AGENT_GROUPINGS`): To-do first.
+    /// By App and Recently Used stay in the ⋯ menu.
+    static func segments(supportsTodos: Bool) -> [DevGrouping] {
+        [.todo, .machine, .repo, .space, .state].filter { supportsTodos || $0 != .todo }
+    }
+
+    /// A segment's word: short, for five to fit the sidebar across (the web's `seg_*`); the title is its spoken name.
+    var segment: String {
+        switch self {
+        case .todo: String(localized: "agents.grouping.segment.todo", defaultValue: "To-do", comment: "A segment of the one sidebar's Agents grouping control: short, five fit across the sidebar")
+        case .machine: String(localized: "agents.grouping.segment.machine", defaultValue: "Machine", comment: "A segment of the one sidebar's Agents grouping control: short, five fit across the sidebar")
+        case .repo: String(localized: "agents.grouping.segment.repo", defaultValue: "Repo", comment: "A segment of the one sidebar's Agents grouping control: short, five fit across the sidebar")
+        case .space: String(localized: "agents.grouping.segment.project", defaultValue: "Project", comment: "A segment of the one sidebar's Agents grouping control: short, five fit across the sidebar")
+        case .state: String(localized: "agents.grouping.segment.status", defaultValue: "Status", comment: "A segment of the one sidebar's Agents grouping control: short, five fit across the sidebar")
+        case .app, .recent: title
+        }
+    }
 }
 
 /// How Develop groups its agents (the menu at the top left; remembered).
@@ -207,8 +225,6 @@ struct ChatsView: View {
     @Environment(AppModel.self) private var model
     /// The shell (docs/apple/ios.md「New shell」): its ☰ and Assistant | Agents switch take the navigation bar.
     @Environment(\.shell) private var shell
-    /// A phone's tabs (iPhone Duo open): the switch over the page column, as on Assistant (#2623).
-    @Environment(\.pageTabSwitch) private var pageTabSwitch
     /// iPad and the open iPhone Duo (#4206): this page is the whole window, Persona's places and chats atop its list and
     /// Persona's page beside it while no agent is open.
     @Environment(\.oneSidebar) private var oneSidebar
@@ -301,8 +317,8 @@ struct ChatsView: View {
         // Closing the search before a push from its results redraws the navigation with it, as when the list was
         // drawn here: drawn by the list alone, the chat came up under the system navigation bar again (SearchOpenTests).
         let _ = searching
-        SplitNavigation(path: pushing, listKey: "agents.list", destinations: AgentsDestinations(), pageSwitch: pageTabSwitch,
-                        home: oneSidebar ? AnyView(AssistantView()) : nil) {
+        SplitNavigation(path: pushing, listKey: "agents.list", destinations: AgentsDestinations(),
+                        home: oneSidebarHome) {
             AgentsList(path: $path, spaceAt: $spaceAt, query: $query, searching: $searching,
                        searchedBeforePush: $searchedBeforePush, showNew: newSession, menuActions: menuActions, ownsTop: ownsTop,
                        showsPersonalEntry: showsPersonalEntry, beginSearch: beginSearch)
@@ -381,10 +397,16 @@ struct ChatsView: View {
                 // Searching is not the root either: the drawer would slide the page with the keyboard up and the field open.
                 .onChange(of: path.isEmpty && !searching, initial: true) { _, root in shell?.workAtRoot = root }
                 #if os(iOS)
-                // The one sidebar has no tabs (#4206): the app's tab says which side of the window is in front, and a
-                // route to Persona (a notification, Siri, the Inbox's links) closes the agent open beside the column.
-                .onChange(of: model.selectedTab) { _, tab in if oneSidebar, tab != .chats { leaveAgent() } }
-                .onChange(of: path.isEmpty) { _, empty in if oneSidebar { model.selectedTab = empty ? .assistant : .chats } }
+                // The one sidebar has no tabs (#4206): the app's tab says what the detail column shows, and a route to
+                // Persona or Messages (a notification, Siri, the Inbox's links) closes the agent open beside the column.
+                // Not Settings' route: Settings comes over the window, the agent stays (`PadRouter` puts the tab back).
+                .onChange(of: model.selectedTab) { _, tab in if oneSidebar, tab == .assistant || tab == .feishu { leaveAgent() } }
+                // An agent opened is Agents in front; closed, Persona's page again, unless Messages took the column (the
+                // agent left for it).
+                .onChange(of: path.isEmpty) { _, empty in
+                    guard oneSidebar else { return }
+                    if !empty { model.selectedTab = .chats } else if model.selectedTab == .chats { model.selectedTab = .assistant }
+                }
                 #endif
                 .onChange(of: path) { _, p in
                     spaceAt = spaceAt.filter { $0.key < p.count }
@@ -569,6 +591,16 @@ struct ChatsView: View {
     private func pushSpace(_ id: String) {
         path.append(SpaceRoute(id: id))
         spaceAt[path.count - 1] = id
+    }
+
+    /// Beside the one sidebar (#4206), what the detail column shows while no agent is open: Persona's page, or Messages
+    /// (`OneSidebarHome`). nil elsewhere: the stack's own empty page.
+    private var oneSidebarHome: AnyView? {
+        #if os(iOS)
+        oneSidebar ? AnyView(OneSidebarHome()) : nil
+        #else
+        nil
+        #endif
     }
 
     /// The one sidebar's Persona rows (#4206): the agent open beside the column goes, for Persona's page to show there.
@@ -976,15 +1008,18 @@ private struct AgentsList: View {
                     #endif
                     #if os(iOS)
                     // A stable cell keeps the selected grouping discoverable without crowding the quick filters. In the
-                    // shell, Personal Agents beside it (#140), under it when the two don't fit across.
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: Theme.Space.s) { groupingPills }
-                        VStack(alignment: .leading, spacing: Theme.Space.s) { groupingPills }
+                    // shell, Personal Agents beside it (#140), under it when the two don't fit across. Not in the one
+                    // sidebar: its segments under the Agents heading are the grouping there (`OneSidebarSections`).
+                    if !oneSidebarMode {
+                        ViewThatFits(in: .horizontal) {
+                            HStack(spacing: Theme.Space.s) { groupingPills }
+                            VStack(alignment: .leading, spacing: Theme.Space.s) { groupingPills }
+                        }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, Theme.Space.page)
+                            .padding(.bottom, Theme.Space.sm)
+                            .id("agents.grouping.row")
                     }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, Theme.Space.page)
-                        .padding(.bottom, Theme.Space.sm)
-                        .id("agents.grouping.row")
                     #endif
                 }
                     .listRowBackground(Color.clear)
@@ -2738,7 +2773,7 @@ private struct AgentsList: View {
         #if os(macOS)
         let open = s.key == macOpenNow
         #else
-        let open = treeSelected(s.key)
+        let open = openBeside(s.key)
         #endif
         let key = SlotRowKey(session: shown, context: context, inStateSection: inStateSection, cardLast: cardLast, showHost: showHost,
                              depth: depth, pane: pane, branch: branch, searching: searching, query: searching ? query : "",
@@ -2767,16 +2802,21 @@ private struct AgentsList: View {
     }
 
     /// An agent row's background: the tree's (`treeBackground`), none of its own in By Repository's cards on the Mac and
-    /// in the floating list, else the list's.
+    /// in the floating list, else the list's. Beside the one sidebar the open agent's is washed in every grouping, as the
+    /// tree's line is (#4206).
     private func slotBackground(_ open: Bool) -> AnyView? {
         if repoTree { return treeBackground(open) }
+        #if os(iOS)
+        if open { return floating ? AnyView(Theme.Tree.selected) : AnyView(RepoTreeSelected()) }
+        #endif
         return grouping == .repo || floating ? AnyView(Color.clear) : nil
     }
 
-    /// The agent open beside the list in By Repository's tree (#2531; the split's list, not a phone's, whose list is
-    /// never beside a chat): its line is washed. The split's column is compact itself, so not its width class.
-    private func treeSelected(_ key: SessionKey) -> Bool {
-        repoTree && !ownsTop && openedWorkspace == nil && model.visibleSession == key
+    /// The agent open beside the list (the split's list, not a phone's, whose list is never beside a chat): its line is
+    /// washed in By Repository's tree (#2531), and in every grouping beside the one sidebar (#4206), whose Persona rows
+    /// show theirs the same way. The split's column is compact itself, so not its width class.
+    private func openBeside(_ key: SessionKey) -> Bool {
+        (repoTree || oneSidebarMode) && !ownsTop && openedWorkspace == nil && model.visibleSession == key
     }
 
     /// `open`: the Mac's agent open beside the list; By Repository's tree on iOS, the one whose line is washed.
@@ -2823,6 +2863,8 @@ private struct AgentsList: View {
             .accessibilityIdentifier(compact ? "agents.compactRow" : "agents.row")
             #if os(macOS)
             .selectionDisabled(grouping == .repo)
+            #else
+            .accessibilityAddTraits(open ? .isSelected : [])
             #endif
             // BeautifulUI's Capsules: each agent its own capsule on the page (no list card, line or system chevron); List and
             // Persona' own rows: the list's card.

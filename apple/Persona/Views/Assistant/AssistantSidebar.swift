@@ -775,17 +775,9 @@ struct AssistantSidebar: View {
     /// Meeting Recording (docs/apple/recording.md「Meeting recordings」): starts recording a meeting and opens Recordings;
     /// while something records, opens it. nil leaves the row out (the Mac records nothing).
     var startMeeting: (() -> Void)? = nil
-    /// The column's own button that folds it away, at its top trailing corner, as ChatGPT's on iPhone Duo open (#2623).
-    /// Search goes to its foot then, beside Persona's name and where it runs, and the main conversation's row holds what
-    /// the face's menu at the top of the page did (the switch has that place). nil elsewhere.
-    var collapse: (() -> Void)? = nil
     private var isShell: Bool { openInbox != nil }
     @State private var query = ""
     @State private var searchOpen = false
-    #if os(iOS)
-    /// The open iPhone Duo's search, over the whole window (`footerSearch`).
-    @State private var fullSearch = false
-    #endif
     #if os(macOS)
     /// Its header is in the title bar's row (#830): past the traffic lights when the window's sections column is hidden.
     @Environment(\.macTitleRowLeading) private var titleRowLeading
@@ -897,14 +889,6 @@ struct AssistantSidebar: View {
                 open(key)
             }
         }
-        #if os(iOS)
-        .fullScreenCover(isPresented: $fullSearch) {
-            AssistantFullSearch { key in
-                fullSearch = false
-                open(key)
-            }
-        }
-        #endif
         .background {
             if let drawer {
                 SidebarClosed(drawer: drawer) {
@@ -941,12 +925,7 @@ struct AssistantSidebar: View {
                     AssistantSwitcherHeader(manager: current, nameFont: Theme.Font.title, compact: macTitleRow, openSettings: showSettings)
                 }
                 Spacer(minLength: Theme.Space.s)
-                if let collapse {
-                    AssistantTopBar.circle(Theme.Icon.sidebar, label: String(localized: "Hide Sidebar"), id: "assistant-sidebar-collapse") {
-                        Haptics.tap()
-                        collapse()
-                    }
-                } else if besideBar {
+                if besideBar {
                     // The same button as the top bar's beside it (2026-11-04: on iPhone Duo open, this one stood lower
                     // and larger than Chat History / New Chat in the next column).
                     AssistantTopBar.circle(Theme.Icon.search, label: String(localized: "Search Chats [Assistant Sidebar 55c9e4]"), id: "assistant-sidebar-search", action: openSearch)
@@ -963,17 +942,6 @@ struct AssistantSidebar: View {
                 }
             }
         }
-    }
-
-    /// Search at the foot, beside Persona's name, where the column has its fold at the top instead (iPhone Duo open): it
-    /// opens over the whole window, its field at the foot (`AssistantFullSearch`, #3705).
-    private var footerSearch: (() -> Void)? {
-        guard collapse != nil else { return nil }
-        #if os(iOS)
-        return { fullSearch = true }
-        #else
-        return { openSearch() }
-        #endif
     }
 
     private func openSearch() {
@@ -1200,21 +1168,7 @@ struct AssistantSidebar: View {
         .accessibilityIdentifier("sidebar-main")
         .disabled(key == nil && model.assistantConfig == nil)
         .contextMenu {
-            if let key {
-                if collapse != nil { MainChatPlaceItems(key: key, openKnowledge: openKnowledge, openProfile: openProfile) }
-                MainConversationMenu(key: key) // Compact context, New Main Chat… (#1762)
-                Button {
-                    UIPasteboard.general.string = key.sessionID
-                    model.toast = Toast(String(localized: "Session ID Copied"), style: .success)
-                } label: { Label("Copy Session ID [Assistant Sidebar f24fb3]", systemImage: Theme.Icon.id) }
-                Button {
-                    UIPasteboard.general.string = ChatTrace.shared.text(key) // structure only, to paste into a report
-                    model.toast = Toast(String(localized: "Diagnostics copied"), style: .success)
-                } label: { Label("Copy Diagnostics", systemImage: Theme.Icon.diagnostics) }
-                if let main, main.status.isLive {
-                    Button(role: .destructive) { ending = main } label: { Label("End…", systemImage: Theme.Icon.end) }
-                }
-            }
+            if let key { MainChatRowMenu(key: key, main: main) { ending = $0 } }
         }
     }
 
@@ -1638,7 +1592,7 @@ struct AssistantSidebar: View {
             // The iPad's column (the shell's places beside the conversation): Persona's face and where it runs stay
             // at the foot, under the shell's New Chat + Settings (2026-11-05 user: the bottom left is fine).
             if drawer == nil {
-                AssistantProfileFooter(machineID: machineID, openProfile: openProfile, openSettings: nil, search: footerSearch)
+                AssistantProfileFooter(machineID: machineID, openProfile: openProfile, openSettings: nil)
             }
         } else {
             #if os(macOS)
@@ -1697,39 +1651,27 @@ struct AssistantSidebar: View {
 /// Assistant | Agents switch takes the face's place, #2623; the user asked for it there): whose Persona it is (several
 /// hubs), Knowledge and Details, the directory and the facts to copy. The switch's Assistant, tapped while it is
 /// selected, keeps the whole menu, as in the shell.
-private struct MainChatPlaceItems: View {
+/// The main conversation's row's long press, in the drawer and the column and in the one sidebar (#4206): Compact context
+/// and New Main Chat, the copies, and End… while it runs (`end` asks first).
+struct MainChatRowMenu: View {
     @Environment(AppModel.self) private var model
     let key: SessionKey
-    let openKnowledge: () -> Void
-    let openProfile: () -> Void
+    let main: Session?
+    let end: (Session) -> Void
 
     var body: some View {
-        if model.isMultiHub, let current = model.hub?.group {
-            Section("hub") {
-                Picker("hub", selection: Binding(get: { current }, set: { model.selectHub($0) })) {
-                    ForEach(model.groupIDs, id: \.self) { g in
-                        Label(model.groupName(g), systemImage: Theme.Icon.hubGroup).tag(g)
-                    }
-                }
-            }
+        MainConversationMenu(key: key) // Compact context, New Main Chat… (#1762)
+        Button {
+            UIPasteboard.general.string = key.sessionID
+            model.toast = Toast(String(localized: "Session ID Copied"), style: .success)
+        } label: { Label("Copy Session ID [Assistant Sidebar f24fb3]", systemImage: Theme.Icon.id) }
+        Button {
+            UIPasteboard.general.string = ChatTrace.shared.text(key) // structure only, to paste into a report
+            model.toast = Toast(String(localized: "Diagnostics copied"), style: .success)
+        } label: { Label("Copy Diagnostics", systemImage: Theme.Icon.diagnostics) }
+        if let main, main.status.isLive {
+            Button(role: .destructive) { end(main) } label: { Label("End…", systemImage: Theme.Icon.end) }
         }
-        Section {
-            Button(action: openKnowledge) { Label("Knowledge", systemImage: Theme.Icon.knowledge) }
-            Button(action: openProfile) { Label("Details [Assistant Top Bar 1932da]", systemImage: Theme.Icon.person) }
-        }
-        Section {
-            Button { copy(AssistantCopyText.cwd(key, in: model), String(localized: "Working Directory Copied")) } label: {
-                Label("Copy Directory", systemImage: Theme.Icon.folder)
-            }
-            Button { copy(AssistantCopyText.info(key, in: model), String(localized: "Chat Info Copied")) } label: {
-                Label("Copy Info", systemImage: Theme.Icon.copy)
-            }
-        }
-    }
-
-    private func copy(_ text: String, _ done: String) {
-        UIPasteboard.general.string = text
-        model.toast = Toast(done, style: .success)
     }
 }
 
@@ -1741,8 +1683,6 @@ private struct AssistantProfileFooter: View {
     let machineID: String
     let openProfile: () -> Void
     let openSettings: (() -> Void)?
-    /// Search on the right, where ChatGPT has it beside the account on iPhone Duo open (#2623); nil, none.
-    var search: (() -> Void)? = nil
 
     var body: some View {
         // Behind another section (the Mac keeps the page): the machine as it is now, not each push's heartbeat.
@@ -1782,20 +1722,6 @@ private struct AssistantProfileFooter: View {
                 .accessibilityLabel(model.showsAssistantIdentity ? String(localized: "\(model.persona.name), \(state), view profile") : String(localized: "Details [Assistant Top Bar 1932da]"))
                 .accessibilityIdentifier("assistant-profile-footer")
                 Spacer(minLength: Theme.Space.s)
-                if let search {
-                    // The shell's foot's round button (Settings beside New Chat), as the row above has it.
-                    Button(action: search) {
-                        ThemedIcon(Theme.Icon.search)
-                            .font(Theme.Font.heading)
-                            .foregroundStyle(Color.primary)
-                            .scaledFrame(width: Theme.Size.avatarL, height: Theme.Size.avatarL)
-                            .contentShape(.circle)
-                    }
-                    .buttonStyle(.plain)
-                    .surface(interactive: true, in: .circle)
-                    .accessibilityLabel("Search Chats [Assistant Sidebar 55c9e4]")
-                    .accessibilityIdentifier("assistant-sidebar-search")
-                }
                 if let openSettings {
                     Button(action: openSettings) {
                         ThemedIcon(Theme.Icon.settings).font(Theme.Font.title).foregroundStyle(Color.primary)
