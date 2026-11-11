@@ -28,9 +28,17 @@ class ChatRealtimeStateTest {
         assertNotSame(first, named)
         assertEquals("example_tool", named.last().toolName)
         state.delta(DeltaEvent("m1", "s1", "Reply"), transcript)
-        assertEquals("Reply", state.items(transcript).last().text)
+        val streaming = state.items(transcript)
+        val id = streaming.last().id
+        val live = state.liveText().getValue(id)
+        assertEquals("Reply", live.value)
         state.delta(DeltaEvent("m1", "s1", "Updated reply"), transcript)
+        assertSame(streaming, state.items(transcript))
+        assertSame(live, state.liveText().getValue(id))
+        assertEquals("Updated reply", live.value)
+        state.delta(DeltaEvent("m1", "s1", ""), transcript)
         assertEquals("Updated reply", state.items(transcript).last().text)
+        assertTrue(state.liveText().isEmpty())
         state.reset()
         assertEquals(transcript, state.items(transcript))
     }

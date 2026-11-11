@@ -113,15 +113,17 @@ internal fun mergedInteractions(stacks: GroupStacks): InteractionCenter = object
 @OptIn(ExperimentalCoroutinesApi::class)
 internal fun mergedChats(stacks: GroupStacks, storage: ChatLocalStorage): ChatRepository =
     object : ChatRepository, ChatLocalStorage by storage {
-        override fun observe(session: SessionKey) = stacks.stacks
+        private fun route(session: SessionKey, source: ChatRepository.(SessionKey) -> Flow<ChatSnapshot>) = stacks.stacks
             .map { list -> list.firstOrNull { it.names.owns(session.machineId) } }
             .distinctUntilChanged()
             .flatMapLatest { stack ->
-                stack?.repositories?.chats?.observe(stack.names.raw(session))
+                stack?.repositories?.chats?.let { chats -> chats.source(stack.names.raw(session)) }
                     // A group that closed under the page (merged or disconnected) just stops; its own failures surface.
                     ?.catch { failure -> if (stack.current) throw failure }
                     ?: flowOf(ChatSnapshot(loading = false, verified = false))
             }
+        override fun observe(session: SessionKey) = route(session) { observe(it) }
+        override fun observeStructure(session: SessionKey) = route(session) { observeStructure(it) }
         override suspend fun loadOlder(session: SessionKey) = stacks.use(session) { it.repositories.chats.loadOlder(it.names.raw(session)) }
         override suspend fun expandFold(session: SessionKey, fromSeq: Int, toSeq: Int) =
             stacks.use(session) { it.repositories.chats.expandFold(it.names.raw(session), fromSeq, toSeq) }

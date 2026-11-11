@@ -261,7 +261,18 @@ class HubChatRepository(
         }
     }
 
-    override fun observe(session: SessionKey): Flow<ChatSnapshot> = flow {
+    /** Existing consumers keep seeing each delta as a complete snapshot; only the chat screen opts into structure. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    override fun observe(session: SessionKey): Flow<ChatSnapshot> = observeStructure(session).flatMapLatest { snapshot ->
+        val live = snapshot.liveText
+        if (live.isEmpty()) flowOf(snapshot)
+        else combine(live.map { (id, text) -> text.map { value -> id to value } }) { values ->
+            val updates = values.toMap()
+            snapshot.copy(items = snapshot.items.map { item -> updates[item.id]?.let { item.copy(text = it) } ?: item })
+        }
+    }
+
+    override fun observeStructure(session: SessionKey): Flow<ChatSnapshot> = flow {
         cache.retain(session)
         try {
             val entry = synchronized(entries) {
@@ -623,6 +634,7 @@ class HubChatRepository(
         entry.state.update { it.copy(items = items, loading = false,
             history = entry.reducer.history,
             streamingItemIds = entry.realtime.streamingItemIds(),
+            liveText = entry.realtime.liveText(),
             hasOlder = entry.reducer.hasMore == true, error = entry.eventError, verified = verified,
             lastSeenMessageId = lastSeen?.let(entry.realtime::displayId),
             ended = runtime.ended || (it.ended && !relisted), replaced = runtime.replaced || (it.replaced && !relisted),

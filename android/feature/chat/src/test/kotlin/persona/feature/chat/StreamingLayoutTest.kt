@@ -14,12 +14,14 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import coil3.ImageLoader
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestCoroutineScheduler
 import org.junit.Assert.*
@@ -33,6 +35,8 @@ import persona.core.contracts.Item
 import persona.core.contracts.SessionKey
 import persona.core.designsystem.*
 import persona.core.domain.lines.ChatLine
+import persona.core.domain.lines.ChatRow
+import persona.core.domain.lines.LineItem
 import java.io.File
 
 /** Replay both hosts' real chat rows and reverse list; hold only the parser executor between UI frames. */
@@ -67,6 +71,68 @@ class StreamingLayoutTest {
             rule.onNodeWithText("Different message").assertExists()
             scheduler.runCurrent(); rule.waitForIdle()
             rule.onNodeWithText("Different message").assertExists()
+        } finally { parserScope.cancel() }
+    }
+
+    @Test fun aLiveHolderUpdatesOnlyItsOwnRowAndDefersToAnExplicitUpdate() {
+        val scheduler = TestCoroutineScheduler()
+        val parserScope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(scheduler))
+        val cache = ChatMarkdownCache(scope = parserScope)
+        val live = MutableStateFlow("First streamed words")
+        val history = Item("history", 1, role = "assistant", kind = "text", text = "Settled history")
+        val reply = Item("reply", 2, role = "assistant", kind = "text", text = "First streamed words")
+        val historyLine = ChatLine.Row(ChatRow("reply", LineItem(history)))
+        val replyLine = ChatLine.Row(ChatRow("reply", LineItem(reply)))
+        var external by mutableStateOf<ChatTextUpdate?>(null)
+        var historyCompositions = 0
+        fun warm(id: String, text: String) {
+            val work = parserScope.async { cache.parse("$id/0", text, streaming = true) }
+            scheduler.runCurrent()
+            runBlocking { work.await() }
+        }
+        warm("history", history.text.orEmpty())
+        warm("reply", live.value)
+        rule.mainClock.autoAdvance = false
+        try {
+            rule.setContent {
+                PersonaTheme(style = AppStyle.Brief, darkTheme = false, reduceMotion = true) {
+                    CompositionLocalProvider(LocalChatMarkdownCache provides cache) {
+                        val context = LocalContext.current
+                        val loader = remember { ImageLoader.Builder(context).build() }
+                        DisposableEffect(loader) { onDispose { loader.shutdown() } }
+                        Column(Modifier.width(400.dp)) {
+                            Column {
+                                SideEffect { historyCompositions++ }
+                                ChatLineContent(historyLine, SessionKey("computer", "conversation"), loader, null,
+                                    onToggle = {}, onFold = {}, folding = emptySet(), foldErrors = emptyMap(), onFullText = {})
+                            }
+                            ChatLineContent(replyLine, SessionKey("computer", "conversation"), loader, null,
+                                onToggle = {}, onFold = {}, folding = emptySet(), foldErrors = emptyMap(), onFullText = {},
+                                textUpdates = external?.let { mapOf("reply" to it) }.orEmpty(), liveText = mapOf("reply" to live))
+                        }
+                    }
+                }
+            }
+            fun frames() {
+                Snapshot.sendApplyNotifications()
+                repeat(3) { rule.mainClock.advanceTimeByFrame() }
+                scheduler.runCurrent()
+                repeat(3) { rule.mainClock.advanceTimeByFrame() }
+            }
+            frames()
+            rule.onNodeWithText("First streamed words").assertExists()
+            val settled = rule.runOnIdle { historyCompositions }
+            rule.runOnIdle { live.value = "First streamed words with another chunk" }
+            frames()
+            rule.onNodeWithText("First streamed words with another chunk").assertExists()
+            rule.runOnIdle { assertEquals("an unrelated settled row must not recompose", settled, historyCompositions) }
+            rule.runOnIdle { external = ChatTextUpdate("The host's explicit preview", streaming = true) }
+            frames()
+            rule.onNodeWithText("The host's explicit preview").assertExists()
+            rule.runOnIdle { live.value = "A repository chunk must not replace the explicit preview" }
+            frames()
+            rule.onNodeWithText("The host's explicit preview").assertExists()
+            rule.onNodeWithText("A repository chunk must not replace the explicit preview", substring = true).assertDoesNotExist()
         } finally { parserScope.cancel() }
     }
 

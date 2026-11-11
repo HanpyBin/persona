@@ -115,13 +115,8 @@ private fun ChatPage(
     val haptics = persona.core.designsystem.rememberHaptics()
     val res = LocalResources.current
     val recovery = remember(key, statusBindings.recovery) { ChatStatusRecovery(res, statusBindings.recovery, scope, sessions::refresh) }
-    val source = remember(repository, key) { repository.observe(key) }
+    val source = remember(repository, key) { repository.observeStructure(key) }
     val snapshot by source.collectAsStateWithLifecycle(ChatSnapshot())
-    val liveTextUpdates = remember(snapshot.items, snapshot.streamingItemIds, textUpdates) {
-        snapshot.items.filter { it.id in snapshot.streamingItemIds }.associate {
-            it.id to ChatTextUpdate(it.text.orEmpty(), streaming = true)
-        } + textUpdates
-    }
     val application = LocalContext.current.applicationContext
     val renamer = chrome.renamer ?: remember(application) {
         if (application is GeneratedComponentManager<*>)
@@ -1037,7 +1032,8 @@ private fun ChatPage(
                                             catch (e: CancellationException) { throw e }
                                             catch (e: Exception) { if (feedback?.failure(e) != true) notice = operationFeedback(e).text.resolve(res) }
                                         }
-                                    }, style = renderStyle, textUpdates = liveTextUpdates,
+                                    }, style = renderStyle, textUpdates = textUpdates,
+                                        liveText = snapshot.liveText, streamingItemIds = snapshot.streamingItemIds,
                                         userImages = contentUserImages[line.id].orEmpty(),
                                         imagesInUserBubble = line.id in contentHiddenImages,
                                         workRunning = (line as? ChatLine.Step)?.let { contentWorkGroups[it.groupId]?.live } == true,
@@ -1079,7 +1075,8 @@ private fun ChatPage(
                                     }
                                 }, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = padding.calculateBottomPadding() + Tokens.Space.l))
                             }
-                            if (!chatList.followsEnd) JumpToLatest(timeline.newMessageCount(snapshot.items, newestVisibleItem, readThrough),
+                            if (!chatList.followsEnd) JumpToLatest(timeline.newMessageCount(snapshot.items, newestVisibleItem, readThrough,
+                                defer = snapshot.streamingItemIds.isNotEmpty()),
                                 onClick = chatList::returnToLatest,
                                 modifier = Modifier.align(Alignment.BottomEnd).padding(end = horizontalPadding, bottom = padding.calculateBottomPadding() + 16.dp))
                         }

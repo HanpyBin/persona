@@ -1,10 +1,17 @@
 package persona.core.data
 
 import persona.core.contracts.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 
 /** Ephemeral rows never enter transcript coverage or the disk cache. Callers hold the entry lock. */
 internal class ChatRealtimeState(private val key: SessionKey) {
-    private data class Draft(var item: Item, val after: Item?, var finalId: String? = null)
+    private data class Draft(
+        var item: Item,
+        val after: Item?,
+        var finalId: String? = null,
+        val liveText: MutableStateFlow<String> = MutableStateFlow(item.text.orEmpty()),
+    )
     private val drafts = mutableListOf<Draft>()
     private var active: Draft? = null
     private var nextId = 0L
@@ -18,7 +25,6 @@ internal class ChatRealtimeState(private val key: SessionKey) {
     private fun invalidate() { projectedTranscript = null; projectedItems = null }
 
     fun delta(event: DeltaEvent, items: List<Item>) {
-        invalidate()
         if (event.turnFinished) {
             finish()
             return
@@ -27,8 +33,11 @@ internal class ChatRealtimeState(private val key: SessionKey) {
             nextSeq(items), role = "assistant", kind = "text"), items.lastOrNull()).also {
             drafts += it
             active = it
+            // Only a new row is structural. Later deltas travel through that row's own text holder.
+            invalidate()
         }
         draft.item = draft.item.copy(text = event.text)
+        draft.liveText.value = draft.shownText(items)
     }
 
     fun finish() { active = null; screen = null; invalidate() }
@@ -61,6 +70,7 @@ internal class ChatRealtimeState(private val key: SessionKey) {
     fun canonicalId(id: String): String = aliases.entries.firstOrNull { it.value == id }?.key ?: id
     fun displayId(id: String): String = aliases[id] ?: id
     fun streamingItemIds(): Set<String> = setOfNotNull(active?.item?.id)
+    fun liveText(): Map<String, StateFlow<String>> = active?.let { mapOf(it.item.id to it.liveText) } ?: emptyMap()
 
     fun items(transcript: List<Item>): List<Item> {
         if (projectedTranscript === transcript) projectedItems?.let { return it }
@@ -111,7 +121,18 @@ internal class ChatRealtimeState(private val key: SessionKey) {
             }
         projectedTranscript = transcript
         projectedItems = result
+        // Once a transcript row claims a draft, its longer record wins over a shorter late delta, exactly as in the
+        // legacy projection. The holder carries that projected text too, so observe() cannot resurrect the delta.
+        active?.let { draft ->
+            result.firstOrNull { it.id == draft.item.id }?.let { draft.liveText.value = it.text.orEmpty() }
+        }
         return result
+    }
+
+    private fun Draft.shownText(transcript: List<Item>): String {
+        val current = item.text.orEmpty()
+        val recorded = finalId?.let { id -> transcript.firstOrNull { it.id == id } }?.text?.orEmpty() ?: return current
+        return if (current.startsWith(recorded) && current.length > recorded.length) current else recorded
     }
 
     private fun nextSeq(items: List<Item>): Int =

@@ -28,6 +28,31 @@ class ChatListTest {
         assertEquals(0, window.newMessageCount(live))
     }
 
+    @Test fun aStreamingTurnHoldsTheFrozenCountWithoutRescanningThenSettlesExactly() {
+        var reads = 0
+        val window = ChatListWindow<Message>({ it.id }, compareBy { it.seq }, { reads++; it.incoming })
+        val first = Message("first", 10)
+        val last = Message("last", 30)
+        window.freeze(listOf(first, last))
+        assertEquals(0, window.newMessageCount(listOf(first, last), defer = true))
+        val before = reads
+
+        val older = Message("older", 1)
+        val streamed = Message("streamed", 31, text = "first chunk")
+        val streaming = listOf(older, first, last, streamed)
+        assertEquals(0, window.newMessageCount(streaming, below = older, defer = true))
+        assertEquals(0, window.newMessageCount(listOf(older, first, last, streamed.copy(text = "a later chunk")), defer = true))
+        assertEquals(before, reads)
+
+        val own = Message("own", 32, incoming = false)
+        val another = Message("another", 33)
+        val settled = listOf(older, first, last, streamed.copy(text = "complete"), own, another, another)
+        assertEquals(2, window.newMessageCount(settled, below = last))
+        assertEquals(1, window.newMessageCount(settled, below = last, lastRead = streamed))
+        window.follow()
+        assertEquals(0, window.newMessageCount(settled, defer = true))
+    }
+
     @Test fun prefetchRequiresUserIntentWhileLastLineUsesMeasuredExtent() {
         assertFalse(shouldPrefetch(false, true, false, 95, 100, 5))
         assertFalse(shouldPrefetch(true, true, true, 95, 100, 5))

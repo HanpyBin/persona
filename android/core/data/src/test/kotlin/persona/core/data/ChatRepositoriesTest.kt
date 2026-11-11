@@ -496,6 +496,42 @@ class ChatRepositoriesTest {
         assertEquals(ix.id, transport.resolved)
     }
 
+    @Test fun streamingDeltasKeepStructureStableWhileExistingObserversSeeCurrentText() = runTest {
+        val connection = FakeConnection()
+        val user = item(1).copy(role = "user", text = "示例问题")
+        val transport = FakeChatTransport().apply {
+            fetch = { query -> ItemsResponse(listOf(user).filter { it.seq > (query.afterSeq ?: 0) },
+                history = "h", fromSeq = query.afterSeq, toSeq = user.seq) }
+        }
+        val repository = HubChatRepository(transport, connection, FakeItemsCache(CachedChat(emptyList(), "h", 0, false)),
+            FakeSessions(), backgroundScope)
+        val structures = mutableListOf<ChatSnapshot>()
+        var current = ChatSnapshot()
+        backgroundScope.launch { repository.observeStructure(key).collect(structures::add) }
+        backgroundScope.launch { repository.observe(key).collect { current = it } }
+        runCurrent()
+        suspend fun event(event: ServerEvent) { connection.events.emit(event); runCurrent() }
+
+        event(DeltaEvent(key.machineId, key.sessionId, "示例"))
+        val structure = structures.last()
+        val draftId = structure.items.last().id
+        val live = structure.liveText.getValue(draftId)
+        val emissions = structures.size
+        event(DeltaEvent(key.machineId, key.sessionId, "示例回复"))
+
+        assertEquals("an ordinary delta does not emit another structure", emissions, structures.size)
+        assertSame(structure.items, structures.last().items)
+        assertEquals("示例", structures.last().items.last().text)
+        assertSame(live, structures.last().liveText.getValue(draftId))
+        assertEquals("示例回复", live.value)
+        assertEquals("existing observers still receive the current full text", "示例回复", current.items.last().text)
+
+        event(DeltaEvent(key.machineId, key.sessionId, ""))
+        assertTrue(structures.size > emissions)
+        assertEquals("示例回复", structures.last().items.last().text)
+        assertTrue(structures.last().liveText.isEmpty())
+    }
+
     @Test fun realtimeRowsKeepIdentityUntilTranscriptArrivesAndNeverEnterCoverageOrCache() = runTest {
         val connection = FakeConnection()
         val user = item(1).copy(role = "user", text = "示例问题")
