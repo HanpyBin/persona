@@ -2,7 +2,7 @@
 
 > Temporary. Delete this file and `4206-one-sidebar-prototype.html` before the branch merges.
 
-Branch `feat/4206-one-sidebar`, with origin/main merged in at `53232dd61` and again at `14bf19004` (merges, no rebase; never rebase or force push this branch). Work in progress. It needs the owner's approval before it merges, because it is a UI change.
+Branch `feat/4206-one-sidebar`, with origin/main merged in at `53232dd61`, `14bf19004` and `dde9de38e` (merges, no rebase; never rebase or force push this branch). Work in progress. It needs the owner's approval before it merges, because it is a UI change.
 
 ## What the owner decided
 
@@ -88,11 +88,13 @@ On GitHub, #4852–#4855 and #3641 only take `Refs` until a fix is verified (no 
   - tests: `OneSidebarTests` (new), `DuoOpenChromeTests` (switch tests removed; the face is `persona-avatar` or `assistant-menu`), `IPadSidebarTests`, `SidebarMetricsTests` (adds `OneSidebar.swift`);
   - `docs/apple/ios.md` "One sidebar".
 - `14bf19004`: second merge of origin/main (138 commits). Conflict in `ChatsView.swift`: kept the branch's `openBeside` (main's By Repository rule plus the one sidebar). Main removed `AppModel.showsAssistantIdentity` (#4712): `OneSidebarHeader` now checks `model.managerRoster?.isMulti == true`, as the column's header does.
-  - **Open question for the owner (not changed):** main's #4610 removed Recent from Persona's chats on every client (main chat + Pinned leads, then All chats). The one sidebar still has its own Recent (three rows, then All Chats), as the approved prototype has. Reported to the supervisor; keep it until the owner says otherwise.
+  - The open question it raised (the one sidebar's own Recent against #4610) is answered by decision 7: Recent is gone, Pinned instead.
 - `4724529fb`: upright tiling (300 pt detail minimum). **Rejected by the owner and reverted** by this handoff's commit.
 - This handoff's commit (see `git log`). It contains #4852 and #3641 ① as described above, compiled only.
 
 ## Step 2 and #4853 / #4854 / #4855 (this session, 2026-11-12)
+
+- `dde9de38e`: third merge of origin/main. Conflicts: `ShellComponents.swift` (kept the branch's removal of `AssistantWaitingBadge`), `AssistantView.swift` (main's `liftHost = MessageLiftHost()`; the branch's removed `pageTabSwitch` stays removed) and `Localizable.xcstrings` (main's file plus the branch's five `agents.grouping.segment.*` keys, merged by hand: re-serializing the JSON would reformat the whole file). Its trailer names the wrong model (`Claude Opus 4.7`); it is pushed and is left as is (no force push).
 
 - **Pinned instead of Recent** (decision 7): `OneSidebarSections.pinned` / `pinnedRow` / `allChatsRow` in `OneSidebar.swift`; `RootTabs` no longer reads the posture for Recent.
 - **Messages upright**: after its pick slid the column away there was no way back but the edge handle (its own stack has no system button). `OneSidebarHome` now shows Show Sidebar (`feishu-sidebar-button`) at its top corner while the column is away.
@@ -111,11 +113,11 @@ On GitHub, #4852–#4855 and #3641 only take `Refs` until a fix is verified (no 
 - **The handle's closed state was not kept on the iPad** (found while checking step 2 ④): the split lays itself out first with a ~117 pt list and the page sliding in from before it, so `notePosture` read it as laid over (`overlays`), the close was not written, and the split put the list back out right after `onAppear` closed it. Fixed in `SplitNavigation`: the split starts from the kept state (`SplitDividerHandle.startsClosed`), and the posture is only read once the list is at least `sidebarMinPhone` wide and the page does not start before the split. That skipped the upright Duo's only reading (the list then comes out over the page with nothing moving), and five upright tests failed: the split now also reads the posture right after the list comes out (`onChange(of: columns)`), and `overlays` is nil until read, the handle keeping nothing meanwhile and the state at that moment once the list is known to be beside the page. Upright, the relaunch check in `SplitDividerTests` is skipped (laid over the page, closing is not kept). `SplitDividerTests.testDraggedPastItsLeastTheListClosesAndComesBackFromTheEdge` now relaunches and checks the list stays closed. `testTheAssistantsHistoryIsDraggedToo` is removed: Persona's page has no history column of its own beside the one sidebar.
 - After the posture fix (`onChange(of: columns)`, `overlays` nil until read): Duo upright `OneSidebarTests` (8 pass, 1 skip: beside only) and `SplitDividerTests` (2) pass; iPad `OneSidebarTests`, `IPadSidebarTests`, `SplitDividerTests` pass (`testAnOpenedAgentIsSelectedAndPersonaClosesIt` failed once at "Main Chat did not close the agent" and passed on its own rerun: its swipes up and back down do not always land in the same place).
 - Duo on its side (after #4853 / #4854): `OneSidebarTests` (7 pass, the 2 upright-only skip), `DuoOpenChromeTests` (5) and `SplitDividerTests` (2) pass. `testAnOpenedAgentIsSelectedAndPersonaClosesIt` failed once earlier (same flake as on the iPad) and passed in the full run. Upright and the iPad are rerun after this commit.
+- **After the third merge (`dde9de38e`)**, one build, all pass: Duo upright `OneSidebarTests` + `DuoOpenChromeTests` + `SplitDividerTests` (16, 1 skip: beside only); Duo on its side, the same three (16, 2 skip: upright only); iPad `OneSidebarTests` + `IPadSidebarTests` + `SplitDividerTests` (12, 2 skip) and `PersonaTests/SidebarMetricsTests` (5). `SplitDividerTests` is the handle's check on each: dragged past its least the list closes, comes back from the edge and stays closed across a relaunch (the relaunch step skipped upright). Mind the Duo's posture in DeviceHub: `TEST_RUNNER_PERSONA_ORIENTATION=landscape` alone does not put it on its side (a first post-merge "on its side" run ran upright); it is on its side now.
 
 ## Not done
 
-- Runs on the Duo on its side and on the iPad (`OneSidebarTests`, `DuoOpenChromeTests`; `OneSidebarTests`, `IPadSidebarTests`, `PersonaTests/SidebarMetricsTests`), and checking the handle still opens / closes and remembers its state there.
-- Merge origin/main once more before the final screenshots (the supervisor: main moved again; no rush before that).
+- #4854 under a Live Activity (the expanded island): not shot; the item is the system's own, so it follows the island as the system's bar does.
 - **Screenshots for the owner, light and dark**: iPad, Duo on its side, Duo upright, into `~/Documents/persona-4206-shots/` (`ipad-{light,dark}.png`, `duo-landscape-{light,dark}.png`, `duo-portrait-{light,dark}.png`; the old `duo-landscape-light.png` is stale, overwrite it), plus #4855 before / after. Report the paths to the supervisor.
 - The PR, then **stop and wait for the owner's explicit approval**. After approval: delete `docs/handoff/4206-*`, then merge with `scripts/hooks/merge-pr.sh`. Do not merge before approval.
 
@@ -170,7 +172,7 @@ On GitHub, #4852–#4855 and #3641 only take `Refs` until a fix is verified (no 
 - **`apple/Persona.xcodeproj/` is untracked** (generated by xcodegen). Never `git add` it; stage files by path. A new test file does not run until `xcodegen generate`.
 - An agent chat's title is `chat.title` or `chat.compactTitle`. Agent rows can be offscreen in the column, so swipe up to find them.
 - The Messages list's frame starts at the window edge, so check its first static text's `minX`, not the list's.
-- **main's `apple/PersonaTests/JSONDateTests.swift` (#4931) does not compile with Xcode 27.1** (static `ISO8601DateFormatter`s are not concurrency-safe), so `build-for-testing` fails. Locally it carries an **uncommitted** `nonisolated(unsafe)` on its two statics; never stage it (stage by path). The supervisor: CI builds with Xcode 26.0.1, so only newer local Xcode fails and main's CI is not blocked; keep the local patch, do not commit it into #4206, no issue.
+- **main's `apple/PersonaTests/JSONDateTests.swift` (#4931) does not compile with Xcode 27.1** (static `ISO8601DateFormatter`s are not concurrency-safe), so `build-for-testing` fails. The supervisor: CI builds with Xcode 26.0.1, so only newer local Xcode fails and main's CI is not blocked; do not commit a fix into #4206, no issue. Main has since fixed it (formatters made per call), so after `dde9de38e` it compiles as is and the local `nonisolated(unsafe)` patch is dropped (kept at `/tmp/p4206/jsondate-local.patch` in case an older main is checked out).
 - **Pre-existing check failures, also on origin/main, not ours**:
   - `test_apple_perf_patterns` (`AppModel+Managers.swift` file read);
   - `test_apple_state_initial_values` (`AssistantSwitcher.swift` `ManagersModel`).
