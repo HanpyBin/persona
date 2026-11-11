@@ -19,7 +19,8 @@ vi.mock("../../lib/compare", async (original) => {
   } };
 });
 vi.mock("../../lib/edge-auth", async (original) => ({ ...(await original<typeof import("../../lib/edge-auth")>()), reloadForSignIn: vi.fn() }));
-import { api, getToken, handleUnauthorized, setToken } from "../../lib/api";
+import { api, credentialOwner, getToken, handleUnauthorized, setPairedToken, setToken } from "../../lib/api";
+import { CREDENTIAL_EPOCH_KEY } from "../../lib/credential-epoch";
 import { reloadForSignIn } from "../../lib/edge-auth";
 import { chosenManager, chooseManager, defaultManager, setRosterDefault } from "../../lib/manager-choice";
 import { getState } from "../../lib/store";
@@ -405,6 +406,80 @@ describe("Git panel renamed version comparisons", () => {
     await act(async () => { row!.click(); });
     expect(host.querySelector('input[type="range"]')).toBeNull();
     expect(host.querySelectorAll("img")).toHaveLength(2);
+  });
+
+  it.each(["same-token pairing", "cross-tab epoch"])("resets the selected slider on %s", async (transition) => {
+    const savedEpoch = localStorage.getItem(CREDENTIAL_EPOCH_KEY);
+    setToken("synthetic-pair-token");
+    try {
+      writeBase("old.png", "synthetic image bytes"); git("mv", "old.png", "new.png"); stub();
+      await show("new.png");
+      await click(t("session-files-compareview.slider"));
+      const previous = credentialOwner();
+      await act(async () => {
+        if (transition === "same-token pairing") setPairedToken(getToken());
+        else {
+          localStorage.setItem(CREDENTIAL_EPOCH_KEY, "synthetic-cross-tab-epoch");
+          window.dispatchEvent(new StorageEvent("storage", { key: CREDENTIAL_EPOCH_KEY, storageArea: localStorage }));
+        }
+      });
+      expect(getToken()).toBe("synthetic-pair-token");
+      expect(credentialOwner()).not.toBe(previous);
+      const row = [...host.querySelectorAll("button")].find((b) => b.title === "new.png");
+      expect(row).toBeTruthy();
+      await act(async () => { row!.click(); });
+      expect(host.querySelector('input[type="range"]')).toBeNull();
+      expect(host.querySelectorAll("img")).toHaveLength(2);
+    } finally {
+      await act(async () => {
+        if (savedEpoch === null) localStorage.removeItem(CREDENTIAL_EPOCH_KEY);
+        else localStorage.setItem(CREDENTIAL_EPOCH_KEY, savedEpoch);
+        setToken(oldToken);
+      });
+    }
+  });
+
+  it.each(["same-token pairing", "cross-tab epoch"].flatMap((transition) => ["json", "html", "redirect"].map((kind) => ({ transition, kind }))))("fences a late $kind response after $transition", async ({ transition, kind }) => {
+    const savedEpoch = localStorage.getItem(CREDENTIAL_EPOCH_KEY);
+    setToken("synthetic-pair-token");
+    writeBase("old.png", "synthetic image bytes"); git("mv", "old.png", "new.png");
+    let answer!: (response: Response) => void;
+    hold = (r) => r.rev === "HEAD" ? new Promise<Response>((resolve) => { answer = resolve; }) : undefined; stub();
+    const unauthorized = vi.fn();
+    const restore = handleUnauthorized(unauthorized);
+    vi.mocked(reloadForSignIn).mockClear();
+    try {
+      await show("new.png");
+      const previous = credentialOwner();
+      const response = kind === "json" ? json({ error: "Synthetic unauthorized" }, 401)
+        : kind === "html" ? new Response("<html>Sign in</html>", { status: 401, headers: { "Content-Type": "text/html" } })
+        : new Response("", { status: 302, headers: { Location: "/sign-in" } });
+      await act(async () => {
+        if (transition === "same-token pairing") setPairedToken(getToken());
+        else localStorage.setItem(CREDENTIAL_EPOCH_KEY, "synthetic-cross-tab-epoch");
+        answer(response); // The other tab's storage event may arrive after the response.
+      });
+      if (transition === "cross-tab epoch") await act(async () => {
+        window.dispatchEvent(new StorageEvent("storage", { key: CREDENTIAL_EPOCH_KEY, storageArea: localStorage }));
+      });
+      expect(getToken()).toBe("synthetic-pair-token");
+      expect(credentialOwner()).not.toBe(previous);
+      expect(unauthorized).not.toHaveBeenCalled();
+      expect(reloadForSignIn).not.toHaveBeenCalled();
+      expect(host.querySelectorAll("img")).toHaveLength(0);
+      hold = undefined;
+      const row = [...host.querySelectorAll("button")].find((b) => b.title === "new.png");
+      expect(row).toBeTruthy();
+      await act(async () => { row!.click(); });
+      expect(host.querySelectorAll("img")).toHaveLength(2);
+    } finally {
+      handleUnauthorized(restore);
+      await act(async () => {
+        if (savedEpoch === null) localStorage.removeItem(CREDENTIAL_EPOCH_KEY);
+        else localStorage.setItem(CREDENTIAL_EPOCH_KEY, savedEpoch);
+        setToken(oldToken);
+      });
+    }
   });
 
   it.each(["manager", "credential", "selection", "close"].flatMap((owner) => ["json", "html", "redirect"].map((kind) => ({ owner, kind }))))("does not let a retired $owner comparison's late $kind response reset authentication", async ({ owner, kind }) => {
