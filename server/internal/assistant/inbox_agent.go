@@ -17,7 +17,7 @@ import (
 
 // The inbox's AI twin (docs/assistant/inbox.md): model 1 triages every new item (inbox_triage.go), every "Needs you" item
 // (and what an inbox policy hands it, inbox_policies.go) goes to an agent, model 2 links it to one of the user's
-// tasks (linkTask), and the agent (model 3, a headless Claude Code in the assistant's
+// tasks (linkTaskFor), and the agent (model 3, a headless Claude Code in the assistant's
 // directory, with its tools: a conversation the assistant starts itself, untitled) looks into it and drafts the reply
 // (inbox_draft). The draft waits in the inbox; nothing is sent until the user taps "Send" (POST /api/v1/inbox/{id}/reply).
 
@@ -100,6 +100,9 @@ type InboxAgent struct {
 	// to its count, and the ones queued since are the newest. Pending is trimmed to the latest 20, so its length
 	// cannot tell how many came since.
 	told int
+	// signaled is the handling chain's newest received batch an inbox signal to the linked task's supervisor counted
+	// (in memory only, supervise_inbox.go): the next one counts the messages after it.
+	signaled int
 }
 
 // queueNote adds a note to Pending, kept to the latest 20.
@@ -132,7 +135,19 @@ func (a *InboxAgent) startDue(now time.Time) bool {
 func (s *Service) handInbox(ctx context.Context) {
 	b := &s.inbox
 	if !s.inboxConfig(ctx).Agent.Enabled {
-		return
+		b.mu.Lock()
+		pending := false
+		for _, it := range b.items {
+			active, queued := inboxAgentReleaseState(it)
+			if active || queued {
+				pending = true
+				break
+			}
+		}
+		b.mu.Unlock()
+		if !pending {
+			return
+		}
 	}
 	b.handAgain.Store(true)
 	if !b.handing.TryLock() {
@@ -159,6 +174,7 @@ func (s *Service) handPass(ctx context.Context) {
 	cfg := s.inboxConfig(ctx).Agent
 	b := &s.inbox
 	if !cfg.Enabled {
+		s.releaseInboxAgents(ctx)
 		return
 	}
 	if f := b.passHook; f != nil {
@@ -167,20 +183,74 @@ func (s *Service) handPass(ctx context.Context) {
 	now := time.Now()
 	s.sweepInboxAgents(ctx, cfg, now)
 	escalated := b.escalate(now.Add(-agentMaxAge(cfg)), now)
+	linked := map[*InboxItem]bool{}
 	if tasks := s.activeTasks(ctx); len(tasks) > 0 { // which of the user's tasks a new one is about
 		for _, w := range escalated {
 			b.mu.Lock()
 			fresh := w.it.Agent != nil && w.it.Agent.SessionID == "" && w.it.Agent.TodoID == ""
 			b.mu.Unlock()
-			if fresh {
-				s.linkTaskFor(ctx, w.it, tasks, w)
+			if fresh && s.linkTaskFor(ctx, w.it, tasks, w) {
+				linked[w.it] = true
 			}
 		}
 	}
 	// A failed row gives the event back its old state: the next pass escalates it again.
 	s.saveWrites(ctx, escalated, "its escalation")
+	items := make([]*InboxItem, 0, len(escalated))
+	for _, w := range escalated {
+		items = append(items, w.it)
+	}
+	s.superviseInbox(ctx, items, linked) // a supervised task's supervisor hears of its new messages (supervise_inbox.go)
 	s.deliverPending(ctx)
 	s.startInboxAgents(ctx, cfg)
+}
+
+// releaseInboxAgents returns unfinished twin work to the user even while promotion and starts are disabled.
+func (s *Service) releaseInboxAgents(ctx context.Context) {
+	b := &s.inbox
+	b.mu.Lock()
+	var changed []*inboxWrite
+	now := time.Now()
+	for _, it := range b.items {
+		if w := b.releaseInboxAgent(it, HandlingFailed, i18n.T(b.userLang(), "assistant-inbox_agent.disabled"), now); w != nil {
+			changed = append(changed, w)
+		}
+	}
+	b.mu.Unlock()
+	s.saveWrites(ctx, changed, "the disabled AI twin's work")
+}
+
+// releaseInboxAgent drops queued work and releases an unfinished item. Completed suggestions and confirmed
+// actions waiting for a reply stay available. HandlingDone restores the item's tier; HandlingFailed returns it to
+// Needs you. The caller holds b.mu and persists the returned write.
+func (b *inboxBook) releaseInboxAgent(it *InboxItem, state, reason string, now time.Time) *inboxWrite {
+	active, pending := inboxAgentReleaseState(it)
+	if !active && !pending {
+		return nil
+	}
+	w := beginWrite(it)
+	if active {
+		if state == HandlingFailed {
+			b.failHandling(it, reason, now)
+		} else {
+			b.setHandling(it, state, "", now)
+			b.chainAdd(it, InboxChainEntry{Kind: ChainConcluded, At: now.UTC(), Text: reason})
+		}
+	}
+	if a := it.Agent; a != nil {
+		a.Pending, a.Wake, a.Back, a.RetryAfter = nil, false, "", nil
+	}
+	b.settle(w)
+	return w
+}
+
+// inboxAgentReleaseState identifies unfinished handling and queued work while the caller holds the inbox lock.
+func inboxAgentReleaseState(it *InboxItem) (active, pending bool) {
+	a, h := it.Agent, it.Handling
+	active = it.open() && (h != nil && (h.State == HandlingLooking || h.State == HandlingAgent) ||
+		h == nil && a != nil && (a.State == AgentQueued || a.State == AgentRunning))
+	pending = a != nil && (len(a.Pending) > 0 || a.Wake || a.Back != "" || a.RetryAfter != nil)
+	return active, pending
 }
 
 // startInboxAgents starts a processing conversation for the queued events that have none (newest first, while fewer
@@ -199,6 +269,7 @@ func (s *Service) startInboxAgents(ctx context.Context, cfg InboxAgentConfig) {
 	b.mu.Lock()
 	running := 0
 	var queued []*InboxItem
+	var released []*inboxWrite
 	for _, it := range b.items {
 		if it.Agent == nil {
 			continue
@@ -206,8 +277,17 @@ func (s *Service) startInboxAgents(ctx context.Context, cfg InboxAgentConfig) {
 		switch {
 		case it.Agent.SessionID != "" && (it.Handling == nil && it.Agent.State == AgentRunning || it.Handling != nil && it.Handling.State == HandlingLooking):
 			running++
-		case it.Agent.State == AgentQueued && it.Agent.SessionID == "" && it.open() && it.Agent.startDue(now):
-			queued = append(queued, it)
+		case it.Agent.State == AgentQueued && it.Agent.SessionID == "" && it.open():
+			// Recheck before backoff, capacity or adoption: a saved rule also covers work already queued.
+			if b.policyTwin(it) == TwinNever {
+				if w := b.releaseInboxAgent(it, HandlingDone, i18n.T(b.userLang(), "assistant-inbox_agent.never"), now); w != nil {
+					released = append(released, w)
+				}
+				continue
+			}
+			if it.Agent.startDue(now) {
+				queued = append(queued, it)
+			}
 		}
 	}
 	b.sortQueued(queued)
@@ -233,12 +313,15 @@ func (s *Service) startInboxAgents(ctx context.Context, cfg InboxAgentConfig) {
 			continue
 		}
 		it.Agent.State, it.Agent.StartedAt, it.Agent.Attempts, it.Agent.RetryAfter = AgentRunning, &now, it.Agent.Attempts+1, nil
+		delete(b.listMemo.kept, it.ID) // saved once the start returns: listed as running meanwhile (inbox_list_memo.go)
 		a := b.inboxAgentFor(it, owner, linked[it.Agent.TodoID], larkDefault, loc)
 		a.KnowledgeDir = s.kb.dir // the heading of what the knowledge base knows names where it is
 		jobs = append(jobs, job{it, kbChatOf(it), func(kbc *prompts.KBContext) string { a.KB = kbc; return prompts.RenderInboxAgent(a) },
 			it.Agent.told})
 	}
 	b.mu.Unlock()
+	// A failed release stays queued for the next pass, but never starts under the rule.
+	s.saveWrites(ctx, released, "the AI twin policy's queued work")
 	// An adoption whose row failed is undone (no conversation again): its notes wait, and the next pass adopts it.
 	s.saveWrites(ctx, adopted, "the adoption of its conversation")
 	for _, w := range adopted {
@@ -434,20 +517,6 @@ func (s *Service) sweepInboxAgents(ctx context.Context, cfg InboxAgentConfig, no
 	s.saveWrites(ctx, changed, "its settled conversation")
 }
 
-// inboxAgentPrompt is the AI twin's first message for an item (prompts/inbox/agent.md).
-func (b *inboxBook) inboxAgentPrompt(it *InboxItem, owner string, kbc *prompts.KBContext) string {
-	return b.inboxAgentPromptFor(it, owner, kbc, nil, 1, time.UTC)
-}
-
-// inboxAgentPromptFor is inboxAgentPrompt for an item about one of the user's tasks (linked: its progress).
-// larkDefault is lark.account: the Feishu account lark_messages reads unless the prompt names another.
-// loc: the user's time zone, which the chain's times are read in.
-func (b *inboxBook) inboxAgentPromptFor(it *InboxItem, owner string, kbc *prompts.KBContext, linked *prompts.InboxTask, larkDefault int, loc *time.Location) string {
-	a := b.inboxAgentFor(it, owner, linked, larkDefault, loc)
-	a.KB = kbc
-	return prompts.RenderInboxAgent(a)
-}
-
 // inboxAgentFor is what the AI twin's first message is made of, but the knowledge base's part.
 func (b *inboxBook) inboxAgentFor(it *InboxItem, owner string, linked *prompts.InboxTask, larkDefault int, loc *time.Location) prompts.InboxAgent {
 	a := prompts.InboxAgent{Owner: owner, EventID: it.ID, Title: it.Title, Item: b.promptItem(it), Task: it.Agent.Task, Reason: it.Agent.Reason,
@@ -513,7 +582,7 @@ func messageCardOf(it *InboxItem) *MessageCard {
 		return nil
 	}
 	return &MessageCard{TodoID: it.Agent.TodoID, Source: it.Source, Account: it.AccountName, Chat: it.Title, Sender: it.Sender,
-		Text: clip(strings.TrimSpace(it.Preview), 400), Draft: it.Agent.Draft}
+		Text: clip(strings.TrimSpace(it.Preview), 400), Draft: it.Agent.Draft, MessageVersion: it.Last}
 }
 
 // inboxRepliedAt is when those of the inbox items ids the user replied to were replied to (the message cards say

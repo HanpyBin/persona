@@ -1,4 +1,4 @@
-// An extension's sign-in and its command-line tools (#4507, docs/protocol/protocol.md "Extension sign-in"): the hub asks the extension's
+// An extension's sign-in and its command-line tools (#4507, docs/protocol/protocol.md): the hub asks the extension's
 // program (auth.status / auth.step / auth.logout) and keeps its state; the page draws a "Sign in" group on the extension's
 // detail, a sign-in dialog of steps (fields, a device code, a QR code), and lists the tools in "About". Only with a hub
 // that has `extension_auth`; the hub pushes `extension_auth` whenever a sign-in state changes.
@@ -9,8 +9,6 @@ import type { AuthPrompt as WireAuthPrompt, AuthState } from "./extension-wire";
 import { messageManager } from "./manager-choice";
 import { onHubEvent } from "./store";
 import { t } from "../i18n";
-
-export const AUTH_FEATURE = "extension_auth";
 
 /** The hub's sign-in state of an extension (ExtensionAuth); `unknown` while its program does not run. */
 export interface ExtensionAuth {

@@ -147,11 +147,11 @@ func TestCompletedTodoOnlyStopsStillLinkedAgents(t *testing.T) {
 	}
 }
 
-// Manual input still reaches a completed task's agent. Only an automatically
-// completed task reopens when it starts working, allowing subsequent triage.
+// Manual input still reaches a completed task's agent. Only a task the hub judged
+// done or its supervisor accepted reopens, allowing subsequent triage.
 func TestCompletedTodoManualTurnPreservesReopeningRules(t *testing.T) {
 	ctx := context.Background()
-	for _, doneBy := range []string{"", db.DoneByAuto, db.DoneByReview} {
+	for _, doneBy := range []string{"", db.DoneByAuto, db.DoneByReview, db.DoneByCancelled} {
 		name := doneBy
 		if name == "" {
 			name = "user"
@@ -167,7 +167,8 @@ func TestCompletedTodoManualTurnPreservesReopeningRules(t *testing.T) {
 			}
 			s.taskWorking(ctx, "box", "s1")
 			s.workStarted(ctx, "box", "s1", time.Now())
-			if reopened := todoNow(s, "todo_done").DoneAt == nil; reopened != (doneBy != "") {
+			wantReopen := doneBy == db.DoneByAuto || doneBy == db.DoneByReview
+			if reopened := todoNow(s, "todo_done").DoneAt == nil; reopened != wantReopen {
 				t.Fatalf("reopened = %v for done_by %q", reopened, doneBy)
 			}
 			c := apiErrorTurn("s1", "API Error: 529 overloaded")
@@ -175,7 +176,7 @@ func TestCompletedTodoManualTurnPreservesReopeningRules(t *testing.T) {
 			f.setSessions("box", c)
 			triage(t, s, "s1")
 			e := entryOf(t, s, "s1")
-			if scheduled := e.WakeAt != nil; scheduled != (doneBy != "") {
+			if scheduled := e.WakeAt != nil; scheduled != wantReopen {
 				t.Fatalf("scheduled = %v for done_by %q: %+v", scheduled, doneBy, e)
 			}
 			if got := f.sentToAgents(); len(got) != 1 || got[0] != "s1: Check one more case." {
@@ -197,7 +198,7 @@ func TestCompletedTodoDropsLiveAndRestoredCards(t *testing.T) {
 			c := stopped("s1", "Which test should I run?")
 			c.UpdatedAt = time.Now()
 			f.setSessions("box", c)
-			f.triage = `{"phase":"blocked","on":"user","line":"Choose a test","questions":[{"question":"Which test?","options":[{"label":"Unit tests"},{"label":"Integration tests"}]}]}`
+			f.triage = `{"phase":"blocked","on":"user","line":"Choose a test","questions":[{"question":"Which test should I run?","options":[{"label":"Unit tests"},{"label":"Integration tests"}]}]}`
 			triage(t, s, "s1")
 			cardID := entryOf(t, s, "s1").InteractionID
 			if cardID == "" {

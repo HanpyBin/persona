@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/nwverse/persona/server/internal/apierr"
 	"github.com/nwverse/persona/server/internal/db"
@@ -16,7 +17,7 @@ import (
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
-// A todo's decision record (#1618, docs/assistant/todos.md "Decision record"): the calls the user made on it, written by hand in the
+// A todo's decision record (#1618, docs/assistant/todos.md "Decision records"): the calls the user made on it, written by hand in the
 // todo or from their answers to the question cards of the agents working on it (interaction.resolved), and handed to
 // every agent the todo is given to (assistant.todo_handoff).
 
@@ -40,9 +41,15 @@ func (s *Service) todoDecisionRoutes() {
 		apierr.WriteJSON(w, map[string]any{"decisions": list})
 	})
 
-	// POST /api/v1/todos/{id}/decisions: write one by hand {question, choice, reason?, supersedes_id?}.
+	// POST /api/v1/todos/{id}/decisions: write one {question, choice, reason?, supersedes_id?, source?, ref?}. A device
+	// writes one by hand (source manual, the default), an outcome, or on a concern the report of its outcome to the owner
+	// (source reported: choice is what they were told; question defaults to the concern's title; it closes the concern,
+	// concerns.go); an extension (todos.write) writes only outcomes,
+	// such as a scheduler's acceptance evidence, never the user's decisions and never superseding one. ref (an
+	// extension's, at most decisionRefMax runes, no '#') makes the write idempotent: the same ref and question is
+	// written once, and a replay answers inserted false.
 	s.handle("POST /api/v1/todos/{id}/decisions", func(w http.ResponseWriter, r *http.Request) {
-		if !fullRole(r) {
+		if !todoWriter(r) {
 			apierr.Write(w, http.StatusForbidden, errors.New("read-only role cannot modify todos"))
 			return
 		}
@@ -55,24 +62,37 @@ func (s *Service) todoDecisionRoutes() {
 			Choice       string `json:"choice"`
 			Reason       string `json:"reason"`
 			SupersedesID string `json:"supersedes_id"`
+			Source       string `json:"source"`
+			Ref          string `json:"ref"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&in); err != nil {
 			apierr.Write(w, http.StatusBadRequest, err)
 			return
 		}
+		if strings.TrimSpace(in.Source) == db.DecisionReported {
+			s.reportConcernRoute(w, r, id, in.Choice)
+			return
+		}
 		row := db.TodoDecisionRow{ID: "dec_" + randomHex(8), TodoID: id, Question: decisionText(in.Question),
 			Choice: decisionText(in.Choice), Reason: decisionText(in.Reason), Source: db.DecisionManual,
 			SupersedesID: strings.TrimSpace(in.SupersedesID), CreatedAt: decisionNow()}
+		if err := decisionOrigin(r, &row, strings.TrimSpace(in.Source), strings.TrimSpace(in.Ref)); err != nil {
+			apierr.Write(w, http.StatusBadRequest, err)
+			return
+		}
 		if row.Question == "" || row.Choice == "" {
 			apierr.Write(w, http.StatusBadRequest, errors.New("question and choice cannot be empty"))
 			return
 		}
-		if _, err := s.insertDecision(r.Context(), st, row); err != nil {
+		inserted, err := s.insertDecision(r.Context(), st, row)
+		if err != nil {
 			decisionErr(w, err)
 			return
 		}
-		s.decisionsChanged(r.Context(), id, row.CreatedAt)
-		apierr.WriteJSON(w, map[string]any{"decision": row})
+		if inserted {
+			s.decisionsChanged(r.Context(), id, row.CreatedAt)
+		}
+		apierr.WriteJSON(w, map[string]any{"decision": row, "inserted": inserted})
 	})
 
 	// PATCH /api/v1/todos/{id}/decisions/{did}: {supersedes_id}: mark it as replacing an earlier decision ("" undoes it).
@@ -107,6 +127,28 @@ func (s *Service) todoDecisionRoutes() {
 	})
 }
 
+// reportConcernRoute is POST …/decisions {source: "reported", choice}: a device writes the report of concern id's
+// outcome, which closes it. Only a device (an extension never reports to the owner for the main conversation).
+func (s *Service) reportConcernRoute(w http.ResponseWriter, r *http.Request, id, choice string) {
+	if r.Header.Get(RoleHeader) == roleExtension {
+		apierr.Write(w, http.StatusBadRequest, errors.New("an extension writes outcomes only"))
+		return
+	}
+	t, closed, err := s.reportConcern(r.Context(), id, choice, "", "")
+	switch {
+	case errors.Is(err, db.ErrTodoNotFound):
+		apierr.Write(w, http.StatusNotFound, err)
+	case errors.Is(err, db.ErrNotConcern):
+		apierr.Write(w, http.StatusBadRequest, errors.New("source reported is for a concern only"))
+	case errors.Is(err, errEmptyReport):
+		apierr.Write(w, http.StatusBadRequest, err)
+	case err != nil:
+		apierr.Write(w, http.StatusInternalServerError, err)
+	default:
+		apierr.WriteJSON(w, map[string]any{"todo": t, "closed": closed})
+	}
+}
+
 // decisionTodo is the store and the request's todo id once the todos are loaded and it is one of them; otherwise it
 // answers.
 func (s *Service) decisionTodo(w http.ResponseWriter, r *http.Request) (todoStore, string, bool) {
@@ -136,6 +178,49 @@ func decisionErr(w http.ResponseWriter, err error) {
 	default:
 		apierr.Write(w, http.StatusInternalServerError, err)
 	}
+}
+
+// decisionRefMax bounds an extension's ref.
+const decisionRefMax = 200
+
+// decisionOrigin sets row's source and provenance from who asks: a device's source is manual (the default) or outcome;
+// an extension's is outcome only, its machine "extension:<id>", and with a ref its message "ext:<id>:<ref>" (the key
+// that keeps a replay from writing twice). An extension may not supersede.
+func decisionOrigin(r *http.Request, row *db.TodoDecisionRow, source, ref string) error {
+	ext := ""
+	if r.Header.Get(RoleHeader) == roleExtension {
+		ext = r.Header.Get(ExtensionHeader)
+		if ext == "" {
+			return errors.New("extension unknown")
+		}
+	}
+	switch {
+	case source == "" && ext != "", source == db.DecisionOutcome:
+		row.Source = db.DecisionOutcome
+	case source == "" || source == db.DecisionManual:
+		if ext != "" {
+			return errors.New("an extension writes outcomes only")
+		}
+	default:
+		return errors.New("source must be manual or outcome")
+	}
+	if ext == "" {
+		if ref != "" {
+			return errors.New("ref is an extension's")
+		}
+		return nil
+	}
+	if row.SupersedesID != "" {
+		return errors.New("an extension cannot supersede a decision")
+	}
+	if strings.Contains(ref, "#") || utf8.RuneCountInString(ref) > decisionRefMax {
+		return fmt.Errorf("ref must be at most %d characters without '#'", decisionRefMax)
+	}
+	row.SourceMachine = "extension:" + ext
+	if ref != "" {
+		row.SourceMessage = "ext:" + ext + ":" + ref
+	}
+	return nil
 }
 
 // decisionNow is now as Postgres keeps it (microseconds), so the order checks compare what was stored.

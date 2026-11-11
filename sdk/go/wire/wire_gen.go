@@ -230,11 +230,22 @@ type Permissions struct {
 	AgentRuntimes bool `json:"agent_runtimes,omitempty"`
 	// It receives the error and crash reports of the hub and the user's devices, scrubbed (no message text, tokens, user
 	// names, machine names or IP addresses). Needed by contributes.error_reports.
-	ErrorReports bool `json:"error_reports,omitempty"`
+	ErrorReports bool               `json:"error_reports,omitempty"`
+	Storage      *StoragePermission `json:"storage,omitempty"`
 	// It is handed the authorization links the user's Agents stop at (only links its contributes.auth_relay names,
 	// printed by the Agent's own command) to complete them with the account it is signed in with. Needed by
 	// contributes.auth_relay.
 	AuthRelay bool `json:"auth_relay,omitempty"`
+}
+
+// StoragePermission: default-deny installation-scoped business data, separate from credentials. Only declared logical
+// keys or literal prefixes ending in *; no filesystem, SQL, hub or network access. CAS and transactions use existing
+// RPC limits and host quotas. Queue and blob methods additionally require their flags.
+type StoragePermission struct {
+	Keys     []string `json:"keys,omitempty"`
+	Patterns []string `json:"patterns,omitempty"`
+	Queues   bool     `json:"queues,omitempty"`
+	Blobs    bool     `json:"blobs,omitempty"`
 }
 
 // Contributes: contributions by extension point. A point this hub does not know installs with a warning, not taking
@@ -244,6 +255,7 @@ type Contributes struct {
 	Voice           []NamedItem          `json:"voice,omitempty"`
 	Computer        []NamedItem          `json:"computer,omitempty"`
 	Browser         []NamedItem          `json:"browser,omitempty"`
+	Iphone          []NamedItem          `json:"iphone,omitempty"`
 	Quota           []QuotaItem          `json:"quota,omitempty"`
 	Providers       []ProviderItem       `json:"providers,omitempty"`
 	API             []APIItem            `json:"api,omitempty"`
@@ -263,6 +275,7 @@ type Contributes struct {
 	Tunnels         []TunnelItem         `json:"tunnels,omitempty"`
 	ErrorReports    []ErrorReportsItem   `json:"error_reports,omitempty"`
 	AuthRelay       []AuthRelayItem      `json:"auth_relay,omitempty"`
+	SecretProviders []SecretProviderItem `json:"secret_providers,omitempty"`
 	Messaging       []MessagingItem      `json:"messaging,omitempty"`
 	// Extra keys stay at this object's level on the wire; they cannot replace declared fields.
 	AdditionalProperties map[string]json.RawMessage `json:"-"`
@@ -274,7 +287,7 @@ func (v *Contributes) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	declared := map[string]json.RawMessage{}
-	for _, key := range []string{"connectors", "voice", "computer", "browser", "quota", "providers", "api", "assistant", "mcp_servers", "ui", "agent_sources", "channel", "events", "shortcuts", "skills", "prompts", "themes", "looks", "triage_templates", "agent_filters", "tunnels", "error_reports", "auth_relay", "messaging"} {
+	for _, key := range []string{"connectors", "voice", "computer", "browser", "iphone", "quota", "providers", "api", "assistant", "mcp_servers", "ui", "agent_sources", "channel", "events", "shortcuts", "skills", "prompts", "themes", "looks", "triage_templates", "agent_filters", "tunnels", "error_reports", "auth_relay", "secret_providers", "messaging"} {
 		if value, ok := extra[key]; ok {
 			declared[key] = value
 			delete(extra, key)
@@ -306,7 +319,7 @@ func (v Contributes) MarshalJSON() ([]byte, error) {
 	}
 	for key, value := range v.AdditionalProperties {
 		switch key {
-		case "connectors", "voice", "computer", "browser", "quota", "providers", "api", "assistant", "mcp_servers", "ui", "agent_sources", "channel", "events", "shortcuts", "skills", "prompts", "themes", "looks", "triage_templates", "agent_filters", "tunnels", "error_reports", "auth_relay", "messaging":
+		case "connectors", "voice", "computer", "browser", "iphone", "quota", "providers", "api", "assistant", "mcp_servers", "ui", "agent_sources", "channel", "events", "shortcuts", "skills", "prompts", "themes", "looks", "triage_templates", "agent_filters", "tunnels", "error_reports", "auth_relay", "secret_providers", "messaging":
 			continue
 		}
 		fields[key] = value
@@ -439,7 +452,7 @@ type LookAvatar struct {
 	Dark *LookAvatarDark `json:"dark,omitempty"`
 }
 
-// LookPalette: an appearance's colors, #RRGGBB (docs/apple/persona.md "Palettes", the apps' PersonaPalette).
+// LookPalette: an appearance's colors, #RRGGBB (docs/apple/persona.md "Color scheme", the apps' PersonaPalette).
 type LookPalette struct {
 	Primary    string `json:"primary,omitempty"`
 	Secondary  string `json:"secondary,omitempty"`
@@ -475,8 +488,8 @@ type LookDot struct {
 	States LookDotStates `json:"states"`
 }
 
-// LookItem: A look (docs/extensions/extensions.md "Looks"): Persona's name, face, colors and dot, served as a persona
-// package. app_icon_fallback is the built-in icon used where only the app's own icons can be shown.
+// LookItem: A look (docs/extensions/extensions.md "Avatars"): Persona's name, face, colors and dot, served as a
+// persona package. app_icon_fallback is the built-in icon used where only the app's own icons can be shown.
 type LookItem struct {
 	ID              string      `json:"id"`
 	Name            string      `json:"name"`
@@ -508,6 +521,18 @@ type AuthRelayItem struct {
 	Paths []string `json:"paths"`
 }
 
+// SecretProviderItem: secret values it supplies for references of its schemes (op://vault/item/field): the manager
+// calls secrets.describe and secrets.resolve when a setting holds such a reference or the user approves handing one
+// to an Agent run. Needs the program to speak the protocol. A scheme another installed extension claims fails the
+// install.
+type SecretProviderItem struct {
+	ID string `json:"id"`
+	// Whose secrets these are, in a few words (1Password): the settings say From <name>.
+	Name string `json:"name"`
+	// The reference schemes it resolves, without :// (op).
+	Schemes []string `json:"schemes"`
+}
+
 // ErrorReportsItem: it is given the error and crash reports of the hub and the user's devices
 // (error_reports.deliver): needs the program to speak the protocol, on_startup and permissions.error_reports.
 type ErrorReportsItem struct {
@@ -517,7 +542,8 @@ type ErrorReportsItem struct {
 }
 
 // TunnelItem: A tunnel the apps can reach this hub through when its own addresses do not answer (docs "In-app
-// tunnels"): an in-app tunnel core built into the app, going to the configuration's target_host and target_port.
+// tunnels"): an in-app tunnel core built into the app, going to the configuration's target_host and target_port; an
+// optional integer ssh_port is the hub machine's SSH port, for an SSH tunnel the app dials through this tunnel.
 type TunnelItem struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
@@ -909,6 +935,25 @@ type UIParams struct {
 	Item         *UIInboxItem      `json:"item,omitempty"`
 }
 
+// UIImageParams: ui.image's parameters (UI version 6): the hub asks the extension for a picture it drew as a ref, for
+// the ui contribution that drew it. width is the pixel width the app wants (320, 640, 1280 or 2048; 0 when it says
+// nothing); the extension may ignore it.
+type UIImageParams struct {
+	Contribution string `json:"contribution"`
+	Ref          string `json:"ref"`
+	Width        int    `json:"width,omitempty"`
+	Placement    string `json:"placement,omitempty"`
+}
+
+// UIImage: what ui.image answers: the picture's bytes in base64 (png, jpeg, webp or gif, at most 4 MB decoded and
+// 8192 pixels a side; the hub reads the type from the bytes, not from mime) and how long the hub may keep it
+// (seconds, 60 when absent; a camera 5 to 10, a still 86400).
+type UIImage struct {
+	Mime   string `json:"mime"`
+	Data   string `json:"data"`
+	MaxAge *int   `json:"max_age,omitempty"`
+}
+
 type UIMachine struct {
 	ID     string `json:"id"`
 	Name   string `json:"name"`
@@ -1244,6 +1289,53 @@ type AuthRelayResult struct {
 	Reason string `json:"reason,omitempty"`
 }
 
+// SecretPurpose: what a secret value is resolved for: kind extension (an extension's secret, id its id), launcher (a
+// launcher's or model provider's key, id its name, machine the computer it goes to) or agent_run (handed to one Agent
+// run after the user approved it on the phone, id the variable's name, machine and session the Agent's).
+type SecretPurpose struct {
+	Kind    string `json:"kind"`
+	ID      string `json:"id"`
+	Machine string `json:"machine,omitempty"`
+	Session string `json:"session,omitempty"`
+}
+
+// SecretsDescribeParams: secrets.describe's parameters: a reference of one of the contribution's schemes.
+type SecretsDescribeParams struct {
+	Contribution string `json:"contribution"`
+	Reference    string `json:"reference"`
+}
+
+// SecretsDescribeResult: what secrets.describe answers: words for people (the item and field), never a value.
+type SecretsDescribeResult struct {
+	Title  string `json:"title"`
+	Detail string `json:"detail,omitempty"`
+}
+
+// SecretsResolveParams: secrets.resolve's parameters: the reference and what it is resolved for. Only the manager
+// calls it.
+type SecretsResolveParams struct {
+	Contribution string        `json:"contribution"`
+	Reference    string        `json:"reference"`
+	Purpose      SecretPurpose `json:"purpose"`
+}
+
+// SecretsResolveResult: what secrets.resolve answers: the value, at most 16 KB. Errors: not_found, not_signed_in,
+// rate_limited (data.retry_after), refused.
+type SecretsResolveResult struct {
+	Value string `json:"value"`
+}
+
+// SecretsUsedEvent: secrets.used (an event to the provider, no answer): a reference it resolved was used, for the
+// usage record its own page shows. Never the value.
+type SecretsUsedEvent struct {
+	Contribution string        `json:"contribution"`
+	Reference    string        `json:"reference"`
+	Purpose      SecretPurpose `json:"purpose"`
+	At           time.Time     `json:"at"`
+	// settings (a reference saved in Settings), rule (an Always rule) or the approving device's id.
+	ApprovedBy string `json:"approved_by,omitempty"`
+}
+
 // ExtensionNotification: extension_notification in an extension's alert push: whose it is, the page a tap opens (ui
 // with state) and its buttons (category ext.<extension>.<hash of the action ids>, registered by the app as it meets
 // it).
@@ -1458,6 +1550,7 @@ const (
 	NavIconPause       = "pause"
 	NavIconStop        = "stop"
 	NavIconSpeaker     = "speaker"
+	NavIconMusic       = "music"
 	NavIconTv          = "tv"
 	NavIconPlug        = "plug"
 	NavIconBattery     = "battery"
@@ -1489,7 +1582,7 @@ const (
 )
 
 // NavIcons are the values of NavIcon, in order.
-var NavIcons = []string{"plugin", "chart", "gauge", "list", "bell", "doc", "calendar", "money", "extension", "person", "chat", "mail", "link", "folder", "star", "check", "warning", "clock", "tag", "search", "settings", "branch", "commit", "code", "pull_request", "merge", "file", "home", "sofa", "light", "power", "fan", "thermometer", "droplet", "lock", "unlock", "door", "window", "camera", "video", "play", "pause", "stop", "speaker", "tv", "plug", "battery", "bolt", "sun", "moon", "cloud", "rain", "snow", "wind", "leaf", "car", "location", "robot", "wifi", "shield", "trend_up", "trend_down", "wallet", "bank", "heart", "plus", "minus", "trash", "edit", "refresh", "share", "info"}
+var NavIcons = []string{"plugin", "chart", "gauge", "list", "bell", "doc", "calendar", "money", "extension", "person", "chat", "mail", "link", "folder", "star", "check", "warning", "clock", "tag", "search", "settings", "branch", "commit", "code", "pull_request", "merge", "file", "home", "sofa", "light", "power", "fan", "thermometer", "droplet", "lock", "unlock", "door", "window", "camera", "video", "play", "pause", "stop", "speaker", "music", "tv", "plug", "battery", "bolt", "sun", "moon", "cloud", "rain", "snow", "wind", "leaf", "car", "location", "robot", "wifi", "shield", "trend_up", "trend_down", "wallet", "bank", "heart", "plus", "minus", "trash", "edit", "refresh", "share", "info"}
 
 type View struct {
 	Title    string    `json:"title,omitempty"`
@@ -2217,16 +2310,18 @@ type Review struct {
 	Discard     *Action          `json:"discard,omitempty"`
 }
 
-// Values of PersonaCardKind.
+// PersonaCardKind: ring: one day's total and its parts (a donut); stacked_bar: parts side by side to compare (days,
+// people).
 const (
 	PersonaCardKindStat       = "stat"
 	PersonaCardKindStackedBar = "stacked_bar"
 	PersonaCardKindLine       = "line"
 	PersonaCardKindBar        = "bar"
+	PersonaCardKindRing       = "ring"
 )
 
 // PersonaCardKinds are the values of PersonaCardKind, in order.
-var PersonaCardKinds = []string{"stat", "stacked_bar", "line", "bar"}
+var PersonaCardKinds = []string{"stat", "stacked_bar", "line", "bar", "ring"}
 
 // PersonaCard: the assistant's ```persona-card block (#886): one JSON object. Joins the components in #1850; this
 // form keeps drawing.
@@ -2878,11 +2973,114 @@ type MessagingError struct {
 	View  *View  `json:"view,omitempty"`
 }
 
+// ConnectorCatalog: catalog.list: subscribable sources. An empty catalog is an empty sources list.
+type ConnectorCatalog struct {
+	Sources []ConnectorCatalogSource `json:"sources"`
+}
+
+// ConnectorCatalogSource: A stable source id, independent of its display name. Tool names are short and unique within
+// this source.
+type ConnectorCatalogSource struct {
+	ID                 string `json:"id"`
+	Name               string `json:"name"`
+	Icon               string `json:"icon,omitempty"`
+	Service            string `json:"service,omitempty"`
+	MinIntervalSeconds *int   `json:"min_interval_seconds,omitempty"`
+	// A shared connector/account budget, across all its sources.
+	MaxCallsPerHour *int                          `json:"max_calls_per_hour,omitempty"`
+	Tools           []ConnectorCatalogTool        `json:"tools"`
+	Recipes         []ConnectorSubscriptionRecipe `json:"recipes,omitempty"`
+}
+
+type ConnectorCatalogTool struct {
+	Name        string `json:"name"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description"`
+	// A JSON object containing the tool input schema.
+	InputSchema json.RawMessage              `json:"input_schema"`
+	ReadOnly    bool                         `json:"read_only"`
+	Annotations *ConnectorCatalogAnnotations `json:"annotations,omitempty"`
+}
+
+// ConnectorCatalogAnnotations: when present, hints must agree with read_only: true and destructive: false.
+type ConnectorCatalogAnnotations struct {
+	ReadOnlyHint    *bool `json:"read_only_hint,omitempty"`
+	DestructiveHint *bool `json:"destructive_hint,omitempty"`
+}
+
+// ConnectorCatalogCallParams: catalog.call: a source and one of its read-only short tool names. args is an object,
+// default {}.
+type ConnectorCatalogCallParams struct {
+	Contribution string          `json:"contribution"`
+	Source       string          `json:"source"`
+	Tool         string          `json:"tool"`
+	Args         json.RawMessage `json:"args,omitempty"`
+}
+
+// Values of ConnectorSubscriptionMode.
+const (
+	ConnectorSubscriptionModeItems    = "items"
+	ConnectorSubscriptionModeSnapshot = "snapshot"
+)
+
+// ConnectorSubscriptionModes are the values of ConnectorSubscriptionMode, in order.
+var ConnectorSubscriptionModes = []string{"items", "snapshot"}
+
+// Values of ConnectorSubscriptionGroup.
+const (
+	ConnectorSubscriptionGroupSource = "source"
+	ConnectorSubscriptionGroupThread = "thread"
+)
+
+// ConnectorSubscriptionGroups are the values of ConnectorSubscriptionGroup, in order.
+var ConnectorSubscriptionGroups = []string{"source", "thread"}
+
+// Values of ConnectorSubscriptionKind.
+const (
+	ConnectorSubscriptionKindSubMail     = "sub_mail"
+	ConnectorSubscriptionKindSubMessage  = "sub_message"
+	ConnectorSubscriptionKindSubNotice   = "sub_notice"
+	ConnectorSubscriptionKindSubDeadline = "sub_deadline"
+	ConnectorSubscriptionKindSubEvent    = "sub_event"
+	ConnectorSubscriptionKindSubUpdate   = "sub_update"
+	ConnectorSubscriptionKindSubDigest   = "sub_digest"
+)
+
+// ConnectorSubscriptionKinds are the values of ConnectorSubscriptionKind, in order.
+var ConnectorSubscriptionKinds = []string{"sub_mail", "sub_message", "sub_notice", "sub_deadline", "sub_event", "sub_update", "sub_digest"}
+
+// ConnectorSubscriptionFields: paths relative to one item. Only $, .field and [index] are supported; no expressions
+// or recursive descent.
+type ConnectorSubscriptionFields struct {
+	ID      string `json:"id,omitempty"`
+	Thread  string `json:"thread,omitempty"`
+	Title   string `json:"title,omitempty"`
+	Sender  string `json:"sender,omitempty"`
+	Time    string `json:"time,omitempty"`
+	Body    string `json:"body,omitempty"`
+	Link    string `json:"link,omitempty"`
+	DueDate string `json:"due_date,omitempty"`
+}
+
+// ConnectorSubscriptionRecipe: A pull recipe, not a schedule. args is an object (default {}); strings may contain
+// {{since}} or {{since_date}}. items_path defaults to $; fields are relative to one item. Text results require
+// snapshot mode. Runtime argument/schema and mapped-value validation belongs to the subscription runner.
+type ConnectorSubscriptionRecipe struct {
+	Mode      string                       `json:"mode"`
+	Tool      string                       `json:"tool"`
+	Args      json.RawMessage              `json:"args,omitempty"`
+	ItemsPath string                       `json:"items_path,omitempty"`
+	Fields    *ConnectorSubscriptionFields `json:"fields,omitempty"`
+	Kind      string                       `json:"kind"`
+	GroupBy   string                       `json:"group_by"`
+}
+
 // ConnectorErrorCode: error.code a program answers or gets besides the base ErrorCode: rate_limited (tools.call /
 // actions.do, and the hub's answer to too many sent.record; data {retry_after} in seconds, fractional allowed), why
 // credentials.gh_token has no token, and what recall answers: not_recallable (nothing was sent: the program cannot
 // take that message back) and recall_unknown (the request may have taken effect). not_signed_in, offline and
-// rate_limited also say that recall could not act now.
+// rate_limited also say that recall could not act now. not_read_only refuses a catalog.call outside the current
+// read-only catalog.
 const (
 	ConnectorErrorCodeRateLimited   = "rate_limited"
 	ConnectorErrorCodeNoMachine     = "no_machine"
@@ -2892,38 +3090,45 @@ const (
 	ConnectorErrorCodeNotSignedIn   = "not_signed_in"
 	ConnectorErrorCodeNotRecallable = "not_recallable"
 	ConnectorErrorCodeRecallUnknown = "recall_unknown"
+	ConnectorErrorCodeNotReadOnly   = "not_read_only"
 )
 
 // ConnectorErrorCodes are the values of ConnectorErrorCode, in order.
-var ConnectorErrorCodes = []string{"rate_limited", "no_machine", "offline", "node_too_old", "no_gh", "not_signed_in", "not_recallable", "recall_unknown"}
+var ConnectorErrorCodes = []string{"rate_limited", "no_machine", "offline", "node_too_old", "no_gh", "not_signed_in", "not_recallable", "recall_unknown", "not_read_only"}
 
 // ConnectorCapability: what a connector declares (ConnectorItem.capabilities): the hub calls only the methods of
 // declared ones. fallback has no method: every inbox thing promises extra.rule_tier. recall is the program's word
-// that it can take back what it sent: the hub then calls connector.recall (only after the user agreed), and the
-// install preview says so. An extension's connector with one this hub does not know loses only that capability.
+// that it can take back what it sent: the hub calls recall.can / recall.do after the user agreed, or legacy
+// connector.recall for a program without those methods, and the install preview says so. history (needs archive) is
+// history.chats and archive.history, history_anchors (needs history) is history.anchors. catalog lists subscribable
+// read-only sources and calls their short tool names. An extension's connector with one this hub does not know loses
+// only that capability.
 const (
-	ConnectorCapabilityStatus   = "status"
-	ConnectorCapabilityTools    = "tools"
-	ConnectorCapabilityActions  = "actions"
-	ConnectorCapabilityEvents   = "events"
-	ConnectorCapabilityInbox    = "inbox"
-	ConnectorCapabilitySettle   = "settle"
-	ConnectorCapabilityArchive  = "archive"
-	ConnectorCapabilityChats    = "chats"
-	ConnectorCapabilityItems    = "items"
-	ConnectorCapabilityLogin    = "login"
-	ConnectorCapabilityOptions  = "options"
-	ConnectorCapabilityThreads  = "threads"
-	ConnectorCapabilitySnapshot = "snapshot"
-	ConnectorCapabilityGroup    = "group"
-	ConnectorCapabilityMeta     = "meta"
-	ConnectorCapabilityFallback = "fallback"
-	ConnectorCapabilityMachines = "machines"
-	ConnectorCapabilityRecall   = "recall"
+	ConnectorCapabilityStatus         = "status"
+	ConnectorCapabilityTools          = "tools"
+	ConnectorCapabilityActions        = "actions"
+	ConnectorCapabilityEvents         = "events"
+	ConnectorCapabilityInbox          = "inbox"
+	ConnectorCapabilitySettle         = "settle"
+	ConnectorCapabilityArchive        = "archive"
+	ConnectorCapabilityChats          = "chats"
+	ConnectorCapabilityItems          = "items"
+	ConnectorCapabilityLogin          = "login"
+	ConnectorCapabilityOptions        = "options"
+	ConnectorCapabilityThreads        = "threads"
+	ConnectorCapabilitySnapshot       = "snapshot"
+	ConnectorCapabilityGroup          = "group"
+	ConnectorCapabilityMeta           = "meta"
+	ConnectorCapabilityFallback       = "fallback"
+	ConnectorCapabilityMachines       = "machines"
+	ConnectorCapabilityRecall         = "recall"
+	ConnectorCapabilityHistory        = "history"
+	ConnectorCapabilityHistoryAnchors = "history_anchors"
+	ConnectorCapabilityCatalog        = "catalog"
 )
 
 // ConnectorCapabilities are the values of ConnectorCapability, in order.
-var ConnectorCapabilities = []string{"status", "tools", "actions", "events", "inbox", "settle", "archive", "chats", "items", "login", "options", "threads", "snapshot", "group", "meta", "fallback", "machines", "recall"}
+var ConnectorCapabilities = []string{"status", "tools", "actions", "events", "inbox", "settle", "archive", "chats", "items", "login", "options", "threads", "snapshot", "group", "meta", "fallback", "machines", "recall", "history", "history_anchors", "catalog"}
 
 // ConnectorState: connectorStatus.state. disabled is the hub's own (the user switched it off); a program never
 // answers it.
@@ -3063,9 +3268,13 @@ type ConnectorStatus struct {
 	// One sentence for people when state is not ok; never a secret.
 	Error string `json:"error,omitempty"`
 	// How to fix it, a step a sentence.
-	Guide     []string  `json:"guide,omitempty"`
-	LastSync  time.Time `json:"last_sync,omitzero"`
-	LastEvent time.Time `json:"last_event,omitzero"`
+	Guide []string `json:"guide,omitempty"`
+	// Optional HTTPS page the App may open for the fix; never a secret.
+	GuideURL string `json:"guide_url,omitempty"`
+	// Permissions the connector can identify as absent.
+	MissingScopes []string  `json:"missing_scopes,omitempty"`
+	LastSync      time.Time `json:"last_sync,omitzero"`
+	LastEvent     time.Time `json:"last_event,omitzero"`
 }
 
 // ConnectorTool: A read tool (tools.list) or a write (actions.list): its name starts with <connector id>_.
@@ -3145,11 +3354,60 @@ type ConnectorRecallParams struct {
 	At time.Time `json:"at,omitzero"`
 }
 
-// ConnectorRecallResult: recall's answer: recalled true is the program's word that the service confirmed the message
-// is no longer there. Anything else (no recalled, false) is not taken for a yes: the hub then knows nothing, writes
-// nothing and lets the user ask again.
+// ConnectorRecallResult: legacy recall's answer: recalled true is the program's word that the service confirmed the
+// message is no longer there. Anything else (no recalled, false) is not taken for a yes: the hub then knows nothing,
+// writes nothing and lets the user ask again.
 type ConnectorRecallResult struct {
 	Recalled bool `json:"recalled"`
+}
+
+// ConnectorRecallCanParams: recall.can's read-only, memory-only preflight. The hub asks it immediately before
+// recall.do, not for every row of a ledger page. age_seconds is the sent row's age, clamped at zero for a future
+// timestamp.
+type ConnectorRecallCanParams struct {
+	Contribution string `json:"contribution"`
+	Action       string `json:"action"`
+	AgeSeconds   int    `json:"age_seconds"`
+}
+
+// ConnectorRecallCanResult: recall.can's answer. can false stops before any write and means not_recallable.
+type ConnectorRecallCanResult struct {
+	Can bool `json:"can"`
+}
+
+// ConnectorRecallDoParams: recall.do takes back one message after the user agreed on their own full device.
+// request_id is stable for this connector and external message: concurrent duplicates share one operation, and a
+// confirmed success can be replayed after a lost answer. A failure or unknown outcome may be tried again explicitly.
+// at is retained for connectors whose own recall window counts from the send. No message text, origin, approval
+// record, account or credential is included.
+type ConnectorRecallDoParams struct {
+	Contribution string                     `json:"contribution"`
+	RequestID    string                     `json:"request_id"`
+	Action       string                     `json:"action"`
+	MessageRef   string                     `json:"message_ref"`
+	Target       map[string]json.RawMessage `json:"target,omitempty"`
+	At           time.Time                  `json:"at,omitzero"`
+}
+
+// ConnectorRecallOutcome: recall.do's outcome. Only done and already_recalled say the message is known to be gone.
+// unknown may have taken effect and is never success.
+const (
+	ConnectorRecallOutcomeDone            = "done"
+	ConnectorRecallOutcomeAlreadyRecalled = "already_recalled"
+	ConnectorRecallOutcomeNotRecallable   = "not_recallable"
+	ConnectorRecallOutcomeUnavailable     = "unavailable"
+	ConnectorRecallOutcomeRefused         = "refused"
+	ConnectorRecallOutcomeUnknown         = "unknown"
+)
+
+// ConnectorRecallOutcomes are the values of ConnectorRecallOutcome, in order.
+var ConnectorRecallOutcomes = []string{"done", "already_recalled", "not_recallable", "unavailable", "refused", "unknown"}
+
+// ConnectorRecallDoResult: recall.do's result. error is one human-readable sentence for a non-success status, never a
+// secret or the message's text. An empty or unrecognized status is treated as unknown by the hub.
+type ConnectorRecallDoResult struct {
+	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
 }
 
 // ConnectorThreadParams: thread.page: one page of an inbox thread, oldest first; no before is the newest page.
@@ -3473,12 +3731,22 @@ type ConnectorChatBatch struct {
 	Messages []ConnectorArchiveMessage `json:"messages,omitempty"`
 }
 
+// ConnectorArchiveChat: A batch's conversation. The flags are what the owner set at the source (none: not set, or the
+// program cannot tell); the knowledge base's selection matches its rules on them and on kind, and a flag a program
+// never reports never matches its rule.
 type ConnectorArchiveChat struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
-	// dm, group or bot.
-	Kind      string    `json:"kind"`
-	Topic     bool      `json:"topic,omitempty"`
+	// The selection's kind rules match dm, group, bot, official (an official or service account) and system (the
+	// service's own notices); a source may report other kinds (mail, issue, pr…), which match no kind rule.
+	Kind  string `json:"kind"`
+	Topic bool   `json:"topic,omitempty"`
+	// The owner muted it (a source's automatic muting of large groups included).
+	Muted bool `json:"muted,omitempty"`
+	// The owner folded it away (a chat box, folded groups).
+	Collapsed bool `json:"collapsed,omitempty"`
+	// The owner marked it done.
+	Done      bool      `json:"done,omitempty"`
 	UpdatedAt time.Time `json:"updated_at,omitzero"`
 }
 
@@ -3490,6 +3758,12 @@ type ConnectorArchiveMessage struct {
 	SenderID   string `json:"sender_id,omitempty"`
 	SenderName string `json:"sender_name,omitempty"`
 	Mine       bool   `json:"mine,omitempty"`
+	// The owner is mentioned by name in it (an @-mention of the owner, or the owner's display names): the program
+	// decides, on archive.changes batches and history pages alike. An @all alone is mentioned_all.
+	Mentioned bool `json:"mentioned,omitempty"`
+	// It mentions everyone in the chat (an @all / @everyone). Reported apart from mentioned: whether it counts as a
+	// mention is the knowledge base's selection (include_all).
+	MentionedAll bool `json:"mentioned_all,omitempty"`
 	// TEXT, POST, IMAGE, FILE, CARD, SYSTEM…
 	Type string    `json:"type,omitempty"`
 	Text string    `json:"text,omitempty"`
@@ -3500,6 +3774,96 @@ type ConnectorArchiveMessage struct {
 	SenderHandles []KBHandle `json:"sender_handles,omitempty"`
 }
 
+// ConnectorHistoryChats: history.chats: the conversations the connector can import the history of. Read-only.
+type ConnectorHistoryChats struct {
+	Chats []ConnectorHistoryChat `json:"chats"`
+}
+
+// ConnectorHistoryChat: one conversation to import: estimate is roughly how many messages it has (0 or none:
+// unknown); source is the name it is filed under, as a batch's (none: the connector's id). id alone names it, unique
+// across the connector's sources.
+type ConnectorHistoryChat struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Kind string `json:"kind"`
+	// As an archive chat's muted, collapsed and done.
+	Muted     bool   `json:"muted,omitempty"`
+	Collapsed bool   `json:"collapsed,omitempty"`
+	Done      bool   `json:"done,omitempty"`
+	Bot       bool   `json:"bot,omitempty"`
+	Estimate  int    `json:"estimate,omitempty"`
+	Source    string `json:"source,omitempty"`
+}
+
+// ConnectorHistoryParams: archive.history: one page of a conversation, older than before, newer than after, or around
+// a position (at most one; none: the newest page). Positions and cursors are the program's own strings. limit is a
+// hint (the hub sends at most 200; 0 or none: the program's default) and a program may answer more.
+type ConnectorHistoryParams struct {
+	Contribution string `json:"contribution"`
+	Chat         string `json:"chat"`
+	Before       string `json:"before,omitempty"`
+	After        string `json:"after,omitempty"`
+	Around       string `json:"around,omitempty"`
+	Limit        int    `json:"limit,omitempty"`
+}
+
+// ConnectorHistoryPage: archive.history's answer, messages oldest first. older is the cursor to go further back and
+// more says there is older history. Read in this order, since a paced or unreadable page is empty with more false
+// too: pace asks the hub to wait or stop and never means the start; unreadable: the account can no longer read the
+// conversation (left, dissolved, not found), permanent, with no messages, not an error; otherwise more false (or no
+// messages) is the start of the conversation.
+type ConnectorHistoryPage struct {
+	Messages   []ConnectorArchiveMessage `json:"messages,omitempty"`
+	Older      string                    `json:"older,omitempty"`
+	Newer      string                    `json:"newer,omitempty"`
+	More       bool                      `json:"more,omitempty"`
+	Unreadable bool                      `json:"unreadable,omitempty"`
+	Pace       *ConnectorPace            `json:"pace,omitempty"`
+}
+
+// ConnectorPace: how fast the program may be read: retry_after_ms is ask again no sooner (a rate limit), stop is wait
+// for a person (an expired sign-in, a refusal); reason is for people and never a secret. The hub never sends a read
+// that timed out again.
+type ConnectorPace struct {
+	RetryAfterMs int    `json:"retry_after_ms,omitempty"`
+	Stop         bool   `json:"stop,omitempty"`
+	Reason       string `json:"reason,omitempty"`
+}
+
+// ConnectorHistoryAnchorsParams: history.anchors: the messages the owner sent or was mentioned in between since and
+// until, in one conversation (chat) or all of them (none); cursor is the next of the call before. limit is a hint, as
+// archive.history's.
+type ConnectorHistoryAnchorsParams struct {
+	Contribution string    `json:"contribution"`
+	Chat         string    `json:"chat,omitempty"`
+	Since        time.Time `json:"since,omitzero"`
+	Until        time.Time `json:"until,omitzero"`
+	Cursor       string    `json:"cursor,omitempty"`
+	Limit        int       `json:"limit,omitempty"`
+}
+
+// ConnectorHistoryAnchors: history.anchors' answer: next is the cursor for the next call, more says there are more.
+type ConnectorHistoryAnchors struct {
+	Anchors []ConnectorHistoryAnchor `json:"anchors,omitempty"`
+	Next    string                   `json:"next,omitempty"`
+	More    bool                     `json:"more,omitempty"`
+	Pace    *ConnectorPace           `json:"pace,omitempty"`
+}
+
+// ConnectorHistoryAnchor: one message the owner sent (mine) or was mentioned in (mention), at position in chat: the
+// hub reads the page around it. message is the hit itself, the only way to keep one from a conversation that is
+// unreadable now; a search hit may have no sender_id. source is the name the conversation is filed under, as a chat's
+// source (a conversation the account left is often missing from history.chats).
+type ConnectorHistoryAnchor struct {
+	Chat     string                   `json:"chat"`
+	Source   string                   `json:"source,omitempty"`
+	Position string                   `json:"position"`
+	At       time.Time                `json:"at,omitzero"`
+	Mine     bool                     `json:"mine,omitempty"`
+	Mention  bool                     `json:"mention,omitempty"`
+	Message  *ConnectorArchiveMessage `json:"message,omitempty"`
+}
+
 // ConnectorItems: items.list: the knowledge base's documents, meetings and events.
 type ConnectorItems struct {
 	Items []ConnectorKBItem `json:"items"`
@@ -3508,16 +3872,23 @@ type ConnectorItems struct {
 // ConnectorKBItem: one knowledge-base item. The fields after where are the knowledge base's own (its tagging); a
 // program leaves them out.
 type ConnectorKBItem struct {
-	Kind  string    `json:"kind"`
-	ID    string    `json:"id"`
-	Title string    `json:"title"`
-	URL   string    `json:"url,omitempty"`
-	At    time.Time `json:"at,omitzero"`
+	Kind string `json:"kind"`
+	// The connector the item belongs to. A program may leave it out: the knowledge base sets it to the calling
+	// connector's id, whatever the program sends.
+	Source string    `json:"source,omitempty"`
+	ID     string    `json:"id"`
+	Title  string    `json:"title"`
+	URL    string    `json:"url,omitempty"`
+	At     time.Time `json:"at,omitzero"`
 	// Where it came from (a chat id, calendar…).
-	Where        string    `json:"where,omitempty"`
-	Projects     []string  `json:"projects,omitempty"`
-	Note         string    `json:"note,omitempty"`
-	Seen         time.Time `json:"seen,omitzero"`
+	Where    string    `json:"where,omitempty"`
+	Projects []string  `json:"projects,omitempty"`
+	Note     string    `json:"note,omitempty"`
+	Seen     time.Time `json:"seen,omitzero"`
+	// Why it concerns the owner, as far as the program can tell: mentions (the document mentions the owner),
+	// comment_mentions (a comment or reply on it does), authored (the owner owns it), viewed (the owner opened it
+	// recently). The knowledge base's selection keeps documents by them; leave out what the program cannot tell.
+	Signals      []string  `json:"signals,omitempty"`
 	Importance   string    `json:"importance,omitempty"`
 	Relevance    int       `json:"relevance,omitempty"`
 	Tags         []string  `json:"tags,omitempty"`
@@ -3606,9 +3977,13 @@ type ConnectorPrompt struct {
 	// Seconds between asks of a device_code or qr step.
 	Interval int              `json:"interval,omitempty"`
 	Qr       *ConnectorQRCode `json:"qr,omitempty"`
-	Hint     string           `json:"hint,omitempty"`
-	Error    string           `json:"error,omitempty"`
-	Done     bool             `json:"done,omitempty"`
+	// An absolute URL where this step's action is completed; empty means no link.
+	Link string `json:"link,omitempty"`
+	// The label for the optional link.
+	LinkText string `json:"link_text,omitempty"`
+	Hint     string `json:"hint,omitempty"`
+	Error    string `json:"error,omitempty"`
+	Done     bool   `json:"done,omitempty"`
 	// Who is signed in, once done.
 	Account string `json:"account,omitempty"`
 }
@@ -3940,10 +4315,11 @@ const (
 	KBKindMeetings   = "meetings"
 	KBKindEvents     = "events"
 	KBKindRecordings = "recordings"
+	KBKindTopics     = "topics"
 )
 
 // KBKinds are the values of KBKind, in order.
-var KBKinds = []string{"projects", "chats", "people", "docs", "meetings", "events", "recordings"}
+var KBKinds = []string{"projects", "chats", "people", "docs", "meetings", "events", "recordings", "topics"}
 
 // KBErrorCode: error.code of a knowledge-base call besides permission_denied (data {scope}, the one missing):
 // invalid_params, not_found, assistant_offline (the manager is away), kb_unavailable (not open yet), conflict
@@ -4065,7 +4441,8 @@ type KBDetail struct {
 	ID   string `json:"id"`
 	// Where it is on the manager's machine, for its own file tools.
 	Path string `json:"path"`
-	// The entity's own fields (meta.json).
+	// The entity's own fields (meta.json). For people, status is active, ignored or self; absent or empty means active.
+	// Status uses the same locked_fields and provenance as other corrected fields.
 	Meta     json.RawMessage      `json:"meta"`
 	Summary  string               `json:"summary,omitempty"`
 	Log      []string             `json:"log,omitempty"`
@@ -4073,6 +4450,32 @@ type KBDetail struct {
 	Links    []KBEntry            `json:"links,omitempty"`
 	Moments  []KBMomentRef        `json:"moments,omitempty"`
 	Segments []KBRecordingSegment `json:"segments,omitempty"`
+	// A recording's meeting minutes, once written (docs/assistant/meeting-minutes.md); kept as the hub sends them.
+	Minutes json.RawMessage `json:"minutes,omitempty"`
+	// A topic's knowledge points (docs/assistant/knowledge.md "Topics").
+	Points []KBTopicPoint `json:"points,omitempty"`
+}
+
+// KBTopicPoint: one knowledge point of a topic, under up to two levels of subtopics (path).
+type KBTopicPoint struct {
+	ID   string   `json:"id"`
+	Path []string `json:"path,omitempty"`
+	Kind string   `json:"kind"`
+	Text string   `json:"text"`
+	// A decision's reason, a pitfall's cause.
+	Why     string          `json:"why,omitempty"`
+	Sources []KBTopicSource `json:"sources,omitempty"`
+	// YYYY-MM-DD: when it was last confirmed.
+	When string `json:"when,omitempty"`
+}
+
+// KBTopicSource: an entry a knowledge point came from.
+type KBTopicSource struct {
+	// projects or chats
+	Kind string `json:"kind"`
+	ID   string `json:"id"`
+	// YYYY-MM-DD
+	Day string `json:"day,omitempty"`
 }
 
 // KBMomentRef: A feed post linked to a project.
@@ -4106,12 +4509,22 @@ type KBDayResult struct {
 	Messages []KBDayMessage `json:"messages"`
 	Prev     string         `json:"prev"`
 	Next     string         `json:"next"`
+	// available means ledger matching ran, not that unmarked messages are human-authored. missing_scope requires
+	// sent.read; unavailable means the service cannot provide provenance. Older hosts omit this field: treat absence as
+	// unavailable.
+	SentOrigin string `json:"sent_origin"`
 }
 
 type KBDayMessage struct {
 	// The message's first line in the day's file, from 1.
 	N    int    `json:"n"`
 	Text string `json:"text"`
+	// Present only for a unique match in the sent-as-user ledger, with sent.read.
+	SentBy string `json:"sent_by,omitempty"`
+	// The matching ledger row.
+	SentLedgerID int64 `json:"sent_ledger_id,omitempty"`
+	// When this matched send was recalled; the archive may still contain its text.
+	RecalledAt time.Time `json:"recalled_at,omitzero"`
 }
 
 // KBSearchParams: kb.search: lines that match, messages too unless messages is false.
@@ -4150,12 +4563,14 @@ type KBUpdateParams struct {
 	Name           string   `json:"name,omitempty"`
 	// A project's: short or long.
 	ProjectKind string `json:"project_kind,omitempty"`
-	Status      string `json:"status,omitempty"`
-	Goal        string `json:"goal,omitempty"`
-	MyRole      string `json:"my_role,omitempty"`
-	Note        string `json:"note,omitempty"`
-	Importance  string `json:"importance,omitempty"`
-	Relevance   *int   `json:"relevance,omitempty"`
+	// People: active, ignored or self; other values are rejected by kb.update. Projects: active, paused, done or
+	// ignored. Omitted or empty keeps the current status; active restores a person.
+	Status     string `json:"status,omitempty"`
+	Goal       string `json:"goal,omitempty"`
+	MyRole     string `json:"my_role,omitempty"`
+	Note       string `json:"note,omitempty"`
+	Importance string `json:"importance,omitempty"`
+	Relevance  *int   `json:"relevance,omitempty"`
 	// Replaces the tags; an empty list clears them, none keeps them.
 	Tags    []string `json:"tags,omitzero"`
 	Summary string   `json:"summary,omitempty"`
@@ -4216,23 +4631,30 @@ type TodoEventThread struct {
 }
 
 // TodoChangedEvent: event.todo.changed: a to-do was created or deleted, or its title, whether it is done (or failed
-// to start), or the thread it is bound to changed. Changes within about a second of each other are told once, as the
-// to-do is at the end of them. title, thread and done are as after the change (the last ones for a deleted to-do);
-// thread is left out when the to-do has none, done unless the to-do is done (closed, or its task failed to start).
-// Notes, agents and decisions changing do not send it (decisions have event.todo.decision). Read the to-do again if
-// it matters.
+// to start), its supervisor, or the thread it is bound to changed. Changes within about a second of each other are
+// told once, as the to-do is at the end of them. title, thread and done are as after the change (the last ones for a
+// deleted to-do); thread is left out when the to-do has none, done unless the to-do is done (closed, or its task
+// failed to start). supervisor is the conversation that supervises it (the main conversation or a leader, see
+// leaders.schema.json), left out when none does; a change of supervisor (the task moved to another leader) sends it
+// too. kind is concern for something the owner raised in the main conversation and wants an answer to; such a to-do
+// is done only once its outcome was reported to the owner (an event.todo.decision of source reported comes with it),
+// never on its own; kind is left out for a to-do or a task and never changes. Notes, agents and decisions changing do
+// not send it (decisions have event.todo.decision). Read the to-do again if it matters.
 type TodoChangedEvent struct {
-	ID     string           `json:"id"`
-	Title  string           `json:"title"`
-	Thread *TodoEventThread `json:"thread,omitempty"`
-	Done   bool             `json:"done,omitempty"`
-	What   string           `json:"what"`
+	ID         string           `json:"id"`
+	Title      string           `json:"title"`
+	Thread     *TodoEventThread `json:"thread,omitempty"`
+	Done       bool             `json:"done,omitempty"`
+	Supervisor string           `json:"supervisor,omitempty"`
+	Kind       string           `json:"kind,omitempty"`
+	What       string           `json:"what"`
 }
 
 // TodoEventDecision: A decision on a to-do: what was asked and chosen (reason and supersedes_id left out when empty),
 // and where it came from: manual (written in the to-do), card (the user answered an Agent's question card), outcome
 // (pulled out of an Agent's finished work, not made by the user), agent (an Agent noted it), thread (the user's reply
-// in the to-do's chat thread).
+// in the to-do's chat thread), reported (what the main conversation told the owner of a concern's outcome, as choice;
+// it closes the concern).
 type TodoEventDecision struct {
 	ID           string `json:"id"`
 	Question     string `json:"question"`
@@ -4253,24 +4675,67 @@ type TodoDecisionEvent struct {
 	Decision TodoEventDecision `json:"decision"`
 }
 
+// LeaderChangedEvent: event.leader.changed: a leader conversation was made (a side conversation added to
+// assistant.leaders), its title changed, it was filed under another knowledge-base project, it ended (it left
+// assistant.leaders; nothing is deleted) or it was made a leader again. id is the leader conversation's session id,
+// the key a work-log record keeps; title its title as the apps show it; name what the direction is called, to show it
+// by (the name the owner or the secretary gave it, else its knowledge-base project's name, else the title without its
+// "MMDD | kind | " prefix; always sent by a hub that has it, #3679); project the knowledge-base project's slug, left
+// out while it has none; ended true once it is no longer a leader, left out while it is.
+type LeaderChangedEvent struct {
+	ID      string `json:"id"`
+	Title   string `json:"title"`
+	Name    string `json:"name,omitempty"`
+	Project string `json:"project,omitempty"`
+	Ended   bool   `json:"ended,omitempty"`
+}
+
+// LeaderReportEvent: event.leader.report: one of a leader's tasks reached its goal (reached: its review accepted it),
+// needs the owner's decision (decision: its review says needs_user, or a plan of the leader's waits for the owner's
+// Start), or is stuck (stuck: in Waiting on you or stopped unfinished for 24 hours, told at most once per 24 hours);
+// those are written by the hub from the task's ledger, never by a model. progress (#3679) is the leader's own summary
+// of its direction at the goal level, sent with its leader_progress tool: reached, doing (and where it is stuck),
+// needs_you (what the owner has to do) and links (evidence; link is the first), text the three put together, todo "".
+// id names the report (never sent twice; key on it to be safe), leader the leader conversation's id, todo the task's
+// to-do id (GET /api/v1/todos with todos.read reads it; "" for a plan, which has no to-do until it starts), plan the
+// waiting plan's id (only on a decision about a plan), text at most 300 characters in the owner's language, link the
+// task's PR or delivery link when it has one, at when what it reports happened.
+type LeaderReportEvent struct {
+	ID       string    `json:"id"`
+	Leader   string    `json:"leader"`
+	Kind     string    `json:"kind"`
+	Todo     string    `json:"todo"`
+	Plan     string    `json:"plan,omitempty"`
+	Text     string    `json:"text"`
+	Link     string    `json:"link,omitempty"`
+	At       time.Time `json:"at"`
+	Reached  string    `json:"reached,omitempty"`
+	Doing    string    `json:"doing,omitempty"`
+	NeedsYou string    `json:"needs_you,omitempty"`
+	Links    []string  `json:"links,omitempty"`
+}
+
 // ModelErrorCode: error.code of model.complete besides permission_denied (data {scope: "models"}): invalid_params;
 // assistant_offline (the manager is away: try again); model_unavailable (nothing to call for this extension: the user
 // picks a model for it in Settings › Model configuration); model_paused (the connection is held for quota or load,
-// nothing was sent; data ModelPause: try again after until); model_failed (the upstream refused or failed the
-// request); timeout (past timeout_seconds); invalid_output (with json_schema, the reply was still not JSON matching
-// it after one more try; data ModelInvalidOutput).
+// nothing was sent; data ModelPause: try again after until); model_failed (the upstream failed the request: an error
+// status or a dropped connection); model_refused (the model declined to answer this input, a refusal or a content
+// filter: sending it again unchanged gets the same answer, so split it, drop a part or report it; data ModelRefusal);
+// timeout (past timeout_seconds); invalid_output (with json_schema, the reply was still not JSON matching it after
+// one more try; data ModelInvalidOutput).
 const (
 	ModelErrorCodeInvalidParams    = "invalid_params"
 	ModelErrorCodeAssistantOffline = "assistant_offline"
 	ModelErrorCodeModelUnavailable = "model_unavailable"
 	ModelErrorCodeModelPaused      = "model_paused"
 	ModelErrorCodeModelFailed      = "model_failed"
+	ModelErrorCodeModelRefused     = "model_refused"
 	ModelErrorCodeTimeout          = "timeout"
 	ModelErrorCodeInvalidOutput    = "invalid_output"
 )
 
 // ModelErrorCodes are the values of ModelErrorCode, in order.
-var ModelErrorCodes = []string{"invalid_params", "assistant_offline", "model_unavailable", "model_paused", "model_failed", "timeout", "invalid_output"}
+var ModelErrorCodes = []string{"invalid_params", "assistant_offline", "model_unavailable", "model_paused", "model_failed", "model_refused", "timeout", "invalid_output"}
 
 // ModelMessage: one turn of the conversation: the user's, or the model's earlier answer.
 type ModelMessage struct {
@@ -4341,6 +4806,13 @@ type ModelInvalidOutput struct {
 	Problem string     `json:"problem"`
 	Text    string     `json:"text"`
 	Usage   ModelUsage `json:"usage"`
+}
+
+// ModelRefusal: the data of model_refused: what the upstream said and what the declined call spent.
+type ModelRefusal struct {
+	// The upstream's reason: refusal (a refusal stop or part) or content_filter.
+	StopReason string     `json:"stop_reason,omitempty"`
+	Usage      ModelUsage `json:"usage"`
 }
 
 // AssistantErrorCode: error.code of the assistant calls besides permission_denied (data {scope: "assistant.read"}):
@@ -4428,6 +4900,177 @@ var AssistantRoles = []string{"user", "assistant"}
 type AssistantMessagesResult struct {
 	Messages []AssistantMessage `json:"messages"`
 	NextSeq  *int               `json:"next_seq,omitempty"`
+}
+
+type StorageEmptyParams struct {
+}
+
+// StorageRequestResult: opaque timestamped request identity from the host. Retry only the same ID and payload;
+// expires after five minutes and is never automatically regenerated for an unknown effect.
+type StorageRequestResult struct {
+	RequestID string `json:"request_id"`
+}
+
+type StorageKeyParams struct {
+	Key string `json:"key"`
+}
+
+// StorageEntry: canonical base64 business bytes, at most64KiB decoded; revision is an opaque CAS token.
+type StorageEntry struct {
+	Revision string `json:"revision"`
+	Data     string `json:"data"`
+}
+
+type StorageListParams struct {
+	Prefix string `json:"prefix,omitempty"`
+	After  string `json:"after,omitempty"`
+	Limit  int    `json:"limit,omitempty"`
+}
+
+type StorageMutationItem struct {
+	Key      string `json:"key"`
+	Revision string `json:"revision,omitempty"`
+	Deleted  bool   `json:"deleted,omitempty"`
+	JobID    string `json:"job_id,omitempty"`
+}
+
+type StorageListResult struct {
+	Items []StorageMutationItem `json:"items"`
+	More  bool                  `json:"more"`
+}
+
+// StorageOperation: one atomic operation. Empty revision means require absence; missing revision is unconditional.
+// Queue enqueue/ack require separate queue permission; their job and progress changes commit atomically.
+type StorageOperation struct {
+	Kind      string  `json:"kind"`
+	Key       string  `json:"key"`
+	Data      string  `json:"data,omitempty"`
+	Revision  *string `json:"revision,omitempty"`
+	Dedup     string  `json:"dedup,omitempty"`
+	NotBefore int64   `json:"not_before,omitempty"`
+	JobID     string  `json:"job_id,omitempty"`
+	Lease     string  `json:"lease,omitempty"`
+}
+
+type StorageTransactionParams struct {
+	RequestID  string             `json:"request_id"`
+	Operations []StorageOperation `json:"operations"`
+}
+
+type StorageTransactionResult struct {
+	Items []StorageMutationItem `json:"items"`
+}
+
+type StorageQueueListParams struct {
+	Key   string `json:"key"`
+	After string `json:"after,omitempty"`
+	Limit int    `json:"limit,omitempty"`
+}
+
+type StorageJob struct {
+	ID         string `json:"id"`
+	Dedup      string `json:"dedup"`
+	Data       string `json:"data"`
+	State      string `json:"state"`
+	NotBefore  int64  `json:"not_before"`
+	Attempts   int64  `json:"attempts"`
+	Lease      string `json:"lease,omitempty"`
+	LeaseUntil int64  `json:"lease_until,omitempty"`
+}
+
+type StorageQueueListResult struct {
+	Items []StorageJob `json:"items"`
+	More  bool         `json:"more"`
+}
+
+type StorageEnqueueParams struct {
+	RequestID string `json:"request_id"`
+	Key       string `json:"key"`
+	Dedup     string `json:"dedup"`
+	Data      string `json:"data"`
+	NotBefore int64  `json:"not_before,omitempty"`
+}
+
+type StorageJobResult struct {
+	ID    string `json:"id"`
+	State string `json:"state,omitempty"`
+}
+
+type StorageClaimParams struct {
+	RequestID    string `json:"request_id"`
+	Key          string `json:"key"`
+	LeaseSeconds int    `json:"lease_seconds"`
+}
+
+// StorageClaimResult: one claimed job; job is absent when no pending job is due.
+type StorageClaimResult struct {
+	Job *StorageJob `json:"job,omitempty"`
+}
+
+type StorageSettleParams struct {
+	RequestID string `json:"request_id"`
+	Key       string `json:"key"`
+	ID        string `json:"id"`
+	Lease     string `json:"lease,omitempty"`
+}
+
+type StorageRetryParams struct {
+	RequestID string `json:"request_id"`
+	Key       string `json:"key"`
+	ID        string `json:"id"`
+	Lease     string `json:"lease"`
+	NotBefore int64  `json:"not_before"`
+}
+
+type StorageDeleteResult struct {
+	Deleted bool `json:"deleted"`
+}
+
+type StorageBlobCreateParams struct {
+	RequestID string `json:"request_id"`
+	Key       string `json:"key"`
+}
+
+type StorageBlobCreateResult struct {
+	Handle string `json:"handle"`
+}
+
+type StorageBlobWriteParams struct {
+	RequestID string `json:"request_id"`
+	Key       string `json:"key"`
+	Handle    string `json:"handle"`
+	Offset    int    `json:"offset"`
+	Data      string `json:"data"`
+}
+
+type StorageBlobWriteResult struct {
+	Bytes int `json:"bytes"`
+}
+
+type StorageBlobMutateParams struct {
+	RequestID string `json:"request_id"`
+	Key       string `json:"key"`
+	Handle    string `json:"handle"`
+}
+
+type StorageBlobFinishResult struct {
+	Handle   string `json:"handle"`
+	Bytes    int    `json:"bytes"`
+	Complete bool   `json:"complete"`
+}
+
+type StorageBlobReadParams struct {
+	Key    string `json:"key"`
+	Handle string `json:"handle"`
+	Offset int    `json:"offset"`
+	Limit  int    `json:"limit"`
+}
+
+type StorageBlobReadResult struct {
+	Data   string `json:"data"`
+	Offset int    `json:"offset"`
+	Bytes  int    `json:"bytes"`
+	Eof    bool   `json:"eof"`
 }
 
 // Bounded JSON scalar, not executable content. Strings at most 4096 code points; finite numbers in the JSON-safe
@@ -5094,361 +5737,423 @@ func (v requiredJSONView) MarshalJSON() ([]byte, error) {
 
 // newDef makes a value of each definition, for tests that read examples by definition name.
 var newDef = map[string]func() any{
-	"Manifest":                     func() any { return new(Manifest) },
-	"ToolSpec":                     func() any { return new(ToolSpec) },
-	"ToolCheck":                    func() any { return new(ToolCheck) },
-	"ToolArchive":                  func() any { return new(ToolArchive) },
-	"ToolNPM":                      func() any { return new(ToolNPM) },
-	"AuthSpec":                     func() any { return new(AuthSpec) },
-	"Dependency":                   func() any { return new(Dependency) },
-	"Exports":                      func() any { return new(Exports) },
-	"ExportedPoint":                func() any { return new(ExportedPoint) },
-	"PackMember":                   func() any { return new(PackMember) },
-	"Engines":                      func() any { return new(Engines) },
-	"Runtime":                      func() any { return new(Runtime) },
-	"SourceRuntime":                func() any { return new(SourceRuntime) },
-	"Resources":                    func() any { return new(Resources) },
-	"NodeRuntime":                  func() any { return new(NodeRuntime) },
-	"NodePermissions":              func() any { return new(NodePermissions) },
-	"SecretSpec":                   func() any { return new(SecretSpec) },
-	"Permissions":                  func() any { return new(Permissions) },
-	"Contributes":                  func() any { return new(Contributes) },
-	"SkillItem":                    func() any { return new(SkillItem) },
-	"PromptItem":                   func() any { return new(PromptItem) },
-	"ThemeColors":                  func() any { return new(ThemeColors) },
-	"ThemeItem":                    func() any { return new(ThemeItem) },
-	"LookTexts":                    func() any { return new(LookTexts) },
-	"LookAvatarDark":               func() any { return new(LookAvatarDark) },
-	"LookAvatar":                   func() any { return new(LookAvatar) },
-	"LookPalette":                  func() any { return new(LookPalette) },
-	"LookColors":                   func() any { return new(LookColors) },
-	"LookDotState":                 func() any { return new(LookDotState) },
-	"LookDotStates":                func() any { return new(LookDotStates) },
-	"LookDot":                      func() any { return new(LookDot) },
-	"LookItem":                     func() any { return new(LookItem) },
-	"TriageTemplateItem":           func() any { return new(TriageTemplateItem) },
-	"AuthRelayItem":                func() any { return new(AuthRelayItem) },
-	"ErrorReportsItem":             func() any { return new(ErrorReportsItem) },
-	"TunnelItem":                   func() any { return new(TunnelItem) },
-	"AgentFilterItem":              func() any { return new(AgentFilterItem) },
-	"ConnectorItem":                func() any { return new(ConnectorItem) },
-	"NamedItem":                    func() any { return new(NamedItem) },
-	"QuotaItem":                    func() any { return new(QuotaItem) },
-	"ProviderItem":                 func() any { return new(ProviderItem) },
-	"ProviderModel":                func() any { return new(ProviderModel) },
-	"APIItem":                      func() any { return new(APIItem) },
-	"APIReceipt":                   func() any { return new(APIReceipt) },
-	"AssistantItem":                func() any { return new(AssistantItem) },
-	"MCPServerItem":                func() any { return new(MCPServerItem) },
-	"UIItem":                       func() any { return new(UIItem) },
-	"AgentSourceItem":              func() any { return new(AgentSourceItem) },
-	"ChannelItem":                  func() any { return new(ChannelItem) },
-	"ChannelCapabilities":          func() any { return new(ChannelCapabilities) },
-	"EventsItem":                   func() any { return new(EventsItem) },
-	"ShortcutItem":                 func() any { return new(ShortcutItem) },
-	"ShortcutParam":                func() any { return new(ShortcutParam) },
-	"Frame":                        func() any { return new(Frame) },
-	"RPCError":                     func() any { return new(RPCError) },
-	"AuthStatus":                   func() any { return new(AuthStatus) },
-	"AuthStepParams":               func() any { return new(AuthStepParams) },
-	"AuthField":                    func() any { return new(AuthField) },
-	"AuthPrompt":                   func() any { return new(AuthPrompt) },
-	"InitializeParams":             func() any { return new(InitializeParams) },
-	"ExportedContribution":         func() any { return new(ExportedContribution) },
-	"HubInfo":                      func() any { return new(HubInfo) },
-	"ExtensionInfo":                func() any { return new(ExtensionInfo) },
-	"InitializeResult":             func() any { return new(InitializeResult) },
-	"UIParams":                     func() any { return new(UIParams) },
-	"UIMachine":                    func() any { return new(UIMachine) },
-	"UILauncher":                   func() any { return new(UILauncher) },
-	"UIInboxItem":                  func() any { return new(UIInboxItem) },
-	"BadgeEvent":                   func() any { return new(BadgeEvent) },
-	"InvalidateEvent":              func() any { return new(InvalidateEvent) },
-	"UIContext":                    func() any { return new(UIContext) },
-	"UIRequest":                    func() any { return new(UIRequest) },
-	"UIPlace":                      func() any { return new(UIPlace) },
-	"UIPlaces":                     func() any { return new(UIPlaces) },
-	"WidgetPlace":                  func() any { return new(WidgetPlace) },
-	"WidgetPlaces":                 func() any { return new(WidgetPlaces) },
-	"WidgetRequest":                func() any { return new(WidgetRequest) },
-	"WidgetAnswer":                 func() any { return new(WidgetAnswer) },
-	"DeviceWidget":                 func() any { return new(DeviceWidget) },
-	"DeviceWidgets":                func() any { return new(DeviceWidgets) },
-	"WidgetPush":                   func() any { return new(WidgetPush) },
-	"ShortcutPlace":                func() any { return new(ShortcutPlace) },
-	"ShortcutPlaces":               func() any { return new(ShortcutPlaces) },
-	"ShortcutRequest":              func() any { return new(ShortcutRequest) },
-	"ShortcutRunParams":            func() any { return new(ShortcutRunParams) },
-	"ShortcutResult":               func() any { return new(ShortcutResult) },
-	"NotifyAction":                 func() any { return new(NotifyAction) },
-	"NotifyActionInput":            func() any { return new(NotifyActionInput) },
-	"ErrorFrame":                   func() any { return new(ErrorFrame) },
-	"ErrorException":               func() any { return new(ErrorException) },
-	"ErrorBreadcrumb":              func() any { return new(ErrorBreadcrumb) },
-	"ErrorReport":                  func() any { return new(ErrorReport) },
-	"ErrorReportsDeliver":          func() any { return new(ErrorReportsDeliver) },
-	"AuthRelayCompleteParams":      func() any { return new(AuthRelayCompleteParams) },
-	"AuthRelayResult":              func() any { return new(AuthRelayResult) },
-	"ExtensionNotification":        func() any { return new(ExtensionNotification) },
-	"View":                         func() any { return new(View) },
-	"Section":                      func() any { return new(Section) },
-	"Component":                    func() any { return new(Component) },
-	"ImageSource":                  func() any { return new(ImageSource) },
-	"RowControl":                   func() any { return new(RowControl) },
-	"RowAction":                    func() any { return new(RowAction) },
-	"Spark":                        func() any { return new(Spark) },
-	"Tile":                         func() any { return new(Tile) },
-	"Tabs":                         func() any { return new(Tabs) },
-	"Tab":                          func() any { return new(Tab) },
-	"Fact":                         func() any { return new(Fact) },
-	"Crumb":                        func() any { return new(Crumb) },
-	"TreeEntry":                    func() any { return new(TreeEntry) },
-	"LineRange":                    func() any { return new(LineRange) },
-	"Hunk":                         func() any { return new(Hunk) },
-	"Thread":                       func() any { return new(Thread) },
-	"Comment":                      func() any { return new(Comment) },
-	"ComposerButton":               func() any { return new(ComposerButton) },
-	"AssistantView":                func() any { return new(AssistantView) },
-	"ViewAction":                   func() any { return new(ViewAction) },
-	"ViewActionInput":              func() any { return new(ViewActionInput) },
-	"AssistantHTMLActionInput":     func() any { return new(AssistantHTMLActionInput) },
-	"AssistantHTMLOpenResult":      func() any { return new(AssistantHTMLOpenResult) },
-	"ViewChangedError":             func() any { return new(ViewChangedError) },
-	"Action":                       func() any { return new(Action) },
-	"Push":                         func() any { return new(Push) },
-	"Search":                       func() any { return new(Search) },
-	"Filter":                       func() any { return new(Filter) },
-	"More":                         func() any { return new(More) },
-	"Avatar":                       func() any { return new(Avatar) },
-	"Thumbnail":                    func() any { return new(Thumbnail) },
-	"TableColumn":                  func() any { return new(TableColumn) },
-	"EmptyButton":                  func() any { return new(EmptyButton) },
-	"Badge":                        func() any { return new(Badge) },
-	"Choice":                       func() any { return new(Choice) },
-	"ChartSeries":                  func() any { return new(ChartSeries) },
-	"ChartPoint":                   func() any { return new(ChartPoint) },
-	"Stat":                         func() any { return new(Stat) },
-	"ActionResult":                 func() any { return new(ActionResult) },
-	"FileLines":                    func() any { return new(FileLines) },
-	"Review":                       func() any { return new(Review) },
-	"PersonaCard":                  func() any { return new(PersonaCard) },
-	"CardAmount":                   func() any { return new(CardAmount) },
-	"CardPart":                     func() any { return new(CardPart) },
-	"MessagingComposerMode":        func() any { return new(MessagingComposerMode) },
-	"MessagingLink":                func() any { return new(MessagingLink) },
-	"MessagingItem":                func() any { return new(MessagingItem) },
-	"MessagingSource":              func() any { return new(MessagingSource) },
-	"MessagingSources":             func() any { return new(MessagingSources) },
-	"MessagingStatus":              func() any { return new(MessagingStatus) },
-	"MessagingMe":                  func() any { return new(MessagingMe) },
-	"MessagingAccount":             func() any { return new(MessagingAccount) },
-	"MessagingAccounts":            func() any { return new(MessagingAccounts) },
-	"MessagingConversation":        func() any { return new(MessagingConversation) },
-	"MessagingConversationPage":    func() any { return new(MessagingConversationPage) },
-	"MessagingPerson":              func() any { return new(MessagingPerson) },
-	"MessagingMembers":             func() any { return new(MessagingMembers) },
-	"MessagingReplyTo":             func() any { return new(MessagingReplyTo) },
-	"MessagingThread":              func() any { return new(MessagingThread) },
-	"MessagingReaction":            func() any { return new(MessagingReaction) },
-	"MessagingDecoration":          func() any { return new(MessagingDecoration) },
-	"MessagingAction":              func() any { return new(MessagingAction) },
-	"MessagingEditVersion":         func() any { return new(MessagingEditVersion) },
-	"MessagingMessage":             func() any { return new(MessagingMessage) },
-	"MessagingMessagePage":         func() any { return new(MessagingMessagePage) },
-	"MessagingMessageAnswer":       func() any { return new(MessagingMessageAnswer) },
-	"MessagingList":                func() any { return new(MessagingList) },
-	"MessagingMediaSize":           func() any { return new(MessagingMediaSize) },
-	"MessagingField":               func() any { return new(MessagingField) },
-	"MessagingPreview":             func() any { return new(MessagingPreview) },
-	"MessagingPart":                func() any { return new(MessagingPart) },
-	"MessagingMention":             func() any { return new(MessagingMention) },
-	"MessagingOutgoing":            func() any { return new(MessagingOutgoing) },
-	"MessagingSendReceipt":         func() any { return new(MessagingSendReceipt) },
-	"MessagingCompose":             func() any { return new(MessagingCompose) },
-	"MessagingComposeAnswer":       func() any { return new(MessagingComposeAnswer) },
-	"MessagingReadReport":          func() any { return new(MessagingReadReport) },
-	"MessagingReadState":           func() any { return new(MessagingReadState) },
-	"MessagingReadStates":          func() any { return new(MessagingReadStates) },
-	"MessagingChatPin":             func() any { return new(MessagingChatPin) },
-	"MessagingChatPins":            func() any { return new(MessagingChatPins) },
-	"MessagingPinTarget":           func() any { return new(MessagingPinTarget) },
-	"MessagingPinTargetAnswer":     func() any { return new(MessagingPinTargetAnswer) },
-	"MessagingPinAnswer":           func() any { return new(MessagingPinAnswer) },
-	"MessagingEmoji":               func() any { return new(MessagingEmoji) },
-	"MessagingEmojiGroup":          func() any { return new(MessagingEmojiGroup) },
-	"MessagingEmojis":              func() any { return new(MessagingEmojis) },
-	"MessagingQuickReactions":      func() any { return new(MessagingQuickReactions) },
-	"MessagingURLPreview":          func() any { return new(MessagingURLPreview) },
-	"MessagingProfileField":        func() any { return new(MessagingProfileField) },
-	"MessagingProfile":             func() any { return new(MessagingProfile) },
-	"MessagingChatOpened":          func() any { return new(MessagingChatOpened) },
-	"MessagingDocBlock":            func() any { return new(MessagingDocBlock) },
-	"MessagingDocPermission":       func() any { return new(MessagingDocPermission) },
-	"MessagingDocument":            func() any { return new(MessagingDocument) },
-	"MessagingCommentReply":        func() any { return new(MessagingCommentReply) },
-	"MessagingCommentThread":       func() any { return new(MessagingCommentThread) },
-	"MessagingCommentThreads":      func() any { return new(MessagingCommentThreads) },
-	"MessagingCommentWrite":        func() any { return new(MessagingCommentWrite) },
-	"MessagingResolve":             func() any { return new(MessagingResolve) },
-	"MessagingPostImage":           func() any { return new(MessagingPostImage) },
-	"MessagingPost":                func() any { return new(MessagingPost) },
-	"MessagingPostComment":         func() any { return new(MessagingPostComment) },
-	"MessagingPostComments":        func() any { return new(MessagingPostComments) },
-	"MessagingChanged":             func() any { return new(MessagingChanged) },
-	"MessagingConversationRef":     func() any { return new(MessagingConversationRef) },
-	"MessagingError":               func() any { return new(MessagingError) },
-	"Empty":                        func() any { return new(Empty) },
-	"ConnectorInitParams":          func() any { return new(ConnectorInitParams) },
-	"ConnectorManifest":            func() any { return new(ConnectorManifest) },
-	"ConnectorParams":              func() any { return new(ConnectorParams) },
-	"ConnectorStatus":              func() any { return new(ConnectorStatus) },
-	"ConnectorTool":                func() any { return new(ConnectorTool) },
-	"ConnectorTools":               func() any { return new(ConnectorTools) },
-	"ConnectorCallParams":          func() any { return new(ConnectorCallParams) },
-	"ConnectorCallResult":          func() any { return new(ConnectorCallResult) },
-	"ConnectorAction":              func() any { return new(ConnectorAction) },
-	"ConnectorDescribeResult":      func() any { return new(ConnectorDescribeResult) },
-	"ConnectorDoParams":            func() any { return new(ConnectorDoParams) },
-	"ConnectorRecallParams":        func() any { return new(ConnectorRecallParams) },
-	"ConnectorRecallResult":        func() any { return new(ConnectorRecallResult) },
-	"ConnectorThreadParams":        func() any { return new(ConnectorThreadParams) },
-	"ConnectorThreadPage":          func() any { return new(ConnectorThreadPage) },
-	"ConnectorThreadChat":          func() any { return new(ConnectorThreadChat) },
-	"ConnectorThreadMessage":       func() any { return new(ConnectorThreadMessage) },
-	"ConnectorThreadPerson":        func() any { return new(ConnectorThreadPerson) },
-	"ConnectorThreadMedia":         func() any { return new(ConnectorThreadMedia) },
-	"ConnectorThreadQuote":         func() any { return new(ConnectorThreadQuote) },
-	"ConnectorThreadLabel":         func() any { return new(ConnectorThreadLabel) },
-	"ConnectorThreadBranch":        func() any { return new(ConnectorThreadBranch) },
-	"ConnectorThreadCode":          func() any { return new(ConnectorThreadCode) },
-	"ConnectorThreadCheck":         func() any { return new(ConnectorThreadCheck) },
-	"ConnectorMediaParams":         func() any { return new(ConnectorMediaParams) },
-	"ConnectorMedia":               func() any { return new(ConnectorMedia) },
-	"ConnectorCollectResult":       func() any { return new(ConnectorCollectResult) },
-	"ConnectorInboxThing":          func() any { return new(ConnectorInboxThing) },
-	"ConnectorTag":                 func() any { return new(ConnectorTag) },
-	"ConnectorThingExtra":          func() any { return new(ConnectorThingExtra) },
-	"ConnectorThingGroup":          func() any { return new(ConnectorThingGroup) },
-	"ConnectorThingParent":         func() any { return new(ConnectorThingParent) },
-	"ConnectorInboxReply":          func() any { return new(ConnectorInboxReply) },
-	"ConnectorStatusChange":        func() any { return new(ConnectorStatusChange) },
-	"ConnectorSettleParams":        func() any { return new(ConnectorSettleParams) },
-	"ConnectorSettled":             func() any { return new(ConnectorSettled) },
-	"ConnectorGroupToolParams":     func() any { return new(ConnectorGroupToolParams) },
-	"ConnectorGroupAppendParams":   func() any { return new(ConnectorGroupAppendParams) },
-	"ConnectorGroupFallbackParams": func() any { return new(ConnectorGroupFallbackParams) },
-	"ConnectorGroupEvent":          func() any { return new(ConnectorGroupEvent) },
-	"ConnectorGroupFallback":       func() any { return new(ConnectorGroupFallback) },
-	"ConnectorGroupAssign":         func() any { return new(ConnectorGroupAssign) },
-	"ConnectorGroupNew":            func() any { return new(ConnectorGroupNew) },
-	"ConnectorChangesParams":       func() any { return new(ConnectorChangesParams) },
-	"ConnectorChangesResult":       func() any { return new(ConnectorChangesResult) },
-	"ConnectorChatBatch":           func() any { return new(ConnectorChatBatch) },
-	"ConnectorArchiveChat":         func() any { return new(ConnectorArchiveChat) },
-	"ConnectorArchiveMessage":      func() any { return new(ConnectorArchiveMessage) },
-	"ConnectorItems":               func() any { return new(ConnectorItems) },
-	"ConnectorKBItem":              func() any { return new(ConnectorKBItem) },
-	"ConnectorKBProvenance":        func() any { return new(ConnectorKBProvenance) },
-	"ConnectorKBEvidence":          func() any { return new(ConnectorKBEvidence) },
-	"ConnectorDocTitleParams":      func() any { return new(ConnectorDocTitleParams) },
-	"ConnectorDocTitle":            func() any { return new(ConnectorDocTitle) },
-	"ConnectorSnapshotParams":      func() any { return new(ConnectorSnapshotParams) },
-	"ConnectorSnapshot":            func() any { return new(ConnectorSnapshot) },
-	"ConnectorSnapshotChats":       func() any { return new(ConnectorSnapshotChats) },
-	"ConnectorSnapshotChat":        func() any { return new(ConnectorSnapshotChat) },
-	"ConnectorSnapshotMeeting":     func() any { return new(ConnectorSnapshotMeeting) },
-	"ConnectorLoginParams":         func() any { return new(ConnectorLoginParams) },
-	"ConnectorPrompt":              func() any { return new(ConnectorPrompt) },
-	"ConnectorField":               func() any { return new(ConnectorField) },
-	"ConnectorQRCode":              func() any { return new(ConnectorQRCode) },
-	"ConnectorOptions":             func() any { return new(ConnectorOptions) },
-	"ConnectorOptionsParams":       func() any { return new(ConnectorOptionsParams) },
-	"ConnectorMachineParams":       func() any { return new(ConnectorMachineParams) },
-	"ConnectorAuthSource":          func() any { return new(ConnectorAuthSource) },
-	"ConnectorAuth":                func() any { return new(ConnectorAuth) },
-	"ConnectorSecret":              func() any { return new(ConnectorSecret) },
-	"ConnectorSecretSaveParams":    func() any { return new(ConnectorSecretSaveParams) },
-	"ConnectorGhTokenParams":       func() any { return new(ConnectorGhTokenParams) },
-	"ConnectorSentRecordParams":    func() any { return new(ConnectorSentRecordParams) },
-	"ConnectorGhToken":             func() any { return new(ConnectorGhToken) },
-	"ConnectorPostsPutParams":      func() any { return new(ConnectorPostsPutParams) },
-	"ConnectorPostPut":             func() any { return new(ConnectorPostPut) },
-	"ConnectorPost":                func() any { return new(ConnectorPost) },
-	"ConnectorPostComment":         func() any { return new(ConnectorPostComment) },
-	"ConnectorPostsPut":            func() any { return new(ConnectorPostsPut) },
-	"ConnectorPostsCommentsParams": func() any { return new(ConnectorPostsCommentsParams) },
-	"ConnectorPostsPendingParams":  func() any { return new(ConnectorPostsPendingParams) },
-	"ConnectorPostsPending":        func() any { return new(ConnectorPostsPending) },
-	"ConnectorPendingPost":         func() any { return new(ConnectorPendingPost) },
-	"ConnectorArchiveChatsParams":  func() any { return new(ConnectorArchiveChatsParams) },
-	"ConnectorArchivedChats":       func() any { return new(ConnectorArchivedChats) },
-	"ConnectorArchivedChat":        func() any { return new(ConnectorArchivedChat) },
-	"ConnectorChangedEvent":        func() any { return new(ConnectorChangedEvent) },
-	"ChannelReceiveParams":         func() any { return new(ChannelReceiveParams) },
-	"ChannelMessage":               func() any { return new(ChannelMessage) },
-	"ChannelBlob":                  func() any { return new(ChannelBlob) },
-	"ChannelStatusParams":          func() any { return new(ChannelStatusParams) },
-	"ChannelAccount":               func() any { return new(ChannelAccount) },
-	"ChannelSendParams":            func() any { return new(ChannelSendParams) },
-	"ChannelSendResult":            func() any { return new(ChannelSendResult) },
-	"ChannelTypingParams":          func() any { return new(ChannelTypingParams) },
-	"ChannelEditParams":            func() any { return new(ChannelEditParams) },
-	"KBConflict":                   func() any { return new(KBConflict) },
-	"KBEvidence":                   func() any { return new(KBEvidence) },
-	"KBProvenance":                 func() any { return new(KBProvenance) },
-	"KBHandle":                     func() any { return new(KBHandle) },
-	"KBListParams":                 func() any { return new(KBListParams) },
-	"KBListResult":                 func() any { return new(KBListResult) },
-	"KBEntry":                      func() any { return new(KBEntry) },
-	"KBRecentParams":               func() any { return new(KBRecentParams) },
-	"KBRecentResult":               func() any { return new(KBRecentResult) },
-	"KBGetParams":                  func() any { return new(KBGetParams) },
-	"KBGetResult":                  func() any { return new(KBGetResult) },
-	"KBDetail":                     func() any { return new(KBDetail) },
-	"KBMomentRef":                  func() any { return new(KBMomentRef) },
-	"KBRecordingSegment":           func() any { return new(KBRecordingSegment) },
-	"KBDayParams":                  func() any { return new(KBDayParams) },
-	"KBDayResult":                  func() any { return new(KBDayResult) },
-	"KBDayMessage":                 func() any { return new(KBDayMessage) },
-	"KBSearchParams":               func() any { return new(KBSearchParams) },
-	"KBSearchResult":               func() any { return new(KBSearchResult) },
-	"KBHit":                        func() any { return new(KBHit) },
-	"KBUpdateParams":               func() any { return new(KBUpdateParams) },
-	"KBUpdateResult":               func() any { return new(KBUpdateResult) },
-	"KBOwnerParams":                func() any { return new(KBOwnerParams) },
-	"KBOwner":                      func() any { return new(KBOwner) },
-	"KBChangedEvent":               func() any { return new(KBChangedEvent) },
-	"KBForgottenEvent":             func() any { return new(KBForgottenEvent) },
-	"TodoEventThread":              func() any { return new(TodoEventThread) },
-	"TodoChangedEvent":             func() any { return new(TodoChangedEvent) },
-	"TodoEventDecision":            func() any { return new(TodoEventDecision) },
-	"TodoDecisionEvent":            func() any { return new(TodoDecisionEvent) },
-	"ModelMessage":                 func() any { return new(ModelMessage) },
-	"ModelCompleteParams":          func() any { return new(ModelCompleteParams) },
-	"ModelUsage":                   func() any { return new(ModelUsage) },
-	"ModelCompleteResult":          func() any { return new(ModelCompleteResult) },
-	"ModelPause":                   func() any { return new(ModelPause) },
-	"ModelInvalidOutput":           func() any { return new(ModelInvalidOutput) },
-	"AssistantConversationsParams": func() any { return new(AssistantConversationsParams) },
-	"AssistantConversation":        func() any { return new(AssistantConversation) },
-	"AssistantConversationsResult": func() any { return new(AssistantConversationsResult) },
-	"AssistantMessagesParams":      func() any { return new(AssistantMessagesParams) },
-	"AssistantMessage":             func() any { return new(AssistantMessage) },
-	"AssistantMessagesResult":      func() any { return new(AssistantMessagesResult) },
-	"UIStreamCapability":           func() any { return new(UIStreamCapability) },
-	"UIStreamSnapshot":             func() any { return new(UIStreamSnapshot) },
-	"UIStreamDelta":                func() any { return new(UIStreamDelta) },
-	"UIStreamEvent":                func() any { return new(UIStreamEvent) },
-	"UIStreamOperation":            func() any { return new(UIStreamOperation) },
-	"UIStreamRequest":              func() any { return new(UIStreamRequest) },
-	"UIStreamClientEnvelope":       func() any { return new(UIStreamClientEnvelope) },
-	"UIStreamActionResult":         func() any { return new(UIStreamActionResult) },
-	"UIStreamPush":                 func() any { return new(UIStreamPush) },
-	"UIStreamFileLines":            func() any { return new(UIStreamFileLines) },
-	"UIStreamReceipt":              func() any { return new(UIStreamReceipt) },
-	"UIStreamFailure":              func() any { return new(UIStreamFailure) },
-	"UIStreamServerEnvelope":       func() any { return new(UIStreamServerEnvelope) },
-	"UIPageSnapshot":               func() any { return new(UIPageSnapshot) },
+	"Manifest":                      func() any { return new(Manifest) },
+	"ToolSpec":                      func() any { return new(ToolSpec) },
+	"ToolCheck":                     func() any { return new(ToolCheck) },
+	"ToolArchive":                   func() any { return new(ToolArchive) },
+	"ToolNPM":                       func() any { return new(ToolNPM) },
+	"AuthSpec":                      func() any { return new(AuthSpec) },
+	"Dependency":                    func() any { return new(Dependency) },
+	"Exports":                       func() any { return new(Exports) },
+	"ExportedPoint":                 func() any { return new(ExportedPoint) },
+	"PackMember":                    func() any { return new(PackMember) },
+	"Engines":                       func() any { return new(Engines) },
+	"Runtime":                       func() any { return new(Runtime) },
+	"SourceRuntime":                 func() any { return new(SourceRuntime) },
+	"Resources":                     func() any { return new(Resources) },
+	"NodeRuntime":                   func() any { return new(NodeRuntime) },
+	"NodePermissions":               func() any { return new(NodePermissions) },
+	"SecretSpec":                    func() any { return new(SecretSpec) },
+	"Permissions":                   func() any { return new(Permissions) },
+	"StoragePermission":             func() any { return new(StoragePermission) },
+	"Contributes":                   func() any { return new(Contributes) },
+	"SkillItem":                     func() any { return new(SkillItem) },
+	"PromptItem":                    func() any { return new(PromptItem) },
+	"ThemeColors":                   func() any { return new(ThemeColors) },
+	"ThemeItem":                     func() any { return new(ThemeItem) },
+	"LookTexts":                     func() any { return new(LookTexts) },
+	"LookAvatarDark":                func() any { return new(LookAvatarDark) },
+	"LookAvatar":                    func() any { return new(LookAvatar) },
+	"LookPalette":                   func() any { return new(LookPalette) },
+	"LookColors":                    func() any { return new(LookColors) },
+	"LookDotState":                  func() any { return new(LookDotState) },
+	"LookDotStates":                 func() any { return new(LookDotStates) },
+	"LookDot":                       func() any { return new(LookDot) },
+	"LookItem":                      func() any { return new(LookItem) },
+	"TriageTemplateItem":            func() any { return new(TriageTemplateItem) },
+	"AuthRelayItem":                 func() any { return new(AuthRelayItem) },
+	"SecretProviderItem":            func() any { return new(SecretProviderItem) },
+	"ErrorReportsItem":              func() any { return new(ErrorReportsItem) },
+	"TunnelItem":                    func() any { return new(TunnelItem) },
+	"AgentFilterItem":               func() any { return new(AgentFilterItem) },
+	"ConnectorItem":                 func() any { return new(ConnectorItem) },
+	"NamedItem":                     func() any { return new(NamedItem) },
+	"QuotaItem":                     func() any { return new(QuotaItem) },
+	"ProviderItem":                  func() any { return new(ProviderItem) },
+	"ProviderModel":                 func() any { return new(ProviderModel) },
+	"APIItem":                       func() any { return new(APIItem) },
+	"APIReceipt":                    func() any { return new(APIReceipt) },
+	"AssistantItem":                 func() any { return new(AssistantItem) },
+	"MCPServerItem":                 func() any { return new(MCPServerItem) },
+	"UIItem":                        func() any { return new(UIItem) },
+	"AgentSourceItem":               func() any { return new(AgentSourceItem) },
+	"ChannelItem":                   func() any { return new(ChannelItem) },
+	"ChannelCapabilities":           func() any { return new(ChannelCapabilities) },
+	"EventsItem":                    func() any { return new(EventsItem) },
+	"ShortcutItem":                  func() any { return new(ShortcutItem) },
+	"ShortcutParam":                 func() any { return new(ShortcutParam) },
+	"Frame":                         func() any { return new(Frame) },
+	"RPCError":                      func() any { return new(RPCError) },
+	"AuthStatus":                    func() any { return new(AuthStatus) },
+	"AuthStepParams":                func() any { return new(AuthStepParams) },
+	"AuthField":                     func() any { return new(AuthField) },
+	"AuthPrompt":                    func() any { return new(AuthPrompt) },
+	"InitializeParams":              func() any { return new(InitializeParams) },
+	"ExportedContribution":          func() any { return new(ExportedContribution) },
+	"HubInfo":                       func() any { return new(HubInfo) },
+	"ExtensionInfo":                 func() any { return new(ExtensionInfo) },
+	"InitializeResult":              func() any { return new(InitializeResult) },
+	"UIParams":                      func() any { return new(UIParams) },
+	"UIImageParams":                 func() any { return new(UIImageParams) },
+	"UIImage":                       func() any { return new(UIImage) },
+	"UIMachine":                     func() any { return new(UIMachine) },
+	"UILauncher":                    func() any { return new(UILauncher) },
+	"UIInboxItem":                   func() any { return new(UIInboxItem) },
+	"BadgeEvent":                    func() any { return new(BadgeEvent) },
+	"InvalidateEvent":               func() any { return new(InvalidateEvent) },
+	"UIContext":                     func() any { return new(UIContext) },
+	"UIRequest":                     func() any { return new(UIRequest) },
+	"UIPlace":                       func() any { return new(UIPlace) },
+	"UIPlaces":                      func() any { return new(UIPlaces) },
+	"WidgetPlace":                   func() any { return new(WidgetPlace) },
+	"WidgetPlaces":                  func() any { return new(WidgetPlaces) },
+	"WidgetRequest":                 func() any { return new(WidgetRequest) },
+	"WidgetAnswer":                  func() any { return new(WidgetAnswer) },
+	"DeviceWidget":                  func() any { return new(DeviceWidget) },
+	"DeviceWidgets":                 func() any { return new(DeviceWidgets) },
+	"WidgetPush":                    func() any { return new(WidgetPush) },
+	"ShortcutPlace":                 func() any { return new(ShortcutPlace) },
+	"ShortcutPlaces":                func() any { return new(ShortcutPlaces) },
+	"ShortcutRequest":               func() any { return new(ShortcutRequest) },
+	"ShortcutRunParams":             func() any { return new(ShortcutRunParams) },
+	"ShortcutResult":                func() any { return new(ShortcutResult) },
+	"NotifyAction":                  func() any { return new(NotifyAction) },
+	"NotifyActionInput":             func() any { return new(NotifyActionInput) },
+	"ErrorFrame":                    func() any { return new(ErrorFrame) },
+	"ErrorException":                func() any { return new(ErrorException) },
+	"ErrorBreadcrumb":               func() any { return new(ErrorBreadcrumb) },
+	"ErrorReport":                   func() any { return new(ErrorReport) },
+	"ErrorReportsDeliver":           func() any { return new(ErrorReportsDeliver) },
+	"AuthRelayCompleteParams":       func() any { return new(AuthRelayCompleteParams) },
+	"AuthRelayResult":               func() any { return new(AuthRelayResult) },
+	"SecretPurpose":                 func() any { return new(SecretPurpose) },
+	"SecretsDescribeParams":         func() any { return new(SecretsDescribeParams) },
+	"SecretsDescribeResult":         func() any { return new(SecretsDescribeResult) },
+	"SecretsResolveParams":          func() any { return new(SecretsResolveParams) },
+	"SecretsResolveResult":          func() any { return new(SecretsResolveResult) },
+	"SecretsUsedEvent":              func() any { return new(SecretsUsedEvent) },
+	"ExtensionNotification":         func() any { return new(ExtensionNotification) },
+	"View":                          func() any { return new(View) },
+	"Section":                       func() any { return new(Section) },
+	"Component":                     func() any { return new(Component) },
+	"ImageSource":                   func() any { return new(ImageSource) },
+	"RowControl":                    func() any { return new(RowControl) },
+	"RowAction":                     func() any { return new(RowAction) },
+	"Spark":                         func() any { return new(Spark) },
+	"Tile":                          func() any { return new(Tile) },
+	"Tabs":                          func() any { return new(Tabs) },
+	"Tab":                           func() any { return new(Tab) },
+	"Fact":                          func() any { return new(Fact) },
+	"Crumb":                         func() any { return new(Crumb) },
+	"TreeEntry":                     func() any { return new(TreeEntry) },
+	"LineRange":                     func() any { return new(LineRange) },
+	"Hunk":                          func() any { return new(Hunk) },
+	"Thread":                        func() any { return new(Thread) },
+	"Comment":                       func() any { return new(Comment) },
+	"ComposerButton":                func() any { return new(ComposerButton) },
+	"AssistantView":                 func() any { return new(AssistantView) },
+	"ViewAction":                    func() any { return new(ViewAction) },
+	"ViewActionInput":               func() any { return new(ViewActionInput) },
+	"AssistantHTMLActionInput":      func() any { return new(AssistantHTMLActionInput) },
+	"AssistantHTMLOpenResult":       func() any { return new(AssistantHTMLOpenResult) },
+	"ViewChangedError":              func() any { return new(ViewChangedError) },
+	"Action":                        func() any { return new(Action) },
+	"Push":                          func() any { return new(Push) },
+	"Search":                        func() any { return new(Search) },
+	"Filter":                        func() any { return new(Filter) },
+	"More":                          func() any { return new(More) },
+	"Avatar":                        func() any { return new(Avatar) },
+	"Thumbnail":                     func() any { return new(Thumbnail) },
+	"TableColumn":                   func() any { return new(TableColumn) },
+	"EmptyButton":                   func() any { return new(EmptyButton) },
+	"Badge":                         func() any { return new(Badge) },
+	"Choice":                        func() any { return new(Choice) },
+	"ChartSeries":                   func() any { return new(ChartSeries) },
+	"ChartPoint":                    func() any { return new(ChartPoint) },
+	"Stat":                          func() any { return new(Stat) },
+	"ActionResult":                  func() any { return new(ActionResult) },
+	"FileLines":                     func() any { return new(FileLines) },
+	"Review":                        func() any { return new(Review) },
+	"PersonaCard":                   func() any { return new(PersonaCard) },
+	"CardAmount":                    func() any { return new(CardAmount) },
+	"CardPart":                      func() any { return new(CardPart) },
+	"MessagingComposerMode":         func() any { return new(MessagingComposerMode) },
+	"MessagingLink":                 func() any { return new(MessagingLink) },
+	"MessagingItem":                 func() any { return new(MessagingItem) },
+	"MessagingSource":               func() any { return new(MessagingSource) },
+	"MessagingSources":              func() any { return new(MessagingSources) },
+	"MessagingStatus":               func() any { return new(MessagingStatus) },
+	"MessagingMe":                   func() any { return new(MessagingMe) },
+	"MessagingAccount":              func() any { return new(MessagingAccount) },
+	"MessagingAccounts":             func() any { return new(MessagingAccounts) },
+	"MessagingConversation":         func() any { return new(MessagingConversation) },
+	"MessagingConversationPage":     func() any { return new(MessagingConversationPage) },
+	"MessagingPerson":               func() any { return new(MessagingPerson) },
+	"MessagingMembers":              func() any { return new(MessagingMembers) },
+	"MessagingReplyTo":              func() any { return new(MessagingReplyTo) },
+	"MessagingThread":               func() any { return new(MessagingThread) },
+	"MessagingReaction":             func() any { return new(MessagingReaction) },
+	"MessagingDecoration":           func() any { return new(MessagingDecoration) },
+	"MessagingAction":               func() any { return new(MessagingAction) },
+	"MessagingEditVersion":          func() any { return new(MessagingEditVersion) },
+	"MessagingMessage":              func() any { return new(MessagingMessage) },
+	"MessagingMessagePage":          func() any { return new(MessagingMessagePage) },
+	"MessagingMessageAnswer":        func() any { return new(MessagingMessageAnswer) },
+	"MessagingList":                 func() any { return new(MessagingList) },
+	"MessagingMediaSize":            func() any { return new(MessagingMediaSize) },
+	"MessagingField":                func() any { return new(MessagingField) },
+	"MessagingPreview":              func() any { return new(MessagingPreview) },
+	"MessagingPart":                 func() any { return new(MessagingPart) },
+	"MessagingMention":              func() any { return new(MessagingMention) },
+	"MessagingOutgoing":             func() any { return new(MessagingOutgoing) },
+	"MessagingSendReceipt":          func() any { return new(MessagingSendReceipt) },
+	"MessagingCompose":              func() any { return new(MessagingCompose) },
+	"MessagingComposeAnswer":        func() any { return new(MessagingComposeAnswer) },
+	"MessagingReadReport":           func() any { return new(MessagingReadReport) },
+	"MessagingReadState":            func() any { return new(MessagingReadState) },
+	"MessagingReadStates":           func() any { return new(MessagingReadStates) },
+	"MessagingChatPin":              func() any { return new(MessagingChatPin) },
+	"MessagingChatPins":             func() any { return new(MessagingChatPins) },
+	"MessagingPinTarget":            func() any { return new(MessagingPinTarget) },
+	"MessagingPinTargetAnswer":      func() any { return new(MessagingPinTargetAnswer) },
+	"MessagingPinAnswer":            func() any { return new(MessagingPinAnswer) },
+	"MessagingEmoji":                func() any { return new(MessagingEmoji) },
+	"MessagingEmojiGroup":           func() any { return new(MessagingEmojiGroup) },
+	"MessagingEmojis":               func() any { return new(MessagingEmojis) },
+	"MessagingQuickReactions":       func() any { return new(MessagingQuickReactions) },
+	"MessagingURLPreview":           func() any { return new(MessagingURLPreview) },
+	"MessagingProfileField":         func() any { return new(MessagingProfileField) },
+	"MessagingProfile":              func() any { return new(MessagingProfile) },
+	"MessagingChatOpened":           func() any { return new(MessagingChatOpened) },
+	"MessagingDocBlock":             func() any { return new(MessagingDocBlock) },
+	"MessagingDocPermission":        func() any { return new(MessagingDocPermission) },
+	"MessagingDocument":             func() any { return new(MessagingDocument) },
+	"MessagingCommentReply":         func() any { return new(MessagingCommentReply) },
+	"MessagingCommentThread":        func() any { return new(MessagingCommentThread) },
+	"MessagingCommentThreads":       func() any { return new(MessagingCommentThreads) },
+	"MessagingCommentWrite":         func() any { return new(MessagingCommentWrite) },
+	"MessagingResolve":              func() any { return new(MessagingResolve) },
+	"MessagingPostImage":            func() any { return new(MessagingPostImage) },
+	"MessagingPost":                 func() any { return new(MessagingPost) },
+	"MessagingPostComment":          func() any { return new(MessagingPostComment) },
+	"MessagingPostComments":         func() any { return new(MessagingPostComments) },
+	"MessagingChanged":              func() any { return new(MessagingChanged) },
+	"MessagingConversationRef":      func() any { return new(MessagingConversationRef) },
+	"MessagingError":                func() any { return new(MessagingError) },
+	"ConnectorCatalog":              func() any { return new(ConnectorCatalog) },
+	"ConnectorCatalogSource":        func() any { return new(ConnectorCatalogSource) },
+	"ConnectorCatalogTool":          func() any { return new(ConnectorCatalogTool) },
+	"ConnectorCatalogAnnotations":   func() any { return new(ConnectorCatalogAnnotations) },
+	"ConnectorCatalogCallParams":    func() any { return new(ConnectorCatalogCallParams) },
+	"ConnectorSubscriptionFields":   func() any { return new(ConnectorSubscriptionFields) },
+	"ConnectorSubscriptionRecipe":   func() any { return new(ConnectorSubscriptionRecipe) },
+	"Empty":                         func() any { return new(Empty) },
+	"ConnectorInitParams":           func() any { return new(ConnectorInitParams) },
+	"ConnectorManifest":             func() any { return new(ConnectorManifest) },
+	"ConnectorParams":               func() any { return new(ConnectorParams) },
+	"ConnectorStatus":               func() any { return new(ConnectorStatus) },
+	"ConnectorTool":                 func() any { return new(ConnectorTool) },
+	"ConnectorTools":                func() any { return new(ConnectorTools) },
+	"ConnectorCallParams":           func() any { return new(ConnectorCallParams) },
+	"ConnectorCallResult":           func() any { return new(ConnectorCallResult) },
+	"ConnectorAction":               func() any { return new(ConnectorAction) },
+	"ConnectorDescribeResult":       func() any { return new(ConnectorDescribeResult) },
+	"ConnectorDoParams":             func() any { return new(ConnectorDoParams) },
+	"ConnectorRecallParams":         func() any { return new(ConnectorRecallParams) },
+	"ConnectorRecallResult":         func() any { return new(ConnectorRecallResult) },
+	"ConnectorRecallCanParams":      func() any { return new(ConnectorRecallCanParams) },
+	"ConnectorRecallCanResult":      func() any { return new(ConnectorRecallCanResult) },
+	"ConnectorRecallDoParams":       func() any { return new(ConnectorRecallDoParams) },
+	"ConnectorRecallDoResult":       func() any { return new(ConnectorRecallDoResult) },
+	"ConnectorThreadParams":         func() any { return new(ConnectorThreadParams) },
+	"ConnectorThreadPage":           func() any { return new(ConnectorThreadPage) },
+	"ConnectorThreadChat":           func() any { return new(ConnectorThreadChat) },
+	"ConnectorThreadMessage":        func() any { return new(ConnectorThreadMessage) },
+	"ConnectorThreadPerson":         func() any { return new(ConnectorThreadPerson) },
+	"ConnectorThreadMedia":          func() any { return new(ConnectorThreadMedia) },
+	"ConnectorThreadQuote":          func() any { return new(ConnectorThreadQuote) },
+	"ConnectorThreadLabel":          func() any { return new(ConnectorThreadLabel) },
+	"ConnectorThreadBranch":         func() any { return new(ConnectorThreadBranch) },
+	"ConnectorThreadCode":           func() any { return new(ConnectorThreadCode) },
+	"ConnectorThreadCheck":          func() any { return new(ConnectorThreadCheck) },
+	"ConnectorMediaParams":          func() any { return new(ConnectorMediaParams) },
+	"ConnectorMedia":                func() any { return new(ConnectorMedia) },
+	"ConnectorCollectResult":        func() any { return new(ConnectorCollectResult) },
+	"ConnectorInboxThing":           func() any { return new(ConnectorInboxThing) },
+	"ConnectorTag":                  func() any { return new(ConnectorTag) },
+	"ConnectorThingExtra":           func() any { return new(ConnectorThingExtra) },
+	"ConnectorThingGroup":           func() any { return new(ConnectorThingGroup) },
+	"ConnectorThingParent":          func() any { return new(ConnectorThingParent) },
+	"ConnectorInboxReply":           func() any { return new(ConnectorInboxReply) },
+	"ConnectorStatusChange":         func() any { return new(ConnectorStatusChange) },
+	"ConnectorSettleParams":         func() any { return new(ConnectorSettleParams) },
+	"ConnectorSettled":              func() any { return new(ConnectorSettled) },
+	"ConnectorGroupToolParams":      func() any { return new(ConnectorGroupToolParams) },
+	"ConnectorGroupAppendParams":    func() any { return new(ConnectorGroupAppendParams) },
+	"ConnectorGroupFallbackParams":  func() any { return new(ConnectorGroupFallbackParams) },
+	"ConnectorGroupEvent":           func() any { return new(ConnectorGroupEvent) },
+	"ConnectorGroupFallback":        func() any { return new(ConnectorGroupFallback) },
+	"ConnectorGroupAssign":          func() any { return new(ConnectorGroupAssign) },
+	"ConnectorGroupNew":             func() any { return new(ConnectorGroupNew) },
+	"ConnectorChangesParams":        func() any { return new(ConnectorChangesParams) },
+	"ConnectorChangesResult":        func() any { return new(ConnectorChangesResult) },
+	"ConnectorChatBatch":            func() any { return new(ConnectorChatBatch) },
+	"ConnectorArchiveChat":          func() any { return new(ConnectorArchiveChat) },
+	"ConnectorArchiveMessage":       func() any { return new(ConnectorArchiveMessage) },
+	"ConnectorHistoryChats":         func() any { return new(ConnectorHistoryChats) },
+	"ConnectorHistoryChat":          func() any { return new(ConnectorHistoryChat) },
+	"ConnectorHistoryParams":        func() any { return new(ConnectorHistoryParams) },
+	"ConnectorHistoryPage":          func() any { return new(ConnectorHistoryPage) },
+	"ConnectorPace":                 func() any { return new(ConnectorPace) },
+	"ConnectorHistoryAnchorsParams": func() any { return new(ConnectorHistoryAnchorsParams) },
+	"ConnectorHistoryAnchors":       func() any { return new(ConnectorHistoryAnchors) },
+	"ConnectorHistoryAnchor":        func() any { return new(ConnectorHistoryAnchor) },
+	"ConnectorItems":                func() any { return new(ConnectorItems) },
+	"ConnectorKBItem":               func() any { return new(ConnectorKBItem) },
+	"ConnectorKBProvenance":         func() any { return new(ConnectorKBProvenance) },
+	"ConnectorKBEvidence":           func() any { return new(ConnectorKBEvidence) },
+	"ConnectorDocTitleParams":       func() any { return new(ConnectorDocTitleParams) },
+	"ConnectorDocTitle":             func() any { return new(ConnectorDocTitle) },
+	"ConnectorSnapshotParams":       func() any { return new(ConnectorSnapshotParams) },
+	"ConnectorSnapshot":             func() any { return new(ConnectorSnapshot) },
+	"ConnectorSnapshotChats":        func() any { return new(ConnectorSnapshotChats) },
+	"ConnectorSnapshotChat":         func() any { return new(ConnectorSnapshotChat) },
+	"ConnectorSnapshotMeeting":      func() any { return new(ConnectorSnapshotMeeting) },
+	"ConnectorLoginParams":          func() any { return new(ConnectorLoginParams) },
+	"ConnectorPrompt":               func() any { return new(ConnectorPrompt) },
+	"ConnectorField":                func() any { return new(ConnectorField) },
+	"ConnectorQRCode":               func() any { return new(ConnectorQRCode) },
+	"ConnectorOptions":              func() any { return new(ConnectorOptions) },
+	"ConnectorOptionsParams":        func() any { return new(ConnectorOptionsParams) },
+	"ConnectorMachineParams":        func() any { return new(ConnectorMachineParams) },
+	"ConnectorAuthSource":           func() any { return new(ConnectorAuthSource) },
+	"ConnectorAuth":                 func() any { return new(ConnectorAuth) },
+	"ConnectorSecret":               func() any { return new(ConnectorSecret) },
+	"ConnectorSecretSaveParams":     func() any { return new(ConnectorSecretSaveParams) },
+	"ConnectorGhTokenParams":        func() any { return new(ConnectorGhTokenParams) },
+	"ConnectorSentRecordParams":     func() any { return new(ConnectorSentRecordParams) },
+	"ConnectorGhToken":              func() any { return new(ConnectorGhToken) },
+	"ConnectorPostsPutParams":       func() any { return new(ConnectorPostsPutParams) },
+	"ConnectorPostPut":              func() any { return new(ConnectorPostPut) },
+	"ConnectorPost":                 func() any { return new(ConnectorPost) },
+	"ConnectorPostComment":          func() any { return new(ConnectorPostComment) },
+	"ConnectorPostsPut":             func() any { return new(ConnectorPostsPut) },
+	"ConnectorPostsCommentsParams":  func() any { return new(ConnectorPostsCommentsParams) },
+	"ConnectorPostsPendingParams":   func() any { return new(ConnectorPostsPendingParams) },
+	"ConnectorPostsPending":         func() any { return new(ConnectorPostsPending) },
+	"ConnectorPendingPost":          func() any { return new(ConnectorPendingPost) },
+	"ConnectorArchiveChatsParams":   func() any { return new(ConnectorArchiveChatsParams) },
+	"ConnectorArchivedChats":        func() any { return new(ConnectorArchivedChats) },
+	"ConnectorArchivedChat":         func() any { return new(ConnectorArchivedChat) },
+	"ConnectorChangedEvent":         func() any { return new(ConnectorChangedEvent) },
+	"ChannelReceiveParams":          func() any { return new(ChannelReceiveParams) },
+	"ChannelMessage":                func() any { return new(ChannelMessage) },
+	"ChannelBlob":                   func() any { return new(ChannelBlob) },
+	"ChannelStatusParams":           func() any { return new(ChannelStatusParams) },
+	"ChannelAccount":                func() any { return new(ChannelAccount) },
+	"ChannelSendParams":             func() any { return new(ChannelSendParams) },
+	"ChannelSendResult":             func() any { return new(ChannelSendResult) },
+	"ChannelTypingParams":           func() any { return new(ChannelTypingParams) },
+	"ChannelEditParams":             func() any { return new(ChannelEditParams) },
+	"KBConflict":                    func() any { return new(KBConflict) },
+	"KBEvidence":                    func() any { return new(KBEvidence) },
+	"KBProvenance":                  func() any { return new(KBProvenance) },
+	"KBHandle":                      func() any { return new(KBHandle) },
+	"KBListParams":                  func() any { return new(KBListParams) },
+	"KBListResult":                  func() any { return new(KBListResult) },
+	"KBEntry":                       func() any { return new(KBEntry) },
+	"KBRecentParams":                func() any { return new(KBRecentParams) },
+	"KBRecentResult":                func() any { return new(KBRecentResult) },
+	"KBGetParams":                   func() any { return new(KBGetParams) },
+	"KBGetResult":                   func() any { return new(KBGetResult) },
+	"KBDetail":                      func() any { return new(KBDetail) },
+	"KBTopicPoint":                  func() any { return new(KBTopicPoint) },
+	"KBTopicSource":                 func() any { return new(KBTopicSource) },
+	"KBMomentRef":                   func() any { return new(KBMomentRef) },
+	"KBRecordingSegment":            func() any { return new(KBRecordingSegment) },
+	"KBDayParams":                   func() any { return new(KBDayParams) },
+	"KBDayResult":                   func() any { return new(KBDayResult) },
+	"KBDayMessage":                  func() any { return new(KBDayMessage) },
+	"KBSearchParams":                func() any { return new(KBSearchParams) },
+	"KBSearchResult":                func() any { return new(KBSearchResult) },
+	"KBHit":                         func() any { return new(KBHit) },
+	"KBUpdateParams":                func() any { return new(KBUpdateParams) },
+	"KBUpdateResult":                func() any { return new(KBUpdateResult) },
+	"KBOwnerParams":                 func() any { return new(KBOwnerParams) },
+	"KBOwner":                       func() any { return new(KBOwner) },
+	"KBChangedEvent":                func() any { return new(KBChangedEvent) },
+	"KBForgottenEvent":              func() any { return new(KBForgottenEvent) },
+	"TodoEventThread":               func() any { return new(TodoEventThread) },
+	"TodoChangedEvent":              func() any { return new(TodoChangedEvent) },
+	"TodoEventDecision":             func() any { return new(TodoEventDecision) },
+	"TodoDecisionEvent":             func() any { return new(TodoDecisionEvent) },
+	"LeaderChangedEvent":            func() any { return new(LeaderChangedEvent) },
+	"LeaderReportEvent":             func() any { return new(LeaderReportEvent) },
+	"ModelMessage":                  func() any { return new(ModelMessage) },
+	"ModelCompleteParams":           func() any { return new(ModelCompleteParams) },
+	"ModelUsage":                    func() any { return new(ModelUsage) },
+	"ModelCompleteResult":           func() any { return new(ModelCompleteResult) },
+	"ModelPause":                    func() any { return new(ModelPause) },
+	"ModelInvalidOutput":            func() any { return new(ModelInvalidOutput) },
+	"ModelRefusal":                  func() any { return new(ModelRefusal) },
+	"AssistantConversationsParams":  func() any { return new(AssistantConversationsParams) },
+	"AssistantConversation":         func() any { return new(AssistantConversation) },
+	"AssistantConversationsResult":  func() any { return new(AssistantConversationsResult) },
+	"AssistantMessagesParams":       func() any { return new(AssistantMessagesParams) },
+	"AssistantMessage":              func() any { return new(AssistantMessage) },
+	"AssistantMessagesResult":       func() any { return new(AssistantMessagesResult) },
+	"StorageEmptyParams":            func() any { return new(StorageEmptyParams) },
+	"StorageRequestResult":          func() any { return new(StorageRequestResult) },
+	"StorageKeyParams":              func() any { return new(StorageKeyParams) },
+	"StorageEntry":                  func() any { return new(StorageEntry) },
+	"StorageListParams":             func() any { return new(StorageListParams) },
+	"StorageMutationItem":           func() any { return new(StorageMutationItem) },
+	"StorageListResult":             func() any { return new(StorageListResult) },
+	"StorageOperation":              func() any { return new(StorageOperation) },
+	"StorageTransactionParams":      func() any { return new(StorageTransactionParams) },
+	"StorageTransactionResult":      func() any { return new(StorageTransactionResult) },
+	"StorageQueueListParams":        func() any { return new(StorageQueueListParams) },
+	"StorageJob":                    func() any { return new(StorageJob) },
+	"StorageQueueListResult":        func() any { return new(StorageQueueListResult) },
+	"StorageEnqueueParams":          func() any { return new(StorageEnqueueParams) },
+	"StorageJobResult":              func() any { return new(StorageJobResult) },
+	"StorageClaimParams":            func() any { return new(StorageClaimParams) },
+	"StorageClaimResult":            func() any { return new(StorageClaimResult) },
+	"StorageSettleParams":           func() any { return new(StorageSettleParams) },
+	"StorageRetryParams":            func() any { return new(StorageRetryParams) },
+	"StorageDeleteResult":           func() any { return new(StorageDeleteResult) },
+	"StorageBlobCreateParams":       func() any { return new(StorageBlobCreateParams) },
+	"StorageBlobCreateResult":       func() any { return new(StorageBlobCreateResult) },
+	"StorageBlobWriteParams":        func() any { return new(StorageBlobWriteParams) },
+	"StorageBlobWriteResult":        func() any { return new(StorageBlobWriteResult) },
+	"StorageBlobMutateParams":       func() any { return new(StorageBlobMutateParams) },
+	"StorageBlobFinishResult":       func() any { return new(StorageBlobFinishResult) },
+	"StorageBlobReadParams":         func() any { return new(StorageBlobReadParams) },
+	"StorageBlobReadResult":         func() any { return new(StorageBlobReadResult) },
+	"UIStreamCapability":            func() any { return new(UIStreamCapability) },
+	"UIStreamSnapshot":              func() any { return new(UIStreamSnapshot) },
+	"UIStreamDelta":                 func() any { return new(UIStreamDelta) },
+	"UIStreamEvent":                 func() any { return new(UIStreamEvent) },
+	"UIStreamOperation":             func() any { return new(UIStreamOperation) },
+	"UIStreamRequest":               func() any { return new(UIStreamRequest) },
+	"UIStreamClientEnvelope":        func() any { return new(UIStreamClientEnvelope) },
+	"UIStreamActionResult":          func() any { return new(UIStreamActionResult) },
+	"UIStreamPush":                  func() any { return new(UIStreamPush) },
+	"UIStreamFileLines":             func() any { return new(UIStreamFileLines) },
+	"UIStreamReceipt":               func() any { return new(UIStreamReceipt) },
+	"UIStreamFailure":               func() any { return new(UIStreamFailure) },
+	"UIStreamServerEnvelope":        func() any { return new(UIStreamServerEnvelope) },
+	"UIPageSnapshot":                func() any { return new(UIPageSnapshot) },
 }
 
 // Call is one call or event of an extension point's protocol (the schemas' x-methods and x-events): who
@@ -5463,12 +6168,16 @@ type Call struct {
 var Calls = map[string]Call{
 	"connector.status":               {Name: "connector.status", From: "hub", Params: "ConnectorParams", Result: "ConnectorStatus"},
 	"connector.manifest":             {Name: "connector.manifest", From: "hub", Params: "ConnectorParams", Result: "ConnectorManifest"},
+	"connector.catalog.list":         {Name: "connector.catalog.list", From: "hub", Params: "ConnectorParams", Result: "ConnectorCatalog"},
+	"connector.catalog.call":         {Name: "connector.catalog.call", From: "hub", Params: "ConnectorCatalogCallParams", Result: "ConnectorCallResult"},
 	"connector.tools.list":           {Name: "connector.tools.list", From: "hub", Params: "ConnectorParams", Result: "ConnectorTools"},
 	"connector.tools.call":           {Name: "connector.tools.call", From: "hub", Params: "ConnectorCallParams", Result: "ConnectorCallResult"},
 	"connector.actions.list":         {Name: "connector.actions.list", From: "hub", Params: "ConnectorParams", Result: "ConnectorTools"},
 	"connector.actions.describe":     {Name: "connector.actions.describe", From: "hub", Params: "ConnectorCallParams", Result: "ConnectorDescribeResult"},
 	"connector.actions.do":           {Name: "connector.actions.do", From: "hub", Params: "ConnectorDoParams", Result: "ConnectorCallResult"},
 	"connector.recall":               {Name: "connector.recall", From: "hub", Params: "ConnectorRecallParams", Result: "ConnectorRecallResult"},
+	"connector.recall.can":           {Name: "connector.recall.can", From: "hub", Params: "ConnectorRecallCanParams", Result: "ConnectorRecallCanResult"},
+	"connector.recall.do":            {Name: "connector.recall.do", From: "hub", Params: "ConnectorRecallDoParams", Result: "ConnectorRecallDoResult"},
 	"connector.thread.page":          {Name: "connector.thread.page", From: "hub", Params: "ConnectorThreadParams", Result: "ConnectorThreadPage"},
 	"connector.thread.media":         {Name: "connector.thread.media", From: "hub", Params: "ConnectorMediaParams", Result: "ConnectorMedia"},
 	"connector.inbox.collect":        {Name: "connector.inbox.collect", From: "hub", Params: "ConnectorParams", Result: "ConnectorCollectResult"},
@@ -5476,6 +6185,9 @@ var Calls = map[string]Call{
 	"connector.inbox.settle":         {Name: "connector.inbox.settle", From: "hub", Params: "ConnectorSettleParams", Result: "ConnectorSettled"},
 	"connector.archive.changes":      {Name: "connector.archive.changes", From: "hub", Params: "ConnectorChangesParams", Result: "ConnectorChangesResult"},
 	"connector.archive.media":        {Name: "connector.archive.media", From: "hub", Params: "ConnectorMediaParams", Result: "ConnectorMedia"},
+	"connector.history.chats":        {Name: "connector.history.chats", From: "hub", Params: "ConnectorParams", Result: "ConnectorHistoryChats"},
+	"connector.archive.history":      {Name: "connector.archive.history", From: "hub", Params: "ConnectorHistoryParams", Result: "ConnectorHistoryPage"},
+	"connector.history.anchors":      {Name: "connector.history.anchors", From: "hub", Params: "ConnectorHistoryAnchorsParams", Result: "ConnectorHistoryAnchors"},
 	"connector.items.list":           {Name: "connector.items.list", From: "hub", Params: "ConnectorParams", Result: "ConnectorItems"},
 	"connector.items.doc_title":      {Name: "connector.items.doc_title", From: "hub", Params: "ConnectorDocTitleParams", Result: "ConnectorDocTitle"},
 	"connector.snapshot.get":         {Name: "connector.snapshot.get", From: "hub", Params: "ConnectorSnapshotParams", Result: "ConnectorSnapshot"},
@@ -5515,7 +6227,24 @@ var Calls = map[string]Call{
 	"event.kb.forgotten":             {Name: "event.kb.forgotten", From: "hub", Params: "KBForgottenEvent", Result: "", Event: true},
 	"event.todo.changed":             {Name: "event.todo.changed", From: "hub", Params: "TodoChangedEvent", Result: "", Event: true},
 	"event.todo.decision":            {Name: "event.todo.decision", From: "hub", Params: "TodoDecisionEvent", Result: "", Event: true},
+	"event.leader.changed":           {Name: "event.leader.changed", From: "hub", Params: "LeaderChangedEvent", Result: "", Event: true},
+	"event.leader.report":            {Name: "event.leader.report", From: "hub", Params: "LeaderReportEvent", Result: "", Event: true},
 	"model.complete":                 {Name: "model.complete", From: "program", Params: "ModelCompleteParams", Result: "ModelCompleteResult"},
 	"assistant.conversations":        {Name: "assistant.conversations", From: "program", Params: "AssistantConversationsParams", Result: "AssistantConversationsResult"},
 	"assistant.messages":             {Name: "assistant.messages", From: "program", Params: "AssistantMessagesParams", Result: "AssistantMessagesResult"},
+	"storage.request":                {Name: "storage.request", From: "program", Params: "StorageEmptyParams", Result: "StorageRequestResult"},
+	"storage.get":                    {Name: "storage.get", From: "program", Params: "StorageKeyParams", Result: "StorageEntry"},
+	"storage.list":                   {Name: "storage.list", From: "program", Params: "StorageListParams", Result: "StorageListResult"},
+	"storage.transaction":            {Name: "storage.transaction", From: "program", Params: "StorageTransactionParams", Result: "StorageTransactionResult"},
+	"storage.queue.list":             {Name: "storage.queue.list", From: "program", Params: "StorageQueueListParams", Result: "StorageQueueListResult"},
+	"storage.queue.enqueue":          {Name: "storage.queue.enqueue", From: "program", Params: "StorageEnqueueParams", Result: "StorageJobResult"},
+	"storage.queue.claim":            {Name: "storage.queue.claim", From: "program", Params: "StorageClaimParams", Result: "StorageClaimResult"},
+	"storage.queue.ack":              {Name: "storage.queue.ack", From: "program", Params: "StorageSettleParams", Result: "StorageJobResult"},
+	"storage.queue.forget":           {Name: "storage.queue.forget", From: "program", Params: "StorageSettleParams", Result: "StorageDeleteResult"},
+	"storage.queue.retry":            {Name: "storage.queue.retry", From: "program", Params: "StorageRetryParams", Result: "StorageJobResult"},
+	"storage.blob.create":            {Name: "storage.blob.create", From: "program", Params: "StorageBlobCreateParams", Result: "StorageBlobCreateResult"},
+	"storage.blob.write":             {Name: "storage.blob.write", From: "program", Params: "StorageBlobWriteParams", Result: "StorageBlobWriteResult"},
+	"storage.blob.finish":            {Name: "storage.blob.finish", From: "program", Params: "StorageBlobMutateParams", Result: "StorageBlobFinishResult"},
+	"storage.blob.delete":            {Name: "storage.blob.delete", From: "program", Params: "StorageBlobMutateParams", Result: "StorageDeleteResult"},
+	"storage.blob.read":              {Name: "storage.blob.read", From: "program", Params: "StorageBlobReadParams", Result: "StorageBlobReadResult"},
 }

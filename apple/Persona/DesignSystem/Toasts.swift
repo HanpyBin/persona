@@ -3,7 +3,7 @@ import SwiftUI
 
 /// One toast (`AppModel.toast`): the style's icon and the words on a floating capsule; in the BeautifulUI style its
 /// raised capsule. A toast tells the result of something just done (Copied, Archived, Send failed…) and goes by itself after
-/// a moment; what lasts (the hub's link: Waiting for Network, Connecting…) floats in the shell's toast window too (docs/apple/shell.md「连接状态和 toast」).
+/// a moment; what lasts (the hub's link: Waiting for Network, Connecting…) floats in the shell's toast window too (docs/apple/shell.md「Connection status and toasts」).
 struct ToastCapsule: View {
     let toast: Toast
     /// Closes the toast after its button (Undo) ran.
@@ -18,23 +18,14 @@ struct ToastCapsule: View {
             Text(toast.message)
                 .font(Theme.Font.secondaryMedium)
                 .lineLimit(3)
+            if let second = toast.secondary {
+                button(second).accessibilityIdentifier("toast-secondary")
+            }
             if let action = toast.action {
-                Button {
-                    action.run()
-                    dismiss()
-                } label: {
-                    // As large as the words beside it (the owner asked, #138: Undo was too small to read and hit).
-                    Text(action.title)
-                        .font(Theme.Font.secondaryStrong)
-                        .foregroundStyle(Theme.accent)
-                        .lineLimit(1)
-                        .fixedSize()
-                        .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("toast-action")
-                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { onActionFrame?($0) }
-                .onDisappear { onActionFrame?(.null) }
+                button(action)
+                    .accessibilityIdentifier("toast-action")
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { onActionFrame?($0) }
+                    .onDisappear { onActionFrame?(.null) }
             }
         }
         .padding(.horizontal, Theme.Space.l)
@@ -46,8 +37,26 @@ struct ToastCapsule: View {
         }
     }
 
+    private func button(_ action: Toast.Action) -> some View {
+        Button {
+            action.run()
+            dismiss()
+        } label: {
+            // As large as the words beside it (the owner asked, #138: Undo was too small to read and hit).
+            Text(action.title)
+                .font(Theme.Font.secondaryStrong)
+                .foregroundStyle(Theme.accent)
+                .lineLimit(1)
+                .fixedSize()
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+    }
+
     /// How long it stays: an error longer, one with a button (Undo) long enough to reach it.
-    static func shown(_ toast: Toast) -> Duration { .seconds(toast.action != nil ? 5 : toast.style == .error ? 4 : 2.5) }
+    static func shown(_ toast: Toast) -> Duration {
+        toast.duration ?? .seconds(toast.action != nil ? 5 : toast.style == .error ? 4 : 2.5)
+    }
 }
 
 /// The app's toast at the top of what it covers, over the content (it moves nothing), gone after `ToastCapsule.shown`.

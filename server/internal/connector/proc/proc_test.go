@@ -57,6 +57,10 @@ func TestMain(m *testing.M) {
 				return &chattyProgram{}, nil
 			case "refs":
 				return refProgram{&exampleProgram{secrets: s}}, nil
+			case "catalog":
+				return &catalogProgram{exampleProgram: &exampleProgram{secrets: s}}, nil
+			case "history":
+				return &historyProgram{exampleProgram: &exampleProgram{secrets: s}}, nil
 			}
 			return &exampleProgram{secrets: s, exitSoon: os.Getenv("PERSONA_PROC_EXIT") == "1"}, nil
 		})
@@ -279,6 +283,12 @@ func TestProgram(t *testing.T) {
 // way, docs/extensions/extensions.md); the hub's part (passing the program's calls and events to the connector) is done here.
 func linked(t *testing.T, s connector.Secrets, env ...string) *Conn {
 	t.Helper()
+	return linkedAs(t, s, (&exampleProgram{}).Manifest(), env...)
+}
+
+// linkedAs is linked with the manifest the hub knows before the program runs.
+func linkedAs(t *testing.T, s connector.Secrets, manifest connector.Manifest, env ...string) *Conn {
+	t.Helper()
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -299,7 +309,7 @@ func linked(t *testing.T, s connector.Secrets, env ...string) *Conn {
 		OnEvent: func(event string, params json.RawMessage) { c.Event(strings.TrimPrefix(event, "connector."), params) },
 	})
 	t.Cleanup(p.Stop)
-	cfg := Config{ID: "example", Name: "Example", Manifest: (&exampleProgram{}).Manifest(), Secrets: s, Logf: t.Logf,
+	cfg := Config{ID: "example", Name: "Example", Manifest: manifest, Secrets: s, Logf: t.Logf,
 		Link: &Link{Proc: p, ID: "example"}}
 	c = New(cfg)
 	return c
@@ -471,18 +481,6 @@ func TestProgramRestarts(t *testing.T) {
 	c := New(program(t, sec, "PERSONA_PROC_EXIT=1"))
 	go c.Run(ctx)
 	waitUntil(t, "a restart", func() bool { _, loads := sec.get(); return loads >= 2 })
-}
-
-// Signing out while the connector is switched off (the program not running) runs the program just for that.
-func TestLogoutWhileStopped(t *testing.T) {
-	sec := &memSecrets{data: []byte("example session")}
-	c := New(program(t, sec))
-	if err := c.Logout(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if d, _ := sec.get(); d != nil {
-		t.Fatal("still signed in")
-	}
 }
 
 // A connector whose program never ran (switched off from the start) answers with the manifest it was registered

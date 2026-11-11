@@ -1,8 +1,9 @@
 // A machine's token usage on its page (docs/server/machines.md "Token usage charts", #4973), as in the apps: the range, model
 // and launcher filters, the range's sums, throughput per minute (every token, or the four kinds stacked; a legend entry
 // hides its kind: cache reads are often nine tenths of it), the cache hit rate, and each model's and launcher's share.
-// Hovering either chart (or ← → on it) shows that moment in both; the legend then says that moment's values.
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+// Hovering either chart (or ← → on it) shows that moment in both; the legend then says that moment's values. The areas
+// and lines are memoized layers, so a move redraws the crosshair and the read-outs only.
+import { memo, useEffect, useMemo, useState } from "react";
 import { api, ApiError, enc, errorText, isAbort } from "../../lib/api";
 import { hm, scale, timeAt, yAxis } from "../../lib/machine-detail";
 import {
@@ -24,8 +25,9 @@ import {
   type UsagePoint,
   type UsageRange,
 } from "../../lib/tokens";
-import { cx, Loading } from "../../ui/atoms";
+import { Button, cx, Loading } from "../../ui/atoms";
 import { t } from "../../i18n";
+import { useWidth } from "../../lib/use-width";
 
 const H = 150;
 const HIT_H = 84;
@@ -35,20 +37,6 @@ const TOP = 6;
 
 const kindName = (k: UsageKind) => t(`machines-usage.kind_${k}`);
 const launcherName = (name: string) => (name === "" ? t("machines-usage.other_launcher") : name);
-
-function useWidth<T extends HTMLElement>(): [React.RefObject<T | null>, number] {
-  const ref = useRef<T>(null);
-  const [w, setW] = useState(0);
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    setW(el.clientWidth);
-    const ro = new ResizeObserver(([e]) => setW(Math.round(e.contentRect.width)));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  return [ref, w];
-}
 
 /** Round times for the x axis: hours, or days for the week. */
 function ticksFor(t0: number, t1: number, range: UsageRange, tz: number, count: number): number[] {
@@ -66,14 +54,24 @@ function dayLabel(tSec: number, tz: number): string {
 }
 
 export function UsageSection({ mid, heading }: { mid: string; heading: (right: React.ReactNode) => React.ReactNode }) {
+  // A different computer starts with its own controls, catalogs and request lifetime.
+  return <UsageReport key={mid} mid={mid} heading={heading} />;
+}
+
+function UsageReport({ mid, heading }: { mid: string; heading: (right: React.ReactNode) => React.ReactNode }) {
   const [range, setRange] = useState<UsageRange>("24h");
   const [model, setModel] = useState<string | null>(null);
   const [launcher, setLauncher] = useState<string | null>(null);
   const [stacked, setStacked] = useState(true);
   const [hidden, setHidden] = useState<Set<UsageKind>>(new Set());
-  const [data, setData] = useState<MachineUsage | null>(null);
-  const [unsupported, setUnsupported] = useState(false);
-  const [failure, setFailure] = useState("");
+  const scope = JSON.stringify([mid, range, model, launcher]);
+  const [accepted, setAccepted] = useState<{ scope: string; data: MachineUsage } | null>(null);
+  // Menus are a catalog, not report totals: keep them usable while another scope is being read.
+  const [catalog, setCatalog] = useState<Pick<MachineUsage, "models" | "launchers" | "launchers_known"> | null>(null);
+  const [status, setStatus] = useState({ scope, pending: true, failure: "", unsupported: false });
+  const [retry, setRetry] = useState(0);
+  const current = status.scope === scope ? status : { pending: true, failure: "", unsupported: false };
+  const data = accepted?.scope === scope && !current.unsupported ? accepted.data : null;
   const [hover, setHover] = useState<number | null>(null);
   const tz = -new Date().getTimezoneOffset() * 60;
 
@@ -83,20 +81,26 @@ export function UsageSection({ mid, heading }: { mid: string; heading: (right: R
     const load = async () => {
       if (document.visibilityState !== "visible") return;
       ctrl?.abort();
-      ctrl = new AbortController();
+      const request = new AbortController();
+      ctrl = request;
+      const active = () => !dead && ctrl === request && !request.signal.aborted;
+      setStatus((old) => ({ scope, pending: true, failure: old.scope === scope ? old.failure : "", unsupported: old.scope === scope && old.unsupported }));
       const q = new URLSearchParams({ range });
       if (model !== null) q.set("model", model);
       if (launcher !== null) q.set("launcher", launcher === "" ? UNKNOWN_LAUNCHER : launcher);
       try {
-        const r = await api<{ usage: MachineUsage }>(`/machines/${enc(mid)}/usage?${q}`, { signal: ctrl.signal });
-        if (dead) return;
-        setData({ ...r.usage, points: r.usage.points ?? [], models: r.usage.models ?? [], launchers: r.usage.launchers ?? [] });
-        setFailure("");
-        setUnsupported(false);
+        const r = await api<{ usage: MachineUsage }>(`/machines/${enc(mid)}/usage?${q}`, { signal: request.signal });
+        if (!active()) return;
+        const report = { ...r.usage, points: r.usage.points ?? [], models: r.usage.models ?? [], launchers: r.usage.launchers ?? [] };
+        setAccepted({ scope, data: report });
+        setCatalog(report);
+        setStatus({ scope, pending: false, failure: "", unsupported: false });
       } catch (e) {
-        if (dead || isAbort(e)) return;
-        if (e instanceof ApiError && e.status === 404) setUnsupported(true);
-        else setFailure(errorText(e));
+        if (!active() || isAbort(e)) return;
+        const unsupported = e instanceof ApiError && e.status === 404;
+        setStatus({ scope, pending: false, unsupported, failure: unsupported ? "" : errorText(e) });
+      } finally {
+        if (active()) setStatus((old) => ({ ...old, pending: false }));
       }
     };
     void load();
@@ -109,9 +113,9 @@ export function UsageSection({ mid, heading }: { mid: string; heading: (right: R
       clearInterval(timer);
       document.removeEventListener("visibilitychange", vis);
     };
-  }, [mid, range, model, launcher]);
+  }, [mid, range, model, launcher, scope, retry]);
 
-  const kinds = stacked ? USAGE_KINDS.filter((k) => !hidden.has(k)) : [];
+  const kinds = useMemo(() => (stacked ? USAGE_KINDS.filter((k) => !hidden.has(k)) : []), [stacked, hidden]);
   const picked = data && hover !== null ? nearestStep(data, hover) : undefined;
   const toggle = (k: UsageKind) =>
     setHidden((h) => {
@@ -141,84 +145,85 @@ export function UsageSection({ mid, heading }: { mid: string; heading: (right: R
     </div>
   );
 
-  if (unsupported) {
-    return (
-      <section data-testid="machine-usage">
-        {heading(null)}
-        <div className="rounded-card bg-surface px-4 py-5 text-[12.5px] text-ink-3 shadow-card">{t("machines-usage.old_hub")}</div>
-      </section>
-    );
-  }
-
   return (
-    <section data-testid="machine-usage">
+    <section data-testid="machine-usage" aria-busy={current.pending}>
       {heading(rangeControl)}
-      {!data ? (
-        <div className="flex h-40 items-center justify-center rounded-card bg-surface text-[12.5px] text-ink-3 shadow-card">{failure || <Loading />}</div>
-      ) : (
-        <div className="grid gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-          <div className="rounded-card bg-surface px-4 pt-3 pb-3 shadow-card">
-            <div className="flex flex-wrap items-center gap-2">
-              <Filter
-                label={t("machines-usage.model")}
-                all={t("machines-usage.all_models")}
-                value={model}
-                options={data.models.map((m) => ({ value: m.name, label: m.name }))}
-                onChange={setModel}
-              />
-              <Filter
-                label={t("machines-usage.launcher")}
-                all={t("machines-usage.all_launchers")}
-                value={launcher}
-                options={data.launchers.map((l) => ({ value: l.name, label: launcherName(l.name) }))}
-                onChange={setLauncher}
-                disabled={!data.launchers_known}
-              />
-              <span className="flex-1" />
-              <div className="flex items-center gap-0.5 rounded-control bg-inset p-0.5 shadow-hairline" role="radiogroup" aria-label={t("machines-usage.chart")}>
-                {[false, true].map((s) => (
-                  <button
-                    key={String(s)}
-                    type="button"
-                    role="radio"
-                    aria-checked={stacked === s}
-                    onClick={() => setStacked(s)}
-                    className={cx("flex h-6 items-center whitespace-nowrap rounded-[6px] px-2 text-[11.5px]", stacked === s ? "bg-surface font-medium text-ink shadow-btn" : "text-ink-3 hover:text-ink-2")}
-                  >
-                    {s ? t("machines-usage.by_kind") : t("machines-usage.total")}
-                  </button>
-                ))}
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        <div className="min-w-0 rounded-card bg-surface px-4 pt-3 pb-3 shadow-card">
+          <div className="flex flex-wrap items-center gap-2">
+            <Filter
+              label={t("machines-usage.model")}
+              all={t("machines-usage.all_models")}
+              value={model}
+              options={(catalog?.models ?? []).map((m) => ({ value: m.name, label: m.name }))}
+              onChange={setModel}
+            />
+            <Filter
+              label={t("machines-usage.launcher")}
+              all={t("machines-usage.all_launchers")}
+              value={launcher}
+              options={(catalog?.launchers ?? []).map((l) => ({ value: l.name, label: launcherName(l.name) }))}
+              onChange={setLauncher}
+              disabled={catalog?.launchers_known === false}
+            />
+            <span className="flex-1" />
+            <div className="flex items-center gap-0.5 rounded-control bg-inset p-0.5 shadow-hairline" role="radiogroup" aria-label={t("machines-usage.chart")}>
+              {[false, true].map((s) => (
+                <button
+                  key={String(s)}
+                  type="button"
+                  role="radio"
+                  aria-checked={stacked === s}
+                  onClick={() => setStacked(s)}
+                  className={cx("flex h-6 items-center whitespace-nowrap rounded-[6px] px-2 text-[11.5px]", stacked === s ? "bg-surface font-medium text-ink shadow-btn" : "text-ink-3 hover:text-ink-2")}
+                >
+                  {s ? t("machines-usage.by_kind") : t("machines-usage.total")}
+                </button>
+              ))}
+            </div>
+          </div>
+          {catalog?.launchers_known === false && <p className="mt-1.5 text-[11.5px] text-ink-3">{t("machines-usage.old_node")}</p>}
+          {(current.failure || current.unsupported) && (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <div className="min-w-0 flex-1 break-words text-[12.5px]" role={current.failure ? "alert" : "status"}>
+                <p className={current.failure ? "text-red" : "text-ink-3"}>{current.unsupported ? t("machines-usage.old_hub") : current.failure}</p>
+                {data && <p className="mt-1 text-ink-3">{t("machines-usage.stale_report")}</p>}
               </div>
+              <Button tone="secondary" icon="retry" busy={current.pending} onClick={() => setRetry((n) => n + 1)}>{t("machines-usage.retry")}</Button>
             </div>
-            {!data.launchers_known && <p className="mt-1.5 text-[11.5px] text-ink-3">{t("machines-usage.old_node")}</p>}
-            <Totals data={data} />
-            <div className="mt-3 flex items-baseline gap-2">
-              <h3 className="text-[12.5px] font-medium text-ink-2">{t("machines-usage.throughput")}</h3>
-              <span className="flex-1" />
-              <span className="font-mono text-[11px] text-ink-3 tabular-nums">{picked ? stamp(picked.t, data.range, tz) : t("machines-usage.per_minute")}</span>
-              <span className="text-[14px] font-medium text-ink tabular-nums">
-                {t("machines-usage.per_minute_value", { n: formatTokens(shownNow(data, picked, stacked ? kinds : USAGE_KINDS)) })}
-              </span>
-            </div>
-            <Throughput data={data} kinds={kinds} hover={hover} onHover={setHover} tz={tz} model={model} launcher={launcher} onClear={() => (setModel(null), setLauncher(null))} />
-            {stacked && <Legend data={data} picked={picked} hidden={hidden} onToggle={toggle} />}
-            {data.points.some((p) => p.gap) && <p className="mt-1.5 text-[11.5px] text-ink-3">{t("machines-usage.offline_note")}</p>}
-            <div className="mt-3 flex items-baseline gap-2">
-              <h3 className="text-[12.5px] font-medium text-ink-2">{t("machines-usage.hit_rate_title")}</h3>
-              <span className="flex-1" />
-              <span className="text-[14px] font-medium text-ink tabular-nums">{percentText(picked ? hitRate(picked) : hitRate(data.total))}</span>
-            </div>
-            <HitRate data={data} hover={hover} onHover={setHover} tz={tz} />
-            <p className="mt-1 text-[11.5px] text-ink-3">{t("machines-usage.hit_rate_note")}</p>
-          </div>
-          <div className="flex flex-col gap-3">
-            <Shares title={t("machines-usage.by_model")} shares={data.models.map((m) => ({ key: m.name, label: m.name, tokens: m }))} selected={model} onPick={(k) => setModel(model === k ? null : k)} />
-            {data.launchers_known && (
-              <Shares title={t("machines-usage.by_launcher")} shares={data.launchers.map((l) => ({ key: l.name, label: launcherName(l.name), tokens: l }))} selected={launcher} onPick={(k) => setLauncher(launcher === k ? null : k)} />
-            )}
-          </div>
+          )}
+          {!data && current.pending && <div className="flex h-40 items-center justify-center"><Loading /></div>}
+          {data && (
+            <>
+              <Totals data={data} />
+              <div className="mt-3 flex items-baseline gap-2">
+                <h3 className="text-[12.5px] font-medium text-ink-2">{t("machines-usage.throughput")}</h3>
+                <span className="flex-1" />
+                <span className="font-mono text-[11px] text-ink-3 tabular-nums">{picked ? stamp(picked.t, data.range, tz) : t("machines-usage.per_minute")}</span>
+                <span className="text-[14px] font-medium text-ink tabular-nums">
+                  {t("machines-usage.per_minute_value", { n: formatTokens(shownNow(data, picked, stacked ? kinds : USAGE_KINDS)) })}
+                </span>
+              </div>
+              <Throughput data={data} kinds={kinds} hover={hover} onHover={setHover} tz={tz} model={model} launcher={launcher} onClear={() => (setModel(null), setLauncher(null))} />
+              {stacked && <Legend data={data} picked={picked} hidden={hidden} onToggle={toggle} />}
+              {data.points.some((p) => p.gap) && <p className="mt-1.5 text-[11.5px] text-ink-3">{t("machines-usage.offline_note")}</p>}
+              <div className="mt-3 flex items-baseline gap-2">
+                <h3 className="text-[12.5px] font-medium text-ink-2">{t("machines-usage.hit_rate_title")}</h3>
+                <span className="flex-1" />
+                <span className="text-[14px] font-medium text-ink tabular-nums">{percentText(picked ? hitRate(picked) : hitRate(data.total))}</span>
+              </div>
+              <HitRate data={data} hover={hover} onHover={setHover} tz={tz} />
+              <p className="mt-1 text-[11.5px] text-ink-3">{t("machines-usage.hit_rate_note")}</p>
+            </>
+          )}
         </div>
-      )}
+        {data && <div className="flex flex-col gap-3">
+          <Shares title={t("machines-usage.by_model")} shares={data.models.map((m) => ({ key: m.name, label: m.name, tokens: m }))} selected={model} onPick={(k) => setModel(model === k ? null : k)} />
+          {data.launchers_known && (
+            <Shares title={t("machines-usage.by_launcher")} shares={data.launchers.map((l) => ({ key: l.name, label: launcherName(l.name), tokens: l }))} selected={launcher} onPick={(k) => setLauncher(launcher === k ? null : k)} />
+          )}
+        </div>}
+      </div>
     </section>
   );
 }
@@ -270,6 +275,7 @@ function Filter({ label, all, value, options, onChange, disabled }: {
         onChange={(e) => onChange(e.target.value === "\u0000all" ? null : e.target.value)}
       >
         <option value={"\u0000all"}>{all}</option>
+        {value !== null && !options.some((o) => o.value === value) && <option value={value}>{value === "" ? launcherName(value) : value}</option>}
         {options.map((o) => (
           <option key={o.value} value={o.value}>
             {o.label}
@@ -322,8 +328,8 @@ function Throughput({ data, kinds, hover, onHover, tz, model, launcher, onClear 
   const t0 = data.points[0]?.t ?? 0;
   const t1 = (data.points[data.points.length - 1]?.t ?? t0) + data.step;
   const layers = useMemo(() => stackLayers(data, kinds.length ? kinds : USAGE_KINDS), [data, kinds]);
-  const tops = layers.length ? layers[layers.length - 1].points.map((p) => p.y1) : [];
-  const axis = yAxis(Math.max(1, ...tops));
+  const tops = useMemo(() => (layers.length ? layers[layers.length - 1].points.map((p) => p.y1) : []), [layers]);
+  const axis = useMemo(() => yAxis(Math.max(1, ...tops)), [tops]);
   const x = scale(t0, t1, 0, W);
   const y = scale(0, axis.top, H, TOP);
   const picked = hover !== null ? nearestStep(data, hover) : undefined;
@@ -331,9 +337,6 @@ function Throughput({ data, kinds, hover, onHover, tz, model, launcher, onClear 
   const empty = totalTokens(data.total) === 0;
   // Each step's point at its middle, so a bar of time reads as the step it sums.
   const mid = (tt: number) => x(tt + data.step / 2);
-  const area = (pts: { t: number; y0: number; y1: number }[]) =>
-    pts.map((p) => `${mid(p.t).toFixed(1)},${y(p.y1).toFixed(1)}`).join(" ") + " " +
-    [...pts].reverse().map((p) => `${mid(p.t).toFixed(1)},${y(p.y0).toFixed(1)}`).join(" ");
   const summary = t("machines-usage.chart_summary", { total: formatTokens(totalTokens(data.total)), peak: formatTokens(Math.max(0, ...tops)) });
 
   return (
@@ -342,17 +345,7 @@ function Throughput({ data, kinds, hover, onHover, tz, model, launcher, onClear 
         <svg width={width} height={H + AXIS_H} role="img" aria-label={summary} tabIndex={0} onKeyDown={(e) => keyHover(e, data, picked, onHover)} onBlur={() => onHover(null)} className="block rounded-[4px] outline-none focus-visible:shadow-[0_0_0_2px_var(--accent)]">
           <Grid axis={axis} y={y} W={W} format={formatTokens} />
           <XTicks ticks={ticks} x={x} W={W} range={data.range} tz={tz} hoverX={picked ? mid(picked.t) : null} />
-          {offlineRuns(data).map(([a, b]) => (
-            <rect key={a} x={x(a)} y={TOP} width={Math.max(1, x(b) - x(a))} height={H - TOP} fill="var(--ink)" fillOpacity={0.05} />
-          ))}
-          {kinds.length
-            ? layers.map((l) => <polygon key={l.kind} points={area(l.points)} fill={USAGE_COLOR[l.kind]} fillOpacity={0.88} stroke="var(--surface)" strokeWidth={1} strokeLinejoin="round" />)
-            : (
-              <g>
-                <polygon points={area(layers[layers.length - 1].points.map((p) => ({ ...p, y0: 0 })))} fill={USAGE_COLOR.in} fillOpacity={0.12} />
-                <polyline points={tops.map((v, i) => `${mid(data.points[i].t).toFixed(1)},${y(v).toFixed(1)}`).join(" ")} fill="none" stroke={USAGE_COLOR.in} strokeWidth={2} strokeLinejoin="round" />
-              </g>
-            )}
+          <ThroughputLayers data={data} layers={layers} tops={tops} stacked={kinds.length > 0} t0={t0} t1={t1} W={W} top={axis.top} />
           <Crosshair at={picked ? mid(picked.t) : null} H={H} label={picked ? stamp(picked.t, data.range, tz) : ""} W={W} />
           <rect x={0} y={0} width={W} height={H + AXIS_H} fill="transparent" onPointerMove={(e) => pointer(e, t0, t1, data, onHover)} onPointerDown={(e) => pointer(e, t0, t1, data, onHover)} onPointerLeave={() => onHover(null)} style={{ touchAction: "pan-y" }} />
         </svg>
@@ -379,8 +372,8 @@ function HitRate({ data, hover, onHover, tz }: { data: MachineUsage; hover: numb
   const W = Math.max(0, width - AXIS_W);
   const t0 = data.points[0]?.t ?? 0;
   const t1 = (data.points[data.points.length - 1]?.t ?? t0) + data.step;
-  const runs = hitRuns(data);
-  const low = Math.min(0.5, Math.floor(Math.min(1, ...runs.flat().map((p) => p.v)) * 10) / 10);
+  const runs = useMemo(() => hitRuns(data), [data]);
+  const low = useMemo(() => Math.min(0.5, Math.floor(Math.min(1, ...runs.flat().map((p) => p.v)) * 10) / 10), [runs]);
   const x = scale(t0, t1, 0, W);
   const y = scale(low, 1, HIT_H, TOP);
   const mid = (tt: number) => x(tt + data.step / 2);
@@ -397,13 +390,7 @@ function HitRate({ data, hover, onHover, tz }: { data: MachineUsage; hover: numb
             </g>
           ))}
           <XTicks ticks={ticksFor(t0, t1, data.range, tz, W < 360 ? 3 : 5)} x={x} W={W} range={data.range} tz={tz} H={HIT_H} />
-          {runs.map((r, i) =>
-            r.length === 1 ? (
-              <circle key={i} cx={mid(r[0].t)} cy={y(r[0].v)} r={1.5} fill={USAGE_COLOR.cache_read} />
-            ) : (
-              <polyline key={i} points={r.map((p) => `${mid(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join(" ")} fill="none" stroke={USAGE_COLOR.cache_read} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
-            ),
-          )}
+          <HitRateLine runs={runs} step={data.step} t0={t0} t1={t1} W={W} low={low} />
           {picked && hitRate(picked) !== undefined && (picked.req ?? 0) >= 3 && (
             <g pointerEvents="none">
               <line x1={mid(picked.t)} x2={mid(picked.t)} y1={TOP} y2={HIT_H} stroke="var(--ink-3)" strokeWidth={1} shapeRendering="crispEdges" />
@@ -417,6 +404,59 @@ function HitRate({ data, hover, onHover, tz }: { data: MachineUsage; hover: numb
     </div>
   );
 }
+
+/** The offline steps' shade and the kinds stacked (or every token as one line): two toFixed a point and side, so they are
+ * memoized and a hover does not build them again. */
+const ThroughputLayers = memo(function ThroughputLayers({ data, layers, tops, stacked, t0, t1, W, top }: {
+  data: MachineUsage;
+  layers: ReturnType<typeof stackLayers>;
+  tops: number[];
+  stacked: boolean;
+  t0: number;
+  t1: number;
+  W: number;
+  top: number;
+}) {
+  const x = scale(t0, t1, 0, W);
+  const y = scale(0, top, H, TOP);
+  const mid = (tt: number) => x(tt + data.step / 2);
+  const area = (pts: { t: number; y0: number; y1: number }[]) =>
+    pts.map((p) => `${mid(p.t).toFixed(1)},${y(p.y1).toFixed(1)}`).join(" ") + " " +
+    [...pts].reverse().map((p) => `${mid(p.t).toFixed(1)},${y(p.y0).toFixed(1)}`).join(" ");
+  return (
+    <>
+      {offlineRuns(data).map(([a, b]) => (
+        <rect key={a} x={x(a)} y={TOP} width={Math.max(1, x(b) - x(a))} height={H - TOP} fill="var(--ink)" fillOpacity={0.05} />
+      ))}
+      {stacked
+        ? layers.map((l) => <polygon key={l.kind} points={area(l.points)} fill={USAGE_COLOR[l.kind]} fillOpacity={0.88} stroke="var(--surface)" strokeWidth={1} strokeLinejoin="round" />)
+        : (
+          <g>
+            <polygon points={area(layers[layers.length - 1].points.map((p) => ({ ...p, y0: 0 })))} fill={USAGE_COLOR.in} fillOpacity={0.12} />
+            <polyline points={tops.map((v, i) => `${mid(data.points[i].t).toFixed(1)},${y(v).toFixed(1)}`).join(" ")} fill="none" stroke={USAGE_COLOR.in} strokeWidth={2} strokeLinejoin="round" />
+          </g>
+        )}
+    </>
+  );
+});
+
+/** The hit rate's runs, memoized like the throughput's layers. */
+const HitRateLine = memo(function HitRateLine({ runs, step, t0, t1, W, low }: { runs: { t: number; v: number }[][]; step: number; t0: number; t1: number; W: number; low: number }) {
+  const x = scale(t0, t1, 0, W);
+  const y = scale(low, 1, HIT_H, TOP);
+  const mid = (tt: number) => x(tt + step / 2);
+  return (
+    <>
+      {runs.map((r, i) =>
+        r.length === 1 ? (
+          <circle key={i} cx={mid(r[0].t)} cy={y(r[0].v)} r={1.5} fill={USAGE_COLOR.cache_read} />
+        ) : (
+          <polyline key={i} points={r.map((p) => `${mid(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join(" ")} fill="none" stroke={USAGE_COLOR.cache_read} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+        ),
+      )}
+    </>
+  );
+});
 
 function pointer(e: React.PointerEvent<SVGRectElement>, t0: number, t1: number, data: MachineUsage, onHover: (t: number | null) => void) {
   const r = e.currentTarget.getBoundingClientRect();

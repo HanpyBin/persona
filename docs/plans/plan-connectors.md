@@ -9,7 +9,7 @@ After the user approves, follow "Implementation steps" and check completed steps
 
 | Pipeline | Lark | Moments | Mail |
 | --- | --- | --- | --- |
-| Knowledge-base archive | `larkSource` (`kb.Source` + `kb.Backfiller`, `hub/kb.go`) | `momentsSource` (same, empty `Older`) | `mailSource` is a shell; real archiving is a separate `hub.kbMail` loop, cursor in `mail-cursors.json`, calling `kb.Engine.Ingest` |
+| Knowledge-base archive | `larkSource` (`kb.Source` + `kb.Backfiller`, then in the hub's kb.go) | `momentsSource` (same, empty `Older`) | `mailSource` is a shell; real archiving is a separate `hub.kbMail` loop, cursor in `mail-cursors.json`, calling `kb.Engine.Ingest` |
 | Documents / meetings / events | `larkItems` (`kb.ItemSource`) | — | — |
 | `Inbox` | `collectLark`, `collectDocs` (`inbox.go`, `inbox_docs.go`) | `collectMoments` (`inbox_moments.go`) | `collectMail` (`inbox.go`) |
 | `Inbox` items | Hardcoded `Source: "lark"`, separate `Lark` / `Doc` / `Moment` blocks | Same | `Source: "mail"`, `Mail` block |
@@ -28,7 +28,7 @@ Each new source needs its own implementation in six or seven places, plus anothe
 Each source implements one **`connector`**, providing capabilities as needed, all optional. The hub discovers what it implements and automatically attaches it to the knowledge base, `Inbox`, assistant (MCP tools) and App.
 Adding a source no longer `changes` these pipelines.
 
-Out of scope: source-specific browsing pages (`docs/extensions/feishu.md` ("Do not build another Lark") applies equally to GitHub and Messages); changing existing `sources`' behavior.
+Out of scope: source-specific browsing pages (`docs/extensions/feishu.md` ("Persona is not a second Lark") applies equally to GitHub and Messages); changing existing `sources`' behavior.
 
 ## I. `Connector` interface
 
@@ -339,7 +339,8 @@ Descriptions in `prompts/mcp/github/`; add a "with GitHub" tool-list golden.
 The hub has no public entry point, so cannot receive webhooks. `GET /notifications` sends the previous `Last-Modified` verbatim as `If-Modified-Since`;
 304s do not count against rate limits. Request intervals follow `X-Poll-Interval` (usually 60 seconds, longer when GitHub is busy; mandatory), updating `Poller.NextPoll` each time.
 Fetch corresponding PRs / issues / check runs only for new notifications (at most 30 `threads` per round, rest next round). Below 10% `X-RateLimit-Remaining`, status becomes `rate_limited`
-and only notification polling remains.
+and only notification polling remains. That is the hour's core quota (`X-RateLimit-Resource: core`, or no such header); the search API's
+per-minute quota is kept apart and below 10% only pauses the knowledge-base archive (`Changes`) until it resets.
 
 ### Conversation page (#1055)
 

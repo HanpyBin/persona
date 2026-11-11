@@ -2,6 +2,7 @@ package hub
 
 import (
 	"encoding/json"
+	"fmt"
 	"maps"
 	"time"
 
@@ -38,6 +39,11 @@ func (p *Pusher) sendLocalizedQuietTo(build localized, collapseID string, wants 
 // it takes. "" is the hub's own push. wants keeps its meaning: nil (asked for explicitly) still goes past Phone Muted
 // and to an open desktop. Returns the selected count and the reachable count before preferences are applied.
 func (p *Pusher) sendFrom(manager string, build localized, collapseID string, wants func(NotifyPrefs) bool, rule quietRule, sent func(Device)) (selected, reachable int) {
+	return p.sendFromTo(manager, build, collapseID, wants, rule, nil, sent)
+}
+
+// sendFromTo is sendFrom to the devices only takes (nil: every device), before their settings decide.
+func (p *Pusher) sendFromTo(manager string, build localized, collapseID string, wants func(NotifyPrefs) bool, rule quietRule, only func(Device) bool, sent func(Device)) (selected, reachable int) {
 	if p == nil {
 		return 0, 0
 	}
@@ -48,6 +54,9 @@ func (p *Pusher) sendFrom(manager string, build localized, collapseID string, wa
 		hush = func(d Device) bool { return p.inQuiet(devicePrefs(d.Prefs)) }
 	}
 	return p.sendBuiltWith(build, collapseID, "alert", "10", func(d Device) bool {
+		if only != nil && !only(d) {
+			return false
+		}
 		if wants != nil && p.desktopOpen != nil && p.desktopOpen(d.DeviceID) {
 			return false
 		}
@@ -67,7 +76,7 @@ func (p *Pusher) sendFrom(manager string, build localized, collapseID string, wa
 
 // sendLiveActivity pushes to a Live Activity token (an activity's own, or the push-to-start one): its own push type and
 // topic, the device's APNs environment. gone runs when APNs says the token is dead. Through the relay the payload is
-// not sealed: iOS reads a Live Activity's content-state itself (docs/operations/push-relay.md "Live Activity is plaintext").
+// not sealed: iOS reads a Live Activity's content-state itself (docs/operations/push-relay.md "Live Activities are plaintext").
 // The returned channel closes after the attempt and its retries, so revocation can wait before forgetting the device.
 func (p *Pusher) sendLiveActivity(d Device, token string, payload map[string]any, priority string, gone func()) <-chan struct{} {
 	done := make(chan struct{})
@@ -113,15 +122,9 @@ func (p *Pusher) sendLiveActivity(d Device, token string, payload map[string]any
 	return done
 }
 
-// wake sends a silent background push: iOS gives the app ~30 s to connect and run a pending phone_* call.
-// Best effort: the system throttles these and never delivers them to a force-quit app. Phones only: the phone_*
-// tools run on the iPhone (a Mac registers as a desktop, docs/apple/mac.md).
-func (p *Pusher) wake(reason string) {
-	p.sendAs(map[string]any{"aps": map[string]any{"content-available": 1}, "persona_wake": reason, compat.WakeField: reason}, "", "background", "5",
-		func(d Device) bool { return d.Kind != kindMac })
-}
-
-// wakeDevices preserves the iOS background push payload while limiting its recipients (the phone_* tools' wake).
+// wakeDevices sends a silent background push to the devices in ids: iOS gives the app ~30 s to connect and run a
+// pending phone_* call. Best effort: the system throttles these and never delivers them to a force-quit app. Phones
+// only: the phone_* tools run on the iPhone (a Mac registers as a desktop, docs/apple/mac.md).
 func (p *Pusher) wakeDevices(reason string, ids map[string]bool) {
 	if p == nil {
 		return
@@ -195,6 +198,8 @@ func (p *Pusher) sendBuiltWith(build localized, collapseID, pushType, priority s
 	type built struct {
 		payload map[string]any
 		body    []byte
+		// unfit: the direct body is over APNs' limit even shortened, so it is not sent (APNs would refuse it with 413).
+		unfit error
 	}
 	type variant struct {
 		lang  i18n.Lang
@@ -205,8 +210,17 @@ func (p *Pusher) sendBuiltWith(build localized, collapseID, pushType, priority s
 		lang := p.langOf(d)
 		key := variant{lang, hush != nil && hush(d)}
 		b, ok := byLang[key]
+		if ok && b.payload == nil {
+			continue // nothing in its language: logged once below
+		}
 		if !ok {
 			b.payload = cleanAlert(build(lang))
+			if b.payload == nil {
+				// build had nothing in this language: its devices get no push, and the hub_id below is not written to a nil map
+				p.logf("push: no %s payload in %s: its devices get none", pushType, lang)
+				byLang[key] = b
+				continue
+			}
 			if key.quiet {
 				b.payload = hushed(b.payload)
 			}
@@ -221,7 +235,8 @@ func (p *Pusher) sendBuiltWith(build localized, collapseID, pushType, priority s
 				if body, err := fitAlert(fitted, apnsMaxAlert); err == nil {
 					b.body = body
 				} else {
-					p.logf("apns: %s push of %d bytes does not fit even shortened: %v", pushType, len(b.body), err)
+					b.unfit = fmt.Errorf("push of %d bytes is over APNs' %d-byte limit", len(b.body), apnsMaxAlert)
+					p.logf("apns: %s push of %d bytes does not fit even shortened, not sent: %v", pushType, len(b.body), err)
 				}
 			}
 			byLang[key] = b
@@ -232,6 +247,7 @@ func (p *Pusher) sendBuiltWith(build localized, collapseID, pushType, priority s
 			sealed, err := p.sealFor(d, payload)
 			if err != nil {
 				p.logf("relay %s: seal: %v", d.Name, err) // never falls back to sending it in the clear
+				p.pushed(d, fmt.Errorf("seal: %w", err))
 				continue
 			}
 			p.notePush(d, nil, event, "relay", "attempt", 0, int64(len(body)), 0)
@@ -245,6 +261,10 @@ func (p *Pusher) sendBuiltWith(build localized, collapseID, pushType, priority s
 					p.forgetIfCurrent(d)
 				}
 			}(d)
+			continue
+		}
+		if b.unfit != nil {
+			p.pushed(d, b.unfit)
 			continue
 		}
 		p.notePush(d, nil, event, "apns", "attempt", 0, int64(len(body)), 0)

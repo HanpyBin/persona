@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/nwverse/persona/server/internal/channel"
@@ -20,7 +21,7 @@ import (
 	"github.com/nwverse/persona/server/internal/rpc"
 )
 
-// The channels plugins contribute (the channel extension point, docs/extensions/channels.md "How extensions contribute channels"): the program
+// The channels plugins contribute (the channel extension point, docs/extensions/channels.md "Contributing a channel"): the program
 // talks to its chat app through the hub — the owner's messages come as channels.receive, what is sent goes as
 // channels.send — and everything else is here: commands, where a message goes, the turn (channels_runs.go), what is
 // asked answered in text, pushes and the sync mirror.
@@ -233,6 +234,10 @@ func (s *Service) channelTarget(ctx context.Context, id string) (resolvedTarget,
 // channelForward sends the owner's message to the conversation the channel talks to (starting it when there is none
 // yet) and follows its turn.
 func (s *Service) channelForward(ctx context.Context, id string, m channel.Message) error {
+	c := &s.chans
+	c.mu.Lock()
+	generation := c.generation[id]
+	c.mu.Unlock()
 	v, ok := s.pluginChannel(ctx, id)
 	if !ok {
 		return fmt.Errorf("no channel %s", id)
@@ -308,7 +313,7 @@ func (s *Service) channelForward(ctx context.Context, id string, m channel.Messa
 			return err
 		}
 	}
-	s.startChannelRun(run)
+	s.startChannelRunForBinding(run, &generation)
 	return nil
 }
 
@@ -333,10 +338,20 @@ func (s *Service) lastSeq(ctx context.Context, machine, sid string) int {
 
 // uploadBytes saves a file on a machine (its temp directory, like the app's uploads) and returns the path.
 func (s *Service) uploadBytes(ctx context.Context, machine, name string, data []byte) (string, error) {
+	return s.uploadBytesInto(ctx, machine, name, data, "")
+}
+
+// uploadBytesInto is uploadBytes into the node's dest ("": its temp directory; "terminal": uploads/terminal/<date>/,
+// swept after 7 days, node/upload_sweep.go).
+func (s *Service) uploadBytesInto(ctx context.Context, machine, name string, data []byte, dest string) (string, error) {
 	var begin struct {
 		UploadID string `json:"upload_id"`
 	}
-	if err := s.call(ctx, machine, "file.upload.begin", map[string]any{"name": name, "size": len(data)}, &begin); err != nil {
+	params := map[string]any{"name": name, "size": len(data)}
+	if dest != "" {
+		params["dest"] = dest
+	}
+	if err := s.call(ctx, machine, "file.upload.begin", params, &begin); err != nil {
 		return "", err
 	}
 	for off := 0; off < len(data); off += proto.UploadChunkBytes {
@@ -404,6 +419,7 @@ func (s *Service) channelDrives(ctx context.Context, id, machine, session string
 func (s *Service) channelInteraction(ix proto.Interaction) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	var to []string
 	for _, v := range s.textChannels(ctx) {
 		if v.Capabilities.Asks != channel.AsksText || !featureOn(v, channel.FeatureAsks) {
 			continue
@@ -412,8 +428,27 @@ func (s *Service) channelInteraction(ix proto.Interaction) {
 		if !s.channelDrives(ctx, v.ID, ix.MachineID, ix.SessionID) && (!featureOn(v, channel.FeatureAllAsks) || s.ixInHealth(ctx, ix)) {
 			continue
 		}
-		s.askInChannel(ctx, v.ID, ix)
+		to = append(to, v.ID)
 	}
+	eachChannel(context.Background(), to, func(ctx context.Context, id string) { s.askInChannel(ctx, id, ix) })
+}
+
+// channelSendTimeout is how long one channel has for what is sent to it, the hub's retries included
+// (extmgr/channels_extension.go).
+const channelSendTimeout = 30 * time.Second
+
+// eachChannel calls send for every channel in ids at once, each with its own channelSendTimeout from parent, and
+// returns when all are done: a channel program that hangs uses up only its own time, never the next channel's.
+func eachChannel(parent context.Context, ids []string, send func(ctx context.Context, id string)) {
+	var wg sync.WaitGroup
+	for _, id := range ids {
+		wg.Go(func() {
+			ctx, cancel := context.WithTimeout(parent, channelSendTimeout)
+			defer cancel()
+			send(ctx, id)
+		})
+	}
+	wg.Wait()
 }
 
 func (s *Service) askInChannel(ctx context.Context, id string, ix proto.Interaction) {
@@ -421,6 +456,7 @@ func (s *Service) askInChannel(ctx context.Context, id string, ix proto.Interact
 	c.mu.Lock()
 	s.loadChannelStateLocked(ctx)
 	known := slices.ContainsFunc(c.st.Asks, func(a *channel.Ask) bool { return a.Channel == id && a.ID == ix.ID })
+	generation := c.generation[id]
 	now := c.clock()
 	c.mu.Unlock()
 	if known {
@@ -441,7 +477,7 @@ func (s *Service) askInChannel(ctx context.Context, id string, ix proto.Interact
 		return
 	}
 	c.mu.Lock()
-	if _, ended := c.ended[ix.ID]; !ended && !slices.ContainsFunc(c.st.Asks, func(x *channel.Ask) bool { return x.Channel == id && x.ID == a.ID }) {
+	if _, ended := c.ended[ix.ID]; !ended && c.generation[id] == generation && !slices.ContainsFunc(c.st.Asks, func(x *channel.Ask) bool { return x.Channel == id && x.ID == a.ID }) {
 		c.st.Asks = append(c.st.Asks, a)
 		s.saveChannelStateLocked()
 	}
@@ -637,19 +673,27 @@ func rewindLastAnswer(a *channel.Ask) {
 // --- pushes and the sync mirror ---
 
 // channelPush sends what notify_user pushed to the phone to the plugin channels with pushes on too.
-func (s *Service) channelPush(title, body string) {
+func (s *Service) channelPush(machine, session, title, body string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	var to []string
 	for _, v := range s.textChannels(ctx) {
 		if v.Capabilities.Push && featureOn(v, channel.FeaturePushes) {
-			_ = s.channelTell(ctx, v.ID, "", strings.TrimSpace("🔔 "+title+"\n\n"+body), channel.OutPush)
+			to = append(to, v.ID)
 		}
 	}
+	text := strings.TrimSpace("🔔 " + title + "\n\n" + body)
+	eachChannel(context.Background(), to, func(ctx context.Context, id string) {
+		if err := s.channelTell(ctx, id, "", text, channel.OutPush); err == nil {
+			s.markPushed(id, machine, session)
+		}
+	})
 }
 
 // extensionMirror sends a turn that ended without being asked for in a channel: the main conversation's to those
 // with sync on, a scheduled task's own conversation's to those with pushes on.
 func (s *Service) extensionMirror(ctx context.Context, machine, session string) {
+	parent := ctx // what each channel's send gets its own time from (eachChannel)
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	var to []channel.View
@@ -673,25 +717,33 @@ func (s *Service) extensionMirror(ctx context.Context, machine, session string) 
 	if !ok {
 		return
 	}
-	pushed := s.pushedLately(session)
+	var ids []string
 	for _, v := range to {
 		switch {
+		case featureOn(v, channel.FeaturePushes) && s.pushedLately(v.ID, machine, session):
+			continue // its notify_user copy already reached this channel
 		case strings.Contains(asked, `title="`+v.Name+`机器人"`):
 			continue // its own message: answered by the run
 		case main && featureOn(v, channel.FeatureSync):
-		case task != "" && featureOn(v, channel.FeaturePushes) && !pushed:
+		case task != "" && featureOn(v, channel.FeaturePushes):
 		default:
 			continue
 		}
-		l := s.botLang(ctx)
-		head := i18n.T(l, "assistant-channels_plugin.main_chat")
-		if !main {
-			head = i18n.T(l, "assistant-channels_plugin.scheduled_task", i18n.Args{"task": task})
-		} else if asked != "" {
-			head += i18n.T(l, "assistant-channels_plugin.asked_elsewhere", i18n.Args{"asked": clip(oneLine(stripContext(asked)), 80)})
-		}
-		_ = s.channelTell(ctx, v.ID, "", head+"\n\n"+answer, channel.OutPush)
+		ids = append(ids, v.ID)
 	}
+	if len(ids) == 0 {
+		return
+	}
+	l := s.botLang(ctx)
+	head := i18n.T(l, "assistant-channels_plugin.main_chat")
+	if !main {
+		head = i18n.T(l, "assistant-channels_plugin.scheduled_task", i18n.Args{"task": task})
+	} else if asked != "" {
+		head += i18n.T(l, "assistant-channels_plugin.asked_elsewhere", i18n.Args{"asked": clip(oneLine(stripContext(asked)), 80)})
+	}
+	eachChannel(parent, ids, func(ctx context.Context, id string) {
+		_ = s.channelTell(ctx, id, "", head+"\n\n"+answer, channel.OutPush)
+	})
 }
 
 // channelLastTurn is the conversation's last turn: what was asked and its answer (false when it has no answer).
@@ -760,12 +812,3 @@ var (
 	contextBlockRe = lazyre.New(`(?s)<` + compat.ContextPattern() + `\b[^>]*>.*?</` + compat.ContextPattern() + `>`)
 	contextOpenRe  = lazyre.New(`<` + compat.ContextPattern() + `\b`)
 )
-
-func firstNonEmpty(s ...string) string {
-	for _, x := range s {
-		if strings.TrimSpace(x) != "" {
-			return x
-		}
-	}
-	return ""
-}

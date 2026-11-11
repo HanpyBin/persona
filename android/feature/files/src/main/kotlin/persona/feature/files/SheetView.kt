@@ -73,7 +73,7 @@ internal fun readSheets(file: SessionFileContent, whole: java.io.File? = null): 
 }
 
 /**
- * A table file as a grid (docs/android/android.md "File viewer", iOS `TableFileView`): column letters across the top and row
+ * A table file as a grid (docs/android/android.md "Files and Git in chat", iOS `TableFileView`): column letters across the top and row
  * numbers down the side stay put while the cells scroll both ways; a workbook with several sheets has a chip per sheet.
  * Tap a cell to see all of it in the bar below (with a copy button); long-press to copy the cell or its row.
  */
@@ -254,8 +254,8 @@ private fun columnWidths(sheet: TableSheet): List<Dp> {
     val style = cellStyle().copy(fontWeight = FontWeight.SemiBold)
     val density = LocalDensity.current
     val pad = Tokens.Space.s * 2
-    val min = Tokens.Space.xxxl * 2
-    val max = Tokens.Space.xxxl * 7
+    val min = Tokens.Space.xxl * 2
+    val max = Tokens.Space.xxl * 7
     // One measurement for a character cell (half a CJK glyph, or a digit if wider), times each column's widest text in
     // cells: a sheet can have thousands of columns, too many to lay each one's text out on the main thread.
     val cell = remember(style, density) {

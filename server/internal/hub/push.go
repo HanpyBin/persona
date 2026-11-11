@@ -52,6 +52,9 @@ type Pusher struct {
 	// desktopOpen: the desktop app with this push device id is connected (Hub.desktopOpen); it posts its own
 	// notifications for agents then (the Mac's MacAttentionWatcher).
 	desktopOpen func(device string) bool
+	// devicesChanged runs after a device was registered, forgotten or reloaded, or its settings changed (Hub:
+	// fleet.clients, whether a phone would be pushed an MCP form). It may run under the Pusher's locks: it must not block.
+	devicesChanged func()
 
 	mu sync.Mutex
 	// sendMu lets maintenance skip an active transport instead of retiring a
@@ -68,9 +71,12 @@ type Pusher struct {
 	acceptedDirty map[string]bool
 	// withdrawals: where each card's push went, to take it back when the card is over (push_withdraw.go).
 	withdrawals withdrawals
-	saveMu      sync.Mutex // one device row write at a time, always the latest state (save, setPrefs)
+	saveMu      sync.Mutex // one device row write at a time, always the latest state (register, setPrefsBy, renewal, forget, maintenance)
 	// storeTimeout bounds each device row write, which never runs under mu; tests shorten it.
 	storeTimeout time.Duration
+	// prefsEdit holds one change of a device's settings from its read to its write (editPrefs); taken before saveMu
+	// and mu, never by a push.
+	prefsEdit sync.Mutex
 }
 
 // deviceStoreTimeout: how long a device row write may take before it gives up (the pool has no statement_timeout).
@@ -168,6 +174,7 @@ func (p *Pusher) register(d Device) error {
 		return err
 	}
 	d.Registering = false
+	defer p.changed() // after mu is let go
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if d.APNSToken != cur.APNSToken || d.RelayURL != cur.RelayURL {
@@ -186,30 +193,6 @@ func (p *Pusher) register(d Device) error {
 	}
 	p.devices[d.DeviceID] = d
 	return nil
-}
-
-// save writes a device's current row (whatever the latest register / renewal left), one write at a time.
-func (p *Pusher) save(id string) error {
-	if p.store == nil {
-		return nil
-	}
-	p.saveMu.Lock()
-	defer p.saveMu.Unlock()
-	return p.saveLocked(id)
-}
-
-// saveLocked requires saveMu; renewal and maintenance already hold it.
-func (p *Pusher) saveLocked(id string) error {
-	if p.store == nil {
-		return nil
-	}
-	p.mu.Lock()
-	d, ok := p.devices[id]
-	p.mu.Unlock()
-	if !ok {
-		return nil
-	}
-	return p.writeDevice(d)
 }
 
 // writeDevice requires saveMu and never publishes a failed write.
@@ -241,6 +224,22 @@ func (p *Pusher) reachable(d Device) bool {
 		return d.APNSToken != ""
 	}
 	return p.relayed(d)
+}
+
+// routed: a push to the device with this credential (or push registration id) can go somewhere. APNs keeps its alerts
+// while it is away, so the hub keeps none of its WebSocket's for it (notifyring.go).
+func (p *Pusher) routed(id string) bool {
+	if p == nil || id == "" {
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, d := range p.devices {
+		if (d.DeviceID == id || d.CredentialID == id) && p.reachable(d) {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *Pusher) currentPushTarget(d Device) bool {
@@ -276,13 +275,18 @@ func (p *Pusher) signedOut(credential string) {
 	}
 }
 
-// forget drops a device, whatever token it has now (signedOut).
+// forget drops a device, whatever token it has now (signedOut), with all of its push bookkeeping: a push accepted
+// just before still marked dirty would have maintenance write a row for a device that is gone.
 func (p *Pusher) forget(d Device) {
 	p.saveMu.Lock()
 	defer p.saveMu.Unlock()
 	p.mu.Lock()
 	delete(p.devices, d.DeviceID)
+	delete(p.failed, d.DeviceID)
+	delete(p.replaced, d.DeviceID)
+	delete(p.acceptedDirty, d.DeviceID)
 	p.mu.Unlock()
+	p.changed()
 	p.deleteRow(d)
 }
 
@@ -331,6 +335,7 @@ func (p *Pusher) forgetIfCurrent(d Device) {
 					}
 				}
 				p.mu.Unlock()
+				p.changed()
 			} else {
 				p.logf("reload push registration after late gone: %v", readErr)
 			}
@@ -346,6 +351,14 @@ func (p *Pusher) forgetIfCurrent(d Device) {
 	delete(p.replaced, d.DeviceID)
 	delete(p.acceptedDirty, d.DeviceID)
 	p.mu.Unlock()
+	p.changed()
+}
+
+// changed tells devicesChanged (nil: nobody) the devices or their settings may differ now.
+func (p *Pusher) changed() {
+	if p.devicesChanged != nil {
+		p.devicesChanged()
+	}
 }
 
 // prefs is a device's notification settings (defaults when it never set any).
@@ -355,11 +368,9 @@ func (p *Pusher) prefs(id string) NotifyPrefs {
 	return devicePrefs(p.devices[id].Prefs)
 }
 
-// setPrefs stores a device's notification settings (also for a device that has not registered a token yet).
-func (p *Pusher) setPrefs(id string, prefs NotifyPrefs) error { return p.setPrefsBy(id, "", prefs) }
-
-// setPrefsBy is setPrefs written with a device token (`credential`): a device that has none recorded takes it, so
-// revoking the token forgets a device only its prefs made (a browser's Settings › Notifications, which never registers a push token).
+// setPrefsBy stores a device's notification settings (also for a device that has not registered a token yet),
+// written with a device token (`credential`): a device that has none recorded takes it, so revoking the token
+// forgets a device only its prefs made (a browser's Settings › Notifications, which never registers a push token).
 // The row is written under saveMu, not mu: a slow database holds this one save (up to storeTimeout), not every
 // other device's settings and every push. The settings take effect once the row is written.
 func (p *Pusher) setPrefsBy(id, credential string, prefs NotifyPrefs) error {
@@ -385,7 +396,29 @@ func (p *Pusher) setPrefsBy(id, credential string, prefs NotifyPrefs) error {
 	}
 	d.Prefs = raw
 	p.devices[id] = d
+	p.changed() // "Needs you" and Phone Muted decide whether an MCP form would be pushed
 	return nil
+}
+
+// editPrefs changes a device's settings with edit and stores them as setPrefsBy does, holding prefsEdit from the read
+// to the write: two partial changes at once (the apps send one switch per PUT) both take effect, the later one is not
+// written over the settings as they were before the earlier was stored. before is the settings as they were; after
+// as stored, normalized as devicePrefs reads them. An error from edit stores nothing.
+func (p *Pusher) editPrefs(id, credential string, edit func(*NotifyPrefs) error) (before, after NotifyPrefs, err error) {
+	p.prefsEdit.Lock()
+	defer p.prefsEdit.Unlock()
+	after = p.prefs(id)
+	before = after
+	if after.Look != nil {
+		look := *after.Look
+		before.Look = &look // a partial look changes the one after points to
+	}
+	if err := edit(&after); err != nil {
+		return before, after, err
+	}
+	raw, _ := json.Marshal(after)
+	after = devicePrefs(raw) // normalizes an unknown "done"
+	return before, after, p.setPrefsBy(id, credential, after)
 }
 
 // mailTargets are the languages some device wants its mail translated into (Settings › Translation on, mail in scope).

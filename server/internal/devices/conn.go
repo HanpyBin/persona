@@ -288,7 +288,7 @@ func (m *Machine) serve(ctx context.Context, c *nodeConn) error {
 	}
 	// The hub has it connected before it is asked to hand the node what is the hub's (devices.connected).
 	m.d.reportNow()
-	m.d.learnUID(p, info.MachineUID) // the paths reaching the same computer become one machine (paths.go)
+	m.d.learnUID(p, info.MachineUID) // the paths reaching the same computer become one machine (paths_group.go)
 	sctx, scancel := context.WithCancel(ctx)
 	defer scancel()
 	if c.via == "tailcat" && p.src == m {
@@ -681,19 +681,6 @@ func (m *Machine) unavailableWhy() string {
 		return m.serviceWhy()
 	}
 	return ""
-}
-
-// connect makes one connection through the machine's own hub.json entry and serves it until it ends (tests drive a
-// machine this way, without the run loop).
-func (m *Machine) connect(ctx context.Context) error {
-	c, err := m.establish(ctx, cfgPath(m))
-	if err != nil {
-		return err
-	}
-	err = m.serve(ctx, c)
-	c.close()
-	m.detach(err, false)
-	return err
 }
 
 // claudeVersionRetry is how long the hub waits before asking a node again for its Claude version while node.info came

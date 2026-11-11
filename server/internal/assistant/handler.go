@@ -52,7 +52,8 @@ type Handler interface {
 	ProfileChanged(ctx context.Context)
 	// SessionsChanged is sessions.changed: a machine's node sent its session list.
 	SessionsChanged(ctx context.Context, d DeviceSessions)
-	// Resync is manager.resync: report the whole snapshot again (the hub has none, or a partial one).
+	// Resync is manager.resync: report the whole snapshot again. The hub no longer sends it; the assistant calls it
+	// itself when its connection is up (bus.go).
 	Resync(ctx context.Context)
 
 	// The todos (todos.go).
@@ -74,6 +75,8 @@ type Handler interface {
 	// The channels (channels.go, feishu.go): the hub hands over what comes in from the chat apps.
 	// ChannelReceive is channels.receive: the owner's message from a plugin's channel.
 	ChannelReceive(ctx context.Context, p ChannelReceive) error
+	// ChannelUnbound is channels.unbound: discard the channel's pending replies and questions before rebinding.
+	ChannelUnbound(ctx context.Context, p ChannelUnbound) error
 	// FeishuMessage is feishu.message: the owner's message to the Feishu bot.
 	FeishuMessage(ctx context.Context, p FeishuMessage) error
 	// FeishuAction is feishu.card_action: the owner pressed one of the bot's cards.

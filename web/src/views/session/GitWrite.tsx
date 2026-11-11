@@ -3,7 +3,7 @@
 // refusal says what happened, git's own words and the files it is about. The node never forces anything.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { type GitFile, type GitStatus } from "../../lib/files";
-import { gitBranches, gitRefusal, gitWrite, stageState, type GitBranch, type GitRefusal, type GitStashEntry, type GitWriteOp } from "../../lib/git-write";
+import { gitBranches, gitRefusal, hasStashIdentity, gitWrite, stageState, type GitBranch, type GitRefusal, type GitStashEntry, type GitWriteOp } from "../../lib/git-write";
 import { ago } from "../../lib/format";
 import { Button, cx, Dialog, IconButton, Loading, Spinner, toast } from "../../ui/atoms";
 import { Icon } from "../../ui/icons";
@@ -11,8 +11,10 @@ import { SearchField } from "../../ui/SearchField";
 import { BackHeader, Empty } from "./files/parts";
 import { t } from "../../i18n";
 
-/** Runs one write at a time for the panel: what is running, and the refusal of the last one until it is read. */
-export function useGitWrite(base: string, cwd: string, onStatus: (s: GitStatus) => void) {
+/** Runs one write at a time for the panel: what is running, and the refusal of the last one until it is read. A refusal
+ *  calls `onRefused` (the panel reads the status again): one may have changed the tree, as a stash apply that stopped
+ *  on conflicts does (#1885). */
+export function useGitWrite(base: string, cwd: string, onStatus: (s: GitStatus) => void, onRefused?: () => void) {
   const [busy, setBusy] = useState<string | null>(null);
   const [refusal, setRefusal] = useState<GitRefusal | null>(null);
   const run = async (what: string, op: GitWriteOp, body: Record<string, unknown>, done?: string) => {
@@ -20,11 +22,12 @@ export function useGitWrite(base: string, cwd: string, onStatus: (s: GitStatus) 
     setBusy(what);
     try {
       const r = await gitWrite(base, op, { cwd, ...body });
-      onStatus(r.status);
+      if (r.status) onStatus(r.status);
       if (done) toast(done, "ok");
       return r;
     } catch (e) {
       setRefusal(gitRefusal(e));
+      onRefused?.();
       return null;
     } finally {
       setBusy(null);
@@ -140,11 +143,27 @@ export function CommitBox({ s, writer }: { s: GitStatus; writer: GitWriter }) {
   );
 }
 
-/** Push in the summary: only with commits to send or a branch the remote does not have; confirmed first. */
+/** Pull in the summary (#1887, as on iOS and Android): whenever the branch has an upstream that still exists on the
+ *  remote, on any host and without `git_write`. One click: it only fast-forwards, and the node refuses it over
+ *  uncommitted changes or a branch that has moved apart, saying why in the refusal dialog. */
+export function PullButton({ s, writer }: { s: GitStatus; writer: GitWriter }) {
+  if (!s.branch || !s.upstream || s.gone) return null;
+  const pull = async () => {
+    const r = await writer.run("pull", "pull", {});
+    if (r) toast(r.updated ? t("session-gitwrite.pulled") : t("session-gitwrite.pull_current"), "ok");
+  };
+  return (
+    <Button tone="secondary" icon="download" busy={writer.busy === "pull"} disabled={writer.busy !== null} title={t("session-gitwrite.pull_hint")} onClick={() => void pull()}>
+      {writer.busy === "pull" ? t("session-gitwrite.pulling") : t("session-gitwrite.pull")}
+    </Button>
+  );
+}
+
+/** Push in the summary: only with commits to send or a branch the remote does not have (any more); confirmed first. */
 export function PushButton({ s, writer }: { s: GitStatus; writer: GitWriter }) {
   const [asking, setAsking] = useState(false);
   const ahead = s.ahead ?? 0;
-  if (!s.branch || (s.upstream && ahead === 0)) return null;
+  if (!s.branch || (s.upstream && !s.gone && ahead === 0)) return null;
   const fresh = !s.upstream;
   const push = async () => {
     setAsking(false);
@@ -157,7 +176,11 @@ export function PushButton({ s, writer }: { s: GitStatus; writer: GitWriter }) {
       </Button>
       <Dialog open={asking} onClose={() => setAsking(false)} title={t("session-gitwrite.push_title")}>
         <div className="py-1 text-[13.5px] leading-[1.6] text-ink-2">
-          {fresh ? t("session-gitwrite.push_new", { branch: s.branch }) : t("session-gitwrite.push_confirm", { count: ahead, upstream: s.upstream ?? "" })}
+          {fresh
+            ? t("session-gitwrite.push_new", { branch: s.branch })
+            : s.gone
+              ? t("session-gitwrite.push_gone", { branch: s.branch, upstream: s.upstream ?? "" })
+              : t("session-gitwrite.push_confirm", { count: ahead, upstream: s.upstream ?? "" })}
         </div>
         <div className="mt-1 text-[12px] text-ink-3">{t("session-gitwrite.push_never_force")}</div>
         <div className="mt-4 flex justify-end gap-2">
@@ -268,19 +291,28 @@ export function StashesView({ s, writer, onBack, onClose }: { s: GitStatus; writ
   const [untracked, setUntracked] = useState(true);
   const [dropping, setDropping] = useState<GitStashEntry | null>(null);
   const loaded = useRef(false);
+  const refresh = async () => {
+    setDropping(null);
+    const r = await writer.run("stash:list", "stash", { op: "list" });
+    if (r) setList(r.stashes ?? []);
+  };
   useEffect(() => {
     if (loaded.current) return;
     loaded.current = true;
-    void writer.run("stash:list", "stash", { op: "list" }).then((r) => r && setList(r.stashes ?? []));
+    void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const act = async (op: "push" | "apply" | "pop" | "drop", e?: GitStashEntry) => {
     setDropping(null);
+    if (op !== "push" && (!e || !hasStashIdentity(e))) return;
     const done = { push: "session-gitwrite.stashed", apply: "session-gitwrite.applied", pop: "session-gitwrite.popped", drop: "session-gitwrite.dropped" }[op];
-    const r = await writer.run(`stash:${op}:${e?.index ?? ""}`, "stash", op === "push" ? { op, message, untracked } : { op, index: e?.index }, t(done));
+    const r = await writer.run(`stash:${op}:${e?.index ?? ""}`, "stash", op === "push" ? { op, message, untracked } : { op, index: e?.index, oid: e?.oid }, t(done));
     if (r) {
       setList(r.stashes ?? []);
       if (op === "push") setMessage("");
+    } else if (op !== "push") {
+      // Refresh after refusal; the user must reselect before another write.
+      await refresh();
     }
   };
   return (
@@ -305,7 +337,11 @@ export function StashesView({ s, writer, onBack, onClose }: { s: GitStatus; writ
             </Button>
           </div>
         </div>
-        <div className="mt-5 mb-1.5 px-1 text-[12px] font-medium text-ink-3">{t("session-gitwrite.stash_list")}</div>
+        <div className="mt-5 mb-1.5 flex items-center justify-between gap-2 px-1 text-[12px] font-medium text-ink-3">
+          <span>{t("session-gitwrite.stash_list")}</span>
+          <Button tone="quiet" disabled={writer.busy !== null} onClick={() => void refresh()}>{t("session-gitwrite.stash_refresh")}</Button>
+        </div>
+        {list?.some((e) => !hasStashIdentity(e)) && <p className="mb-3 text-[13px] text-ink-2">{t("session-gitwrite.stash_old_node")}</p>}
         <div className="divide-y divide-line overflow-hidden rounded-card bg-surface shadow-card">
           {list === null ? (
             <div className="flex h-16 items-center justify-center">
@@ -315,7 +351,7 @@ export function StashesView({ s, writer, onBack, onClose }: { s: GitStatus; writ
             <div className="px-4 py-3 text-[13px] text-ink-3">{t("session-gitwrite.no_stashes")}</div>
           ) : (
             list.map((e) => (
-              <div key={e.index} className="flex items-center gap-2 px-4 py-2.5">
+              <div key={`${e.oid ?? "legacy"}:${e.index}`} className="flex items-center gap-2 px-4 py-2.5">
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[13px] font-medium text-ink" title={e.message}>
                     {e.message}
@@ -326,13 +362,13 @@ export function StashesView({ s, writer, onBack, onClose }: { s: GitStatus; writ
                     {"}"} · {ago(e.date)}
                   </span>
                 </span>
-                <Button tone="quiet" busy={writer.busy === `stash:apply:${e.index}`} disabled={writer.busy !== null} onClick={() => void act("apply", e)}>
+                <Button tone="quiet" busy={writer.busy === `stash:apply:${e.index}`} disabled={writer.busy !== null || !hasStashIdentity(e)} onClick={() => void act("apply", e)}>
                   {t("session-gitwrite.stash_apply")}
                 </Button>
-                <Button tone="quiet" busy={writer.busy === `stash:pop:${e.index}`} disabled={writer.busy !== null} onClick={() => void act("pop", e)}>
+                <Button tone="quiet" busy={writer.busy === `stash:pop:${e.index}`} disabled={writer.busy !== null || !hasStashIdentity(e)} onClick={() => void act("pop", e)}>
                   {t("session-gitwrite.stash_pop")}
                 </Button>
-                <IconButton icon="trash" label={t("session-gitwrite.stash_drop")} disabled={writer.busy !== null} onClick={() => setDropping(e)} />
+                <IconButton icon="trash" label={t("session-gitwrite.stash_drop")} disabled={writer.busy !== null || !hasStashIdentity(e)} onClick={() => setDropping(e)} />
               </div>
             ))
           )}

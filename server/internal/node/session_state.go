@@ -1,6 +1,7 @@
 package node
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -24,17 +25,23 @@ type stateFile struct {
 }
 
 type sessionState struct {
+	CreationID       string    `json:"creation_id,omitempty"`
+	Incarnation      string    `json:"incarnation,omitempty"`
 	Pane             string    `json:"pane,omitempty"`
 	Launcher         string    `json:"launcher"`
 	Model            string    `json:"model,omitempty"`
 	ModelFingerprint string    `json:"model_fingerprint,omitempty"`
 	ModelEffort      string    `json:"model_effort,omitempty"`
 	Runtime          string    `json:"runtime,omitempty"` // the assistant runtime it was asked to run on (assistant_sdk.go)
+	ConfigDir        string    `json:"config_dir,omitempty"`
 	Cwd              string    `json:"cwd"`
 	IsMain           bool      `json:"is_main,omitempty"`
 	StartedAt        time.Time `json:"started_at"`
-	// AppMode / AppEffort: the permission mode and effort the app set on an assistant conversation (modes.go). They
+	// AppMode / AppEffort: the permission mode and effort set on an assistant conversation (modes.go). AppMode
+	// also retains a terminal Codex start constraint for later resumes. They
 	// win over what its transcript recorded and outlive the node: an old "default" there no longer locks it in.
+	// PlanThen: the mode this session, started in plan mode, goes on in once its plan is approved (planthen.go).
+	PlanThen  string `json:"plan_then,omitempty"`
 	AppMode   string `json:"app_mode,omitempty"`
 	AppEffort string `json:"app_effort,omitempty"`
 	// Tasks: the assistant conversation's background tasks and monitors running right now (node/assistant.go).
@@ -52,12 +59,25 @@ type sessionState struct {
 func newState() *stateFile { return &stateFile{Sessions: map[string]sessionState{}} }
 
 // legacyState reads the pre-Postgres ~/.persona/sessions.json, if any.
-func legacyState(path string) map[string]sessionState {
+// A corrupt legacy file is quarantined to path.corrupt and logged.
+func legacyState(path string, logf func(string, ...any)) map[string]sessionState {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	if len(bytes.TrimSpace(b)) == 0 {
+		return nil
+	}
 	var f struct {
 		Sessions map[string]sessionState `json:"sessions"`
 	}
-	if b, err := os.ReadFile(path); err == nil {
-		_ = json.Unmarshal(b, &f)
+	if err := json.Unmarshal(b, &f); err != nil {
+		corruptPath := path + ".corrupt"
+		_ = os.Rename(path, corruptPath)
+		if logf != nil {
+			logf("legacy sessions file %s is corrupt (quarantined to %s): %v", path, corruptPath, err)
+		}
+		return nil
 	}
 	return f.Sessions
 }
@@ -196,6 +216,9 @@ func (s *stateFile) setPane(id, pane string) {
 
 func (s *stateFile) put(id string, v sessionState) {
 	s.mu.Lock()
+	if old, ok := s.Sessions[id]; ok && old.CreationID != "" {
+		v.CreationID, v.Incarnation = old.CreationID, old.Incarnation
+	}
 	s.Sessions[id] = v
 	persist := s.persist
 	s.mu.Unlock()

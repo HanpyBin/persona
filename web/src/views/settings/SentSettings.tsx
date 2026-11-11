@@ -1,17 +1,19 @@
-// Settings › Sent as you (#5278, docs/extensions/connectors.md "Sent as the user", docs/web/web.md "Settings"): what Persona wrote in the
+// Settings › Connectors › Records sent as you (#2412, docs/extensions/connectors.md "Sent as the user", docs/web/web.md "Settings"): what Persona wrote in the
 // user's name through the connectors, newest first, from GET /api/v1/connectors/sent. A row: the connector, where it went,
 // how long ago, the first lines of what it said and how the gate let it through (a rule, "always allow" in the chat, the
 // card on the phone, the assistant answering that card, or the extension sending on its own) with the chat that asked,
-// which opens. A row opens its full text and fields. Older rows load a page at a time; the connector chips filter (Lark and
-// the connectors the loaded rows show).
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+// which opens. A row opens its full text and fields, and Recall when the hub can take the message back. Older rows load a
+// page at a time; the connector chips filter (Lark and the connectors the loaded rows show).
+import { Fragment, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { sentOwner, subscribeSentOwner } from "../../lib/sent-chat-rules";
+import { SentChatRules } from "./SentChatRules";
 import { formatNumber, t } from "../../i18n";
 import { ago } from "../../lib/format";
 import { conversationRoute } from "../../lib/inbox";
 import { href, onLinkClick } from "../../lib/router";
 import {
-  allowedBy, connectorChoices, connectorName, listSent, mergeSent, originInfo, previewLines, refreshed, seenConnectors, SENT_TEXT_MOST,
-  sentProblem, targetFields, targetText, textCut, whenText, type SentItem,
+  allowedBy, connectorChoices, connectorName, listSent, mergeSent, originInfo, previewLines, recallProblem, recallSent, refreshed, seenConnectors,
+  SENT_TEXT_MOST, sentProblem, targetFields, targetText, textCut, whenText, type SentItem,
 } from "../../lib/sent";
 import { useStore } from "../../lib/store";
 import { documentPage, visiblePoll } from "../../lib/visible-poll";
@@ -30,9 +32,20 @@ interface Reading {
   has: boolean;
   /** Reads of the first page started: only the latest one is taken, whatever order they come back in. */
   seq: number;
+  blocked: boolean;
+  moreBusy: boolean;
+  refresh: () => Promise<void>;
+  controllers: Set<AbortController>;
 }
 
 export function SentSettings() {
+  const owner = useSyncExternalStore(subscribeSentOwner, sentOwner, sentOwner);
+  return <OwnedSentSettings key={owner} />;
+}
+
+function OwnedSentSettings() {
+  const owner = useRef(sentOwner()).current;
+  const current = () => owner === sentOwner();
   const [filter, setFilter] = useState<string | null>(null);
   const [items, setItems] = useState<SentItem[] | null>(null);
   // what the list holds now, for the reads that come in later to merge with
@@ -56,7 +69,7 @@ export function SentSettings() {
   // One reading per filter: the list starts over when it changes (what comes in for the old one is dropped), and the
   // first page is read again each time the page becomes visible.
   useEffect(() => {
-    const r: Reading = { filter, live: true, older: false, has: false, seq: 0 };
+    const r: Reading = { filter, live: true, older: false, has: false, seq: 0, blocked: false, moreBusy: false, refresh: async () => {}, controllers: new Set() };
     reading.current = r;
     held.current = null;
     setItems(null);
@@ -64,11 +77,13 @@ export function SentSettings() {
     setProblem(null);
     setMoreError("");
     setLoadingMore(false);
-    const refresh = () => {
+    const refresh = async () => {
+      if (!r.live || !current() || r.blocked) return;
       const mine = ++r.seq;
-      listSent({ connector: filter })
+      const controller = new AbortController(); r.controllers.add(controller);
+      return listSent({ connector: filter, signal: controller.signal })
         .then((page) => {
-          if (!r.live || mine !== r.seq) return;
+          if (!r.live || !current() || r.blocked || mine !== r.seq) return;
           r.has = true;
           setProblem(null);
           setSeen((s) => seenConnectors(s, page.items));
@@ -76,38 +91,71 @@ export function SentSettings() {
           r.older = out.loadedOlder;
           held.current = out.items;
           setItems(out.items);
+          setOpen(old => old ? out.items.find(it => it.id === old.id) ?? old : null);
           if (out.next !== undefined) setCursor(out.next);
         })
         .catch((e) => {
           // a list that is there stays when a later read fails; only the first read's failure is shown
-          if (r.live && mine === r.seq && !r.has) setProblem(sentProblem(e));
-        });
+          if (r.live && current() && mine === r.seq) {
+            if (!r.has) setProblem(sentProblem(e));
+            throw e;
+          }
+        }).finally(() => r.controllers.delete(controller));
     };
-    const stop = visiblePoll(refresh, 0, documentPage);
+    r.refresh = refresh;
+    const stop = visiblePoll(() => { void refresh().catch(() => {}); }, 0, documentPage);
     return () => {
       r.live = false;
+      r.controllers.forEach(c => c.abort());
       stop();
     };
   }, [filter, attempt]);
 
   const loadMore = useCallback(() => {
     const r = reading.current;
-    if (!r || next === null || loadingMore) return;
+    if (!r || !r.live || !current() || r.blocked || next === null || r.moreBusy) return;
+    r.moreBusy = true;
+    const seq = r.seq;
     const asked = next;
     setLoadingMore(true);
     setMoreError("");
-    listSent({ before: asked, connector: r.filter })
+    const controller = new AbortController(); r.controllers.add(controller);
+    listSent({ before: asked, connector: r.filter, signal: controller.signal })
       .then((page) => {
-        if (!r.live || cursor.current !== asked) return;
+        if (!r.live || !current() || r.blocked || seq !== r.seq || cursor.current !== asked) return;
         r.older = true;
         setSeen((s) => seenConnectors(s, page.items));
         held.current = mergeSent(held.current ?? [], page.items);
         setItems(held.current);
         setCursor(page.next);
       })
-      .catch((e) => r.live && setMoreError(sentProblem(e).text))
-      .finally(() => r.live && setLoadingMore(false));
+      .catch((e) => r.live && current() && seq === r.seq && setMoreError(sentProblem(e).text))
+      .finally(() => { r.controllers.delete(controller); if (r.live && current()) { r.moreBusy = false; setLoadingMore(false); } });
   }, [next, loadingMore]);
+
+  // Recall the row `id` (the user confirmed in the details): reads of the list that started before it are dropped, the
+  // row the hub answers with is shown at once, then the first page is read again whether it worked or not (a `too_old`
+  // or `already_recalled` row changes too). The failure in plain words, "" when it worked.
+  const recall = async (id: number): Promise<string> => {
+    const r = reading.current;
+    if (!r || !current()) return "";
+    r.blocked = true;
+    r.seq++;
+    let fresh: SentItem | null = null;
+    let error = "";
+    try { fresh = await recallSent(id); } catch (e) { error = recallProblem(e); }
+    if (r.live && current() && r === reading.current) {
+      if (fresh) {
+        const it = fresh;
+        held.current = mergeSent(held.current ?? [], [it]);
+        setItems(held.current);
+        setOpen(o => (o?.id === it.id ? it : o));
+      }
+      r.blocked = false;
+      void r.refresh().catch(() => {});
+    }
+    return error;
+  };
 
   const choices = connectorChoices(seen, filter);
   const nameOf = connectorName;
@@ -188,7 +236,16 @@ export function SentSettings() {
         </div>
       )}
       {body}
-      <SentDetail item={open} name={open ? nameOf(open.connector) : ""} onClose={() => setOpen(null)} />
+      <SentChatRules item={open} onChanging={() => {
+        const r = reading.current;
+        if (r) { r.blocked = true; r.seq++; r.older = false; r.controllers.forEach(c => c.abort()); }
+      }} onChanged={async () => {
+        const r = reading.current;
+        if (r && current()) { r.blocked = false; await r.refresh(); }
+      }}>
+        {action => <SentDetail item={open} name={open ? nameOf(open.connector) : ""} onClose={() => setOpen(null)} action={action}
+          recall={open && <SentRecall key={open.id} item={open} recall={recall} />} />}
+      </SentChatRules>
     </>
   );
 }
@@ -223,6 +280,7 @@ function SentRow({ item, name, onOpen }: { item: SentItem; name: string; onOpen:
       </button>
       <div className="pointer-events-none relative z-10 mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
         <Pill tone={allowed.tone === "orange" ? "orange" : undefined}>{allowed.label}</Pill>
+        {item.recalled_at && <Pill>{t("settings-sent.recalled")}</Pill>}
         <Origin origin={item.origin} what={what} />
       </div>
     </div>
@@ -275,7 +333,37 @@ function Field({ label, children, mono }: { label: string; children: React.React
   );
 }
 
-function SentDetail({ item, name, onClose }: { item: SentItem | null; name: string; onClose: () => void }) {
+/** Recall in the details: shown only when the hub says the message can be taken back (or a recall of it just failed, to
+ *  keep its reason), asked once inline, then `confirm: true` goes to the hub. A recalled row says when. */
+function SentRecall({ item, recall }: { item: SentItem; recall: (id: number) => Promise<string> }) {
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  if (item.recalled_at) return <p className="text-sm text-ink-2">{t("settings-sent.recalled_at", { when: whenText(item.recalled_at) })}</p>;
+  if (!item.can_recall && !error) return null;
+  const run = async () => {
+    setBusy(true);
+    setError("");
+    const failed = await recall(item.id);
+    setBusy(false);
+    setError(failed);
+    if (!failed) setAsking(false);
+  };
+  return (
+    <section className="flex flex-col items-start gap-3 text-sm text-ink-2">
+      {item.can_recall && (asking ? <>
+        <p className="break-words">{t("settings-sent.recall_confirm", { connector: connectorName(item.connector) })}</p>
+        <div className="flex flex-wrap gap-2">
+          <Button tone="danger" busy={busy} onClick={() => void run()}>{t("settings-sent.recall_do")}</Button>
+          <Button tone="quiet" disabled={busy} onClick={() => { setAsking(false); setError(""); }}>{t("common.cancel")}</Button>
+        </div>
+      </> : <Button icon="undo" onClick={() => { setError(""); setAsking(true); }}>{t("settings-sent.recall")}</Button>)}
+      {error && <p role="alert" className="break-words text-red">{error}</p>}
+    </section>
+  );
+}
+
+function SentDetail({ item, name, onClose, action, recall }: { item: SentItem | null; name: string; onClose: () => void; action: React.ReactNode; recall: React.ReactNode }) {
   return (
     <Dialog
       open={!!item}
@@ -284,7 +372,7 @@ function SentDetail({ item, name, onClose }: { item: SentItem | null; name: stri
       title={item && <span className="truncate">{name}</span>}
       footer={<Button tone="primary" onClick={onClose}>{t("settings-sent.done")}</Button>}
     >
-      {item && <DetailBody item={item} />}
+      {item && <><DetailBody item={item} /><div className="mt-4 flex flex-col gap-4">{recall}{action}</div></>}
     </Dialog>
   );
 }

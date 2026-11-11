@@ -5,23 +5,105 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
+	"github.com/nwverse/persona/server/internal/herdr"
 	"github.com/nwverse/persona/server/internal/host"
 )
 
-// renameSpace renames a herdr workspace (what the phone calls a space).
-func (n *Node) renameSpace(ctx context.Context, workspaceID, name string) error {
-	name = strings.TrimSpace(name)
-	if workspaceID == "" || name == "" {
-		return fmt.Errorf("workspace and name are required")
+// renameWorktree targets a listed host container, including one with no Agents.
+func (n *Node) renameWorktree(ctx context.Context, kind, workspace, name string) error {
+	name = strings.Join(strings.Fields(name), " ")
+	if workspace == "" || name == "" || utf8.RuneCountInString(name) > maxLabel {
+		return fmt.Errorf("worktree and a name of 1 to %d characters are required", maxLabel)
 	}
-	org, err := hostCap[host.Organizer](n) // space ids carry no host kind yet: the engine's
+	h, err := n.hostOfKind(kind)
 	if err != nil {
 		return err
 	}
-	return org.RenameSpace(ctx, workspaceID, name)
+	org, ok := h.(host.Organizer)
+	if !ok {
+		return unsupported(h)
+	}
+	launch, ok := h.(host.Launcher)
+	if !ok {
+		return unsupported(h)
+	}
+	spaces, err := launch.Spaces(ctx)
+	if err != nil {
+		return err
+	}
+	for _, space := range spaces {
+		if space.ID == workspace {
+			if err := org.RenameSpace(ctx, workspace, name); err != nil {
+				return err
+			}
+			_ = n.refreshHosts(ctx, h)
+			return nil
+		}
+	}
+	return fmt.Errorf("the selected worktree is no longer available")
+}
+
+// renameSpace renames a workspace (what the phone calls a space) in the host it is in (spaceOrganizer) and returns the
+// name it shows now: a named herdr session's with the session in front (sessionLabel, #2196), which the hub keys pins
+// and to-do links by.
+func (n *Node) renameSpace(ctx context.Context, workspaceID, name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if workspaceID == "" || name == "" {
+		return "", fmt.Errorf("workspace and name are required")
+	}
+	org, err := n.spaceOrganizer(ctx, workspaceID)
+	if err != nil {
+		return "", err
+	}
+	if err := org.RenameSpace(ctx, workspaceID, name); err != nil {
+		return "", err
+	}
+	if _, ok := org.(*herdrHost); ok {
+		if session, _ := herdr.SplitID(workspaceID); session != "" {
+			return sessionLabel(session, strings.TrimPrefix(name, session+sessionLabelSep)), nil
+		}
+	}
+	return name, nil
+}
+
+// spaceOrganizer is the host a space is in. Space ids carry no host kind: with one host that renames, its own (the
+// engine's, as always); with several (a set, herdr and Tern say), the first that lists the space, the default host
+// first, else the default host's.
+func (n *Node) spaceOrganizer(ctx context.Context, space string) (host.Organizer, error) {
+	var hs []host.Host
+	for _, h := range n.hosts.All() {
+		_, org := h.(host.Organizer)
+		_, lists := h.(host.SpaceLister)
+		if org && lists {
+			hs = append(hs, h)
+		}
+	}
+	if len(hs) > 1 {
+		def := n.defaultKind()
+		slices.SortStableFunc(hs, func(a, b host.Host) int {
+			return boolRank(b.Kind() == def) - boolRank(a.Kind() == def)
+		})
+		for _, h := range hs {
+			spaces, err := h.(host.SpaceLister).Spaces(ctx)
+			if err == nil && slices.ContainsFunc(spaces, func(s host.Space) bool { return s.ID == space }) {
+				return h.(host.Organizer), nil
+			}
+		}
+	}
+	return hostCap[host.Organizer](n)
+}
+
+// boolRank orders true before false.
+func boolRank(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // renameSession renames the herdr tab a session runs in and / or the Claude session itself. A live claude gets
@@ -62,6 +144,16 @@ func (n *Node) renameSession(ctx context.Context, id string, tab, title *string)
 		t := strings.Join(strings.Fields(*title), " ")
 		if t == "" {
 			return fmt.Errorf("empty title")
+		}
+		if home, thread, codex := n.codexThread(id); codex {
+			if server := n.codexArchiveServer(id, home); server != nil {
+				call, cancel := context.WithTimeout(ctx, 30*time.Second)
+				defer cancel()
+				return server.wire.call(call, "thread/name/set", map[string]any{"threadId": thread, "name": t}, nil)
+			}
+			if !live {
+				return fmt.Errorf("%w: connect this Codex session before renaming it", host.ErrUnsupported)
+			}
 		}
 		if live && !n.isAssistantSession(id) {
 			return n.prompt(ctx, a.PaneID, "/rename "+t)

@@ -21,7 +21,7 @@ import (
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
-// The models a launcher's agent offers, for "New Agent"'s model picker (docs/assistant/model-config.md "Choosing a model in New Agent"): the
+// The models a launcher's agent offers, for "New Agent"'s model picker (docs/assistant/model-config.md "Choosing a model for a new Agent"): the
 // list its own /model menu shows. That list is in no config file — settings.json and config.toml hold the default
 // model and the gateway; the CLI makes the list from its aliases and what the gateway's /models answers — so the node
 // asks the CLI itself, run the way the launcher runs it: Claude Code answers its initialize control request (headless,
@@ -29,6 +29,12 @@ import (
 
 // launcherModelsTTL: a list is kept this long per launcher (and managed launcher's settings); refresh skips it.
 const launcherModelsTTL = 10 * time.Minute
+
+// launcherModelsStale: a list older than launcherModelsTTL but younger than this is still answered at once, while the CLI
+// is asked again in the background for the next ask (#1501): asking takes seconds (the login shell, the CLI's start,
+// the gateway's /models) and the picker would wait for it every ten minutes. A changed launcher has a new key
+// (executionFingerprint), so it is never answered with its old list.
+const launcherModelsStale = 24 * time.Hour
 
 // launcherModelsTimeout covers a slow ~/.zshrc, the CLI's start and the gateway's /models.
 var launcherModelsTimeout = 45 * time.Second
@@ -51,12 +57,12 @@ func (n *Node) launcherModels(ctx context.Context, name, agentType string, refre
 	if name != "claude" && !nameRe.MatchString(name) {
 		return proto.LauncherModels{}, fmt.Errorf("invalid launcher %q", name)
 	}
-	if res, ok := n.runtimeLauncherModels(name); ok { // a runtime's launcher: the models it said (runtimecontrol.go)
-		return res, nil
+	if res, ok := n.runtimeLauncherModels(name); ok { // a runtime's launcher: static advertisement or native discovery
+		return n.liveRuntimeModels(ctx, name, refresh, res)
 	}
 	if m, ok := n.managedLauncher(name); ok && m.AgentType() == "agy" {
-		if res, ok := n.runtimeLauncherModels("agy"); ok {
-			return res, nil
+		if res, ok := n.agyRuntimeModels(); ok {
+			return n.liveRuntimeModels(ctx, "agy", refresh, res)
 		}
 		return proto.LauncherModels{Agent: "agy", Models: []proto.AgentModel{}}, nil
 	}
@@ -66,10 +72,7 @@ func (n *Node) launcherModels(ctx context.Context, name, agentType string, refre
 	at, ok := launcherModelsCache.at[key]
 	cached := launcherModelsCache.got[key]
 	launcherModelsCache.Unlock()
-	if ok && !refresh && time.Since(at) < launcherModelsTTL {
-		return cached, nil
-	}
-	v, err, _ := launcherModelsCache.flight.Do(key, func() (any, error) {
+	ask := func() (any, error) {
 		res := proto.LauncherModels{Agent: agent, Models: []proto.AgentModel{}}
 		if agent != "claude" && agent != "codex" {
 			return res, nil
@@ -101,7 +104,19 @@ func (n *Node) launcherModels(ctx context.Context, name, agentType string, refre
 		launcherModelsCache.at[key], launcherModelsCache.got[key] = time.Now(), res
 		launcherModelsCache.Unlock()
 		return res, nil
-	})
+	}
+	if ok && !refresh {
+		switch age := time.Since(at); {
+		case age < launcherModelsTTL:
+			return cached, nil
+		case age < launcherModelsStale:
+			// The kept list now, a fresh one for the next ask; an ask already running is joined, not repeated. A failed
+			// one leaves the kept list as it was.
+			launcherModelsCache.flight.DoChan(key, ask)
+			return cached, nil
+		}
+	}
+	v, err, _ := launcherModelsCache.flight.Do(key, ask)
 	if err != nil {
 		return proto.LauncherModels{}, err
 	}

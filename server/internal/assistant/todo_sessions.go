@@ -3,7 +3,6 @@ package assistant
 import (
 	"context"
 	"fmt"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -14,7 +13,7 @@ import (
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
-// The todos and the machines' session lists (sessions.changed, docs/assistant/todos.md "Attaching whole groups and automatically", "Following spawned agents", "herdr marks and reconciling"):
+// The todos and the machines' session lists (sessions.changed, docs/assistant/todos.md "Whole-project linking and automatic linking", "Following spawned agents", "herdr marks and reconciling"):
 // an online agent in a workspace linked to a todo, or spawned by an agent of one, joins it; the herdr panes of the
 // agents that work for open todos carry the persona_todo marks (the node keeps them, todo.sync_session_tokens); the
 // links keep the agents' titles and start errors for when they are gone from the lists. And what the hub shows of the
@@ -121,6 +120,8 @@ func (b *todoBook) linkedNow(key [2]string) bool {
 // now, or that was ever on the todo (dismissed included). Memory first, so the report says it at once; the store
 // after, undone when it fails. True when any was linked.
 func (s *Service) autoLinkTodos(machine string, sessions []proto.Session) bool {
+	s.todos.writing.Lock()
+	defer s.todos.writing.Unlock()
 	now := time.Now().UTC()
 	var pending []pendingAutoLink
 	startErrors := s.startErrorsOf(machine, sessions)
@@ -205,9 +206,34 @@ func (s *Service) autoLinkTodos(machine string, sessions []proto.Session) bool {
 				defer cancel()
 				undone := false
 				for _, item := range pending {
+					s.todos.writing.Lock()
+					if item.source == "space" {
+						s.todos.mu.RLock()
+						current := false
+						if target := s.todos.todos[item.todoID]; target != nil {
+							for _, a := range target.Agents {
+								if a.MachineID == item.machineID && a.SessionID == item.sessionID && a.LinkedAt.Equal(item.linkedAt) && a.ReleasedAt == nil && a.DismissedAt == nil && a.Source == "space" && s.todos.spacesByKey[a.Via] == item.todoID {
+									item.via = a.Via // a workspace rename may have carried this pending link along
+									current = true
+									break
+								}
+							}
+						}
+						s.todos.mu.RUnlock()
+						if !current {
+							s.todos.mu.Lock()
+							if s.todos.undoAutoLink(item, time.Now().UTC()) {
+								undone = true
+							}
+							s.todos.mu.Unlock()
+							s.todos.writing.Unlock()
+							continue // the move/unlink removed this pending link before it reached the store
+						}
+					}
 					inserted, _, err := st.AutoLinkUnlinkedTodoAgent(ctx, item.todoID, item.machineID, item.sessionID, item.title, item.cwd,
 						item.agent, item.startError, item.source, item.via, item.linkedAt)
 					if err == nil && inserted {
+						s.todos.writing.Unlock()
 						continue
 					}
 					// The store has it otherwise (an error, a row memory did not know of: one just dismissed, or a link by hand since).
@@ -217,6 +243,7 @@ func (s *Service) autoLinkTodos(machine string, sessions []proto.Session) bool {
 						undone = true
 					}
 					s.todos.mu.Unlock()
+					s.todos.writing.Unlock()
 				}
 				if undone {
 					s.linksChanged(ctx)
@@ -317,7 +344,7 @@ func (s *Service) nodeConnected(machine string, at time.Time) {
 // tokenSync is one machine's marks: its latest session list, what its node was last told, one send at a time.
 type tokenSync struct {
 	mu       sync.Mutex
-	sessions []proto.Session
+	sessions []tokenRow // nil: no list from its node since the assistant started
 	dirty    bool
 	sending  bool
 	last     map[string]map[string]string
@@ -347,7 +374,7 @@ func (s *Service) syncTodoTokens(machine string, sessions []proto.Session) {
 	ts := s.tokenSyncOf(machine)
 	ts.mu.Lock()
 	if sessions != nil {
-		ts.sessions = slices.Clone(sessions)
+		ts.sessions = tokenRows(sessions)
 	}
 	ts.dirty = true
 	if ts.sending {
@@ -375,7 +402,7 @@ func (s *Service) syncTodoTokens(machine string, sessions []proto.Session) {
 				if err != nil {
 					continue
 				}
-				list = got
+				list = tokenRows(got)
 			}
 
 			expected := s.expectedTodoTokens(machine, list)
@@ -435,10 +462,26 @@ func (s *Service) syncLinkedTodoTokens() {
 	}
 }
 
+// tokenRow is what of a session its marks are worked out from (expectedTodoTokens): a list of these is kept for each
+// machine while the todos are loaded, not a copy of its whole sessions.
+type tokenRow struct {
+	SessionID, Status, PaneID, SpaceKind string
+}
+
+// tokenRows are list's token rows; non-nil for a non-nil list, even an empty one.
+func tokenRows(list []proto.Session) []tokenRow {
+	out := make([]tokenRow, 0, len(list))
+	for i := range list { // by index: a range value copies every (large) session it passes
+		out = append(out, tokenRow{SessionID: list[i].SessionID, Status: list[i].Status, PaneID: list[i].PaneID,
+			SpaceKind: list[i].SpaceKind})
+	}
+	return out
+}
+
 // expectedTodoTokens are the marks of machine's online herdr panes whose agents work for open todos, by session id
 // (#873).
-func (s *Service) expectedTodoTokens(machine string, list []proto.Session) map[string]map[string]string {
-	byID := make(map[string]proto.Session, len(list))
+func (s *Service) expectedTodoTokens(machine string, list []tokenRow) map[string]map[string]string {
+	byID := make(map[string]tokenRow, len(list))
 	for _, c := range list {
 		byID[c.SessionID] = c
 	}
@@ -553,6 +596,9 @@ func (s *Service) quietSessionsLocked(now time.Time) map[[2]string]bool {
 		if t := s.todos.todos[id]; out[key] && t != nil && !t.Quiet {
 			delete(out, key)
 		}
+	}
+	for key := range s.reviewerSessionsLocked() { // a review's reviewer never pushes (supervise_autoreview.go)
+		out[key] = true
 	}
 	return out
 }

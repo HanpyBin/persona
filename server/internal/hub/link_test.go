@@ -38,7 +38,7 @@ func newLinkHubManaged(t *testing.T) (*Hub, *testManager, *httptest.Server) {
 	t.Cleanup(srv.Close)
 	port := srv.Listener.Addr().(*net.TCPAddr).Port
 	h.public.mu.Lock()
-	h.public.port, h.public.fp = port, spkiPin(srv.Certificate())
+	h.public.port, h.public.fp = port, link.Pin(srv.Certificate())
 	h.public.endpoints = []Endpoint{{URL: srv.URL, Kind: "lan", Port: port, Scheme: "https"}}
 	h.public.mu.Unlock()
 	h.cfg.PublicURL = "http://127.0.0.1:" + strconv.Itoa(port)
@@ -133,7 +133,7 @@ func runLink(t *testing.T, cfg link.Config, target string) (statuses chan link.S
 }
 
 func linkConfig(h *Hub, srv *httptest.Server, token string) link.Config {
-	return link.Config{Hub: "hub", Machine: "laptop", FP: spkiPin(srv.Certificate()), Token: token,
+	return link.Config{Hub: "hub", Machine: "laptop", FP: link.Pin(srv.Certificate()), Token: token,
 		Endpoints: []link.Endpoint{{URL: srv.URL, Kind: "lan"}}}
 }
 
@@ -285,6 +285,35 @@ func TestLinkReplacedAndRevoked(t *testing.T) {
 		t.Fatalf("revoked link closed with %d", code)
 	}
 	eventually(t, 3*time.Second, "no link", func() bool { return linkVersion(m) == "" })
+}
+
+// Deleting a link computer on the admin page ends its Persona Link: the credential and an unused code for it stop
+// working and its open link is closed as revoked, so the computer shows it was refused instead of retrying until a
+// computer of the same id is added again.
+func TestDeletedLinkComputerIsRefused(t *testing.T) {
+	h, m, srv := newLinkHub(t)
+	if err := os.WriteFile(filepath.Join(h.cfg.dir, "hub.json"),
+		[]byte(`{"machines":[{"id":"laptop","name":"Laptop","kind":"link"},{"id":"box","name":"Box","kind":"ssh"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	token, _ := linkToken(t, h, "laptop")
+	unused, err := h.newPairCode(context.Background(), "laptop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	statuses, _, _ := runLink(t, linkConfig(h, srv, token), fakeResidentNode(t))
+	eventually(t, 10*time.Second, "machine online", func() bool { return m.snapshot().Online })
+
+	if w := adminMachinesRequest(h, "DELETE", "/api/v1/admin/machines/laptop", ""); w.Code != http.StatusOK {
+		t.Fatalf("delete: %d %s", w.Code, w.Body.String())
+	}
+	waitStatus(t, statuses, "refused", func(s link.Status) bool { return s.State == "refused" })
+	if _, ok := h.authenticate(context.Background(), token); ok {
+		t.Fatal("the deleted computer's credential still works")
+	}
+	if _, ok := h.authenticate(context.Background(), unused.Token); ok {
+		t.Fatal("an unused code for the deleted computer still works")
+	}
 }
 
 func TestLinkRefusesWhatItShouldNot(t *testing.T) {

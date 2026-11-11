@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -26,11 +27,15 @@ import (
 const NodeUsage = `  personad node --stdio     run the node protocol on stdin/stdout (started by the hub over ssh); with a resident
                            node running on this machine, relay to it instead
   personad node --attach    resident node (launchd, in the login session): serves what --stdio relays, so what it
-                           starts can use the login keychain (docs/server/server.md「常驻 node」); set up for tailcat,
+                           starts can use the login keychain (docs/server/server.md「Persistent node」); set up for tailcat,
                            also reachable by the hub over tailcat
+  personad node --attach --supervised
+                           the same, run by something other than systemd or launchd that starts it again whenever it
+                           exits (a container's entry script, supervisord, runit, s6): the hub can then update it
+                           (docs/operations/link.md "Without systemd"). Not for nohup or cron @reboot: nothing restarts those
   personad node tailcat init --hub <key> [--derp-map-url <url>]
                            let the hub reach this machine over tailcat when it cannot ssh here; prints the address
-                           for hub.json (docs/server/server.md「tailcat 打洞」)
+                           for hub.json (docs/server/server.md「Tailcat hole punching」)
   personad node tailcat addr
                            print this machine's tailcat address again
   personad node doctor [--json] [--fix]
@@ -38,7 +43,7 @@ const NodeUsage = `  personad node --stdio     run the node protocol on stdin/st
                            MCP and plugin files match this binary, the programs they run exist, claude's version, the
                            Mac LaunchAgent's ProcessType, and whether what claude reads at start can be read;
                            --fix rewrites Persona's own generated files, and on a Mac writes ProcessType=Interactive
-                           into the LaunchAgent and reloads it (docs/integrations/claude-integration.md「node doctor」)
+                           into the LaunchAgent and reloads it (docs/integrations/claude-integration.md「Self-check」)
   personad node reset-uid   give this computer a new machine uid (~/.persona/machine-uid): for a virtual machine cloned
                            with another's home directory, which hubs would take for that one (docs/server/mesh.md)`
 
@@ -79,9 +84,42 @@ func exitNodeUsage(err error) {
 	os.Exit(2)
 }
 
+// nodeProcs is the most Ps (GOMAXPROCS) the node that serves a hub keeps unless the environment says otherwise. It
+// sleeps most of the time, between a few timers and reads; on a machine with many cores every P Go keeps is one more to
+// wake and search for work on each of those, and more threads and per-P caches held (on a 64-core host with 4 watched
+// sessions: 28 threads against 12, and about 4 MB more resident than with 4).
+const nodeProcs = 4
+
+// capProcs lowers GOMAXPROCS to nodeProcs for `node --stdio` and `node --attach`, unless the GOMAXPROCS environment
+// variable is set (that one wins, as it does for the runtime). A runtime.GOMAXPROCS call stops the runtime's own
+// updates of it (from a container's or cgroup's CPU limit changing later), so it is made only when it lowers it: a
+// machine or container with 4 CPUs or fewer keeps the runtime's value and its updates. The variable is not set, so the
+// agents and programs the node starts keep their own defaults.
+func capProcs() {
+	if os.Getenv("GOMAXPROCS") != "" {
+		return
+	}
+	if runtime.GOMAXPROCS(0) > nodeProcs {
+		runtime.GOMAXPROCS(nodeProcs)
+	}
+}
+
+// residentArgs reads what may follow --attach: --supervised, at most once. Anything else is refused rather than
+// ignored: a mistyped flag would leave the node quietly unable to take updates from the hub.
+func residentArgs(args []string) (supervised bool, err error) {
+	for _, a := range args {
+		if a != "--supervised" || supervised {
+			return false, fmt.Errorf("node --attach takes only --supervised, not %q (%s node -h for usage)", strings.Join(args, " "), CommandName())
+		}
+		supervised = true
+	}
+	return supervised, nil
+}
+
 // runResident is `personad node --attach`: relays over ssh, and the hub over tailcat when this machine is set up for
-// it. A new binary arriving over tailcat ends it (exit 0): its supervisor starts the new one.
-func runResident(ctx context.Context, b Build) error {
+// it. A new binary arriving over tailcat ends it (exit 0): its supervisor starts the new one. supervised: started with
+// --supervised, something other than systemd or launchd restarts it when it exits (nodeupdate.Options).
+func runResident(ctx context.Context, b Build, supervised bool) error {
 	// tailcat stops only after Attach has closed the hub's connection: torn down first, the close would never reach
 	// the hub, which would then take the dead connection for a live one until its pings went unanswered.
 	tctx, tstop := context.WithCancel(context.Background())
@@ -89,7 +127,7 @@ func runResident(ctx context.Context, b Build) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	restart := make(chan struct{})
-	updater := nodeupdate.New(b.Version, func() { close(restart); cancel() })
+	updater := nodeupdate.New(b.Version, func() { close(restart); cancel() }, nodeupdate.Options{Supervised: supervised})
 	node.SetResident(b.Program, b.Version)
 	defer updater.Close()
 	if updater.RestartRequired() {

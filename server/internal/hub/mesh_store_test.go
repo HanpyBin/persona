@@ -277,6 +277,19 @@ func (s *meshStore) RevokeDeviceToken(_ context.Context, id string) (bool, error
 	return false, nil
 }
 
+func (s *meshStore) RevokeMachineCredentials(_ context.Context, machine string) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var ids []string
+	for _, t := range s.tokens {
+		if t.MachineID == machine && t.Role == roleLink && !s.revoked[t.ID] {
+			s.revoked[t.ID] = true
+			ids = append(ids, t.ID)
+		}
+	}
+	return ids, nil
+}
+
 func (s *meshStore) TouchDeviceToken(context.Context, string) error { return nil }
 
 func (s *meshStore) CreatePairToken(context.Context, string, time.Time, string) error { return nil }
@@ -287,7 +300,7 @@ func (s *meshStore) RedeemPairToken(context.Context, string, db.DeviceToken, str
 func (s *meshStore) PutInboxItem(context.Context, string, []byte, time.Time, *time.Time) error {
 	return nil
 }
-func (s *meshStore) InboxItems(context.Context, time.Time) ([][]byte, error) { return nil, nil }
+func (s *meshStore) InboxItems(context.Context, time.Time, func([]byte) error) error { return nil }
 
 func (s *meshStore) Peers(context.Context) ([]db.Peer, error) {
 	s.mu.Lock()
@@ -557,3 +570,23 @@ func (s *meshStore) InsertTodoDecision(context.Context, db.TodoDecisionRow) (boo
 func (s *meshStore) SetTodoDecisionSupersedes(context.Context, string, string, string, time.Time) (*db.TodoDecisionRow, error) {
 	return nil, db.ErrDecisionNotFound
 }
+
+// Queue tests use Postgres; this unrelated fixture has no durable phone delivery store.
+func (s *meshStore) EnqueuePhoneWrite(context.Context, string, string, json.RawMessage) (*db.PhoneWrite, error) {
+	return nil, errors.New("phone write queue unavailable")
+}
+func (s *meshStore) PhoneWrites(context.Context) ([]db.PhoneWrite, error)  { return nil, nil }
+func (s *meshStore) ClaimPhoneWrite(context.Context, string) (bool, error) { return false, nil }
+func (s *meshStore) FinishPhoneWrite(context.Context, string, string, json.RawMessage) error {
+	return nil
+}
+func (s *meshStore) CancelPhoneWrite(context.Context, string) (*db.PhoneWrite, error) {
+	return nil, nil
+}
+func (s *meshStore) RecoverPhoneWrites(context.Context) error { return nil }
+
+func (s *meshStore) FindQueuedPhoneWrite(context.Context, string, json.RawMessage) (*db.PhoneWrite, error) {
+	return nil, nil
+}
+
+func (s *meshStore) QueuedPhoneWrites(context.Context) ([]db.PhoneWrite, error) { return nil, nil }

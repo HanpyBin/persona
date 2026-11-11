@@ -31,8 +31,11 @@ const (
 )
 
 // kbConnectors archives what moved in every connector the hub lists (signed in, "Send to knowledge base" on) that is due: its
-// manifest's Poll, else kbConnectorPoll, since it was last asked.
+// manifest's Poll, else kbConnectorPoll, since it was last asked; or, when it said its chats changed (kb.kick),
+// kbChangedFloor.
 func (s *Service) kbConnectors(ctx context.Context, e *kb.Engine) {
+	s.kb.sourceWrites.Lock()
+	defer s.kb.sourceWrites.Unlock()
 	if !s.kbWritable(ctx) {
 		return
 	}
@@ -53,9 +56,11 @@ func (s *Service) kbConnectors(ctx context.Context, e *kb.Engine) {
 		if s.kb.archivedAt == nil {
 			s.kb.archivedAt = map[string]time.Time{}
 		}
-		due := time.Since(s.kb.archivedAt[src.ID]) >= every
+		since := time.Since(s.kb.archivedAt[src.ID])
+		due := since >= every || s.kb.changed[src.ID] && since >= kbChangedFloor
 		if due {
 			s.kb.archivedAt[src.ID] = time.Now()
+			delete(s.kb.changed, src.ID)
 		}
 		s.kb.mu.Unlock()
 		if !due {
@@ -71,27 +76,48 @@ func (s *Service) kbConnectors(ctx context.Context, e *kb.Engine) {
 	}
 }
 
-// kbCollectItems records every connector's items (documents, meetings and events) and tags new ones.
-func (s *Service) kbCollectItems(ctx context.Context, e *kb.Engine) {
+// kbCollectItems records every connector's items (documents, meetings and events) and tags new ones; more: untagged
+// ones are left (past the round's cap, a paused connection) and kbTagItems goes on with them next round. When it
+// stops before tagging (not writable, the connectors not answering, none with items) it is more as it was.
+func (s *Service) kbCollectItems(ctx context.Context, e *kb.Engine, more bool) bool {
+	s.kb.sourceWrites.Lock()
+	defer s.kb.sourceWrites.Unlock()
 	if !s.kbWritable(ctx) {
-		return
+		return more
 	}
 	var list assistantwire.Archives
 	if err := s.appCall(ctx, AppConnectors, assistantwire.ConnectorsArchives, map[string]any{}, &list); err != nil {
 		s.logf("kb: the connectors' items: %v", err)
-		return
+		return more
 	}
 	if len(list.Items) == 0 {
-		return
+		return more
 	}
 	for _, id := range list.Items {
-		if err := e.CollectItems(ctx, busItems{s: s, id: id}); err != nil {
+		if err := e.CollectItems(ctx, busItems{s: s, id: id}, id); err != nil {
 			s.logf("kb: items: %v", err)
 		}
 	}
-	if err := e.TagItems(ctx); err != nil && !ai.IsPaused(err) {
+	return s.tagItems(ctx, e)
+}
+
+// kbTagItems goes on tagging the items a round before left, without reading the connectors again; more as
+// kbCollectItems.
+func (s *Service) kbTagItems(ctx context.Context, e *kb.Engine, more bool) bool {
+	s.kb.sourceWrites.Lock()
+	defer s.kb.sourceWrites.Unlock()
+	if !s.kbWritable(ctx) {
+		return more
+	}
+	return s.tagItems(ctx, e)
+}
+
+func (s *Service) tagItems(ctx context.Context, e *kb.Engine) (more bool) {
+	more, err := e.TagItems(ctx, kbTagItemsMax)
+	if err != nil && !ai.IsPaused(err) {
 		s.logf("kb: tag items: %v", err)
 	}
+	return more
 }
 
 // busArchive is a connector's archive read through the hub (connectors.changes).
@@ -158,8 +184,16 @@ func (b busItems) DocTitle(ctx context.Context, url string) string {
 // kbConnectorSource names a connector's chats for Ingest; their attachments come from the connector when it can hand
 // them over (connector.ArchiveMedia), else the line keeps the attachment placeholder.
 type kbConnectorSource struct {
-	id    string
-	media connector.ArchiveMedia // nil: no attachments
+	id        string
+	connector string                 // original connector, even when id is one of its archive sources
+	media     connector.ArchiveMedia // nil: no attachments
+}
+
+func (s kbConnectorSource) ConnectorID() string {
+	if s.connector != "" {
+		return s.connector
+	}
+	return s.id
 }
 
 func (s kbConnectorSource) Name() string                                      { return s.id }
@@ -204,7 +238,7 @@ func archiveConnector(ctx context.Context, e *kb.Engine, id string, a connector.
 		return 0, kb.ErrReadOnly
 	}
 	media, _ := a.(connector.ArchiveMedia)
-	src := kbConnectorSource{id: id, media: media}
+	src := kbConnectorSource{id: id, connector: id, media: media}
 	file := filepath.Join(e.Store.Dir, "cursors", id+".json")
 	var cur connectorCursor
 	if raw, err := os.ReadFile(file); err == nil {

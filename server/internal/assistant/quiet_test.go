@@ -658,7 +658,12 @@ func TestReportingConversationTaskReviewMakesNoLedger(t *testing.T) {
 	}
 	todo := onlyTodo(s)
 	review := func(verdict string) error {
-		raw, _ := json.Marshal(map[string]any{"todo_id": todo.ID, "verdict": verdict, "note": "重复了"})
+		args := map[string]any{"todo_id": todo.ID, "verdict": verdict, "note": "重复了"}
+		if verdict == "needs_user" { // a complete decision (#3804): what refuses it here is that nothing supervises the task
+			args = rolloutDecision()
+			args["todo_id"] = todo.ID
+		}
+		raw, _ := json.Marshal(args)
 		_, err := s.runTool(ctx, "server", "lark1", "task_review", raw)
 		return err
 	}
@@ -671,7 +676,7 @@ func TestReportingConversationTaskReviewMakesNoLedger(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := todoNow(s, todo.ID)
-	if now.DoneAt == nil || now.DoneBy != db.DoneByReview || now.Supervision != nil {
+	if now.DoneAt == nil || now.DoneBy != db.DoneByCancelled || now.Supervision != nil {
 		t.Fatalf("after cancelled: %+v, supervision %+v", now, now.Supervision)
 	}
 }

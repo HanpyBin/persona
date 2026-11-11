@@ -61,6 +61,7 @@ On the same phone, save the QR code to Photos and select it from WeChat's scanne
   in the extension's compatible sealed state for subsequent authorization.
 - iLink error `-14` means authorization is invalid, for example after binding elsewhere or revocation;
   the connector becomes signed out and requests another QR login.
+- Signing out under Connectors, unbinding under Channels, and automatic unbinding all clear the channel's pending turns and text questions. After binding again, an ordinary message such as "ok" cannot answer a card left from the previous binding; the card itself remains in the App (#1837). The extension manager detects automatic unbinding when the program saves its state without credentials, rather than comparing the localized account label.
 
 ## Message flow
 

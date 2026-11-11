@@ -4,7 +4,7 @@ import (
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
-// What comes from the nodes is the manager's (docs/server/machines.md "Who handles the computers' events"): it creates and answers the
+// What comes from the nodes is the manager's (docs/server/machines.md "Who handles computer events"): it creates and answers the
 // interactions, works out each Agent's state, decides the pushes and the Live Activity's content, runs the nodes' MCP
 // tools and keeps the machines' monitoring. The hub shows and delivers what it reports: the session lists, the
 // pending interactions and the fleet (kept while the manager is away), and the pushes (APNs, the relay, the apps'
@@ -71,7 +71,7 @@ type FleetInteraction struct {
 }
 
 // FleetResolved is EventFleetResolved's params; AnsweredBy says the assistant answered it, Reason why and Answers
-// with what (docs/assistant/assistant.md "The assistant answers questions first").
+// with what (docs/assistant/assistant.md "Assistant answers questions first").
 type FleetResolved struct {
 	ID         string            `json:"id"`
 	AnsweredBy string            `json:"answered_by,omitempty"`
@@ -92,8 +92,13 @@ type FleetLive struct {
 
 // Clients is EventClients' params.
 type Clients struct {
-	// Elicitation: an app that takes MCP elicitations is connected (without one an elicitation is declined at once).
+	// Elicitation: an app that takes MCP elicitations is connected (without one, or ElicitationPush, an elicitation is
+	// handed back to the terminal at once).
 	Elicitation bool `json:"elicitation"`
+	// ElicitationPush: a phone that shows MCP elicitations registered for them (device feature `elicitation`) and would
+	// be pushed a card now (#2433): an elicitation waits for it as other cards do. Only Elicitation keeps meaning a
+	// connected app, so a manager from before this field hands such a request back as it did; an older hub sends none.
+	ElicitationPush bool `json:"elicitation_push"`
 }
 
 // FleetSeen is EventSeen's params.
@@ -112,9 +117,13 @@ const (
 	// NotifyReply reminds the user of an agent still waiting on their answer (Session.AwaitsReply, #5096): the devices
 	// that take "needs you" pushes; answerable from the notification as a finished turn is.
 	NotifyReply = "reply"
+	// NotifyDecide is a to-do whose conclusion waits for the owner's decision with a recommended option
+	// (Notification.Todo, #2056): the devices that take "needs you" pushes; the notification's OK takes the
+	// recommendation through POST /api/v1/todos/{id}/accept with its asked_at.
+	NotifyDecide = "decide"
 )
 
-// FleetState is the Live Activity's ContentState, field for field (apple/LiveActivity/FleetActivity.swift). Times
+// FleetState is the Live Activity's ContentState, field for field (apple/Shared/FleetState.swift). Times
 // are Unix seconds: ActivityKit decodes pushed JSON with a default JSONDecoder, which would read a Date as seconds
 // since 2001. The manager works out what it shows; the hub fills in each device's part (Details, Left, Right, Stats,
 // Look) when it pushes.

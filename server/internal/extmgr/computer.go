@@ -20,6 +20,7 @@ import (
 	"github.com/nwverse/persona/server/internal/extension"
 	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/lcuconfirm"
+	"github.com/nwverse/persona/server/internal/protectedapps"
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
@@ -88,7 +89,7 @@ func (s cuaSettings) awake() bool { return s.KeepAwake == nil || *s.KeepAwake }
 
 func (h *Manager) cua() cuaSettings { return h.machineExtension(cuaExtensionID) }
 
-// machinePlugin is a built-in plugin that is turned on per Mac (cua, ego): on or not, its Macs, whether to ask first.
+// machineExtension is a built-in plugin that is turned on per Mac (cua, ego): on or not, its Macs, whether to ask first.
 func (h *Manager) machineExtension(id string) cuaSettings {
 	if h.extensions == nil || h.extensions.reg == nil {
 		return cuaSettings{}
@@ -234,13 +235,13 @@ func (h *Manager) putComputer(w http.ResponseWriter, r *http.Request, m *Machine
 	writeJSON(w, i18n.ComputerStatus(h.requestLang(r), h.refreshComputer(r.Context(), m)))
 }
 
-// setPluginMachine turns a per-Mac plugin on or off for a machine: its config's machines (the machine page's switch,
+// setExtensionMachine turns a per-Mac plugin on or off for a machine: its config's machines (the machine page's switch,
 // the same as the plugin page's).
 func (h *Manager) setExtensionMachine(ctx context.Context, extension, machine string, on bool) error {
 	return h.setExtensionList(ctx, extension, "machines", machine, on)
 }
 
-// setPluginList puts machine in, or takes it out of, the plugin's machine list key.
+// setExtensionList puts machine in, or takes it out of, the plugin's machine list key.
 func (h *Manager) setExtensionList(ctx context.Context, extension, key, machine string, on bool) error {
 	p := h.extensions.reg.Get(extension)
 	if p == nil {
@@ -369,7 +370,7 @@ func (h *Manager) callComputerTool(ctx context.Context, sessionID, name string, 
 	}
 	apps, whole := callApps(name, a.App, a.Script, a.Steps)
 	if name == "computer_state" {
-		if _, ok := h.approveApps(ctx, m, h.assistantAsker(sessionID, m.cfg.ID), name, apps, whole, args); !ok {
+		if _, ok := h.approveApps(ctx, m, h.assistantAsker(sessionID, m.cfg.ID), name, apps, whole, args, nil); !ok {
 			return declined("look")
 		}
 		shot := a.Screenshot == nil || *a.Screenshot
@@ -411,17 +412,68 @@ func (h *Manager) callComputerTool(ctx context.Context, sessionID, name string, 
 	default:
 		return proto.TextResult("give script (run_script) or steps (run_steps)", true)
 	}
+	// Never System Settings or a permission prompt (#4336, computer_protected.go), before any card.
+	if a.Script != "" && !whole {
+		h.logf("[%s] computer_run refused: a script whose apps cannot all be read", m.cfg.ID)
+		return proto.TextResult(protectedapps.UnreadableScript, true)
+	}
+	var known []protectedapps.App
+	if !lcu {
+		known = h.knownApps(ctx, m)
+	}
+	for _, x := range h.appsOn(ctx, m, apps, known) {
+		if protectedApp(x) {
+			h.logf("[%s] computer_run refused: protected app %s", m.cfg.ID, strings.TrimPrefix(x.BundleID, "name:"))
+			return proto.TextResult(refusedText(m.cfg.Name, "it would operate "+x.Name), true)
+		}
+	}
+	// LCU asks before touching any app, and those questions are refused for these (computer_lcu.go).
+	onScreen := func() *proto.ToolResult {
+		found, ok := h.protectedOnScreen(ctx, m, &known)
+		switch {
+		case !ok:
+			h.logf("[%s] computer_run refused: the windows could not be read", m.cfg.ID)
+			res := proto.TextResult(protectedapps.Unchecked, true)
+			return &res
+		case len(found) > 0:
+			h.logf("[%s] computer_run refused: protected app on screen", m.cfg.ID)
+			res := proto.TextResult(refusedText(m.cfg.Name, strings.Join(found, ", ")+" is open on its screen"), true)
+			return &res
+		}
+		return nil
+	}
+	if !lcu {
+		if res := onScreen(); res != nil {
+			return *res
+		}
+	}
 	what := computerSummary(h.userLang(), m.cfg.Name, tool, a.Script, a.Steps)
-	asked, ok := h.approveApps(ctx, m, h.assistantAsker(sessionID, m.cfg.ID), name, apps, whole, args)
-	if !ok || (h.cua().Confirm && !asked && !h.approve(ctx, h.assistantAsker(sessionID, m.cfg.ID), name, what, args)) {
+	asked, ok := h.approveApps(ctx, m, h.assistantAsker(sessionID, m.cfg.ID), name, apps, whole, args, known)
+	refused := !ok || (h.cua().Confirm && !asked && !h.approve(ctx, h.assistantAsker(sessionID, m.cfg.ID), name, what, args))
+	if refused {
 		return declined(computerLogWhat(tool, a.Script, a.Steps))
 	}
+	if !lcu && (asked || h.cua().Confirm) { // a card may have waited minutes: look again
+		if res := onScreen(); res != nil {
+			return *res
+		}
+	}
 	start := time.Now()
-	res, err := h.computerCall(ctx, m, session, sessionID, tool, in)
+	var res *proto.ComputerResult
+	var stopped string
+	if !lcu && tool == "run_steps" && unnamedSteps(a.App, a.Steps) {
+		res, stopped, err = h.runStepsOneByOne(ctx, m, session, sessionID, a.Steps, a.Observe, &known)
+	} else {
+		res, err = h.computerCall(ctx, m, session, sessionID, tool, in)
+	}
 	h.logf("[%s] computer_run for %s: %s, %v, %s", m.cfg.ID, convID(sessionID), computerLogWhat(tool, a.Script, a.Steps),
-		time.Since(start).Round(time.Millisecond), map[bool]string{true: "failed", false: "ok"}[err != nil])
+		time.Since(start).Round(time.Millisecond), map[bool]string{true: "failed", false: "ok"}[err != nil || stopped != ""])
 	if err != nil {
 		return proto.TextResult(err.Error(), true)
+	}
+	if stopped != "" {
+		h.logf("[%s] computer_run refused partway: protected app on screen", m.cfg.ID)
+		return proto.TextResult(refusedText(m.cfg.Name, stopped), true)
 	}
 	return computerResult(res)
 }
@@ -611,12 +663,4 @@ func stepActions(steps json.RawMessage) []string {
 func jsString(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
-}
-
-// convID is the start of a conversation's id: the Cua Driver session label of its calls, and how the log names it.
-func convID(id string) string {
-	if len(id) > 8 {
-		return id[:8]
-	}
-	return id
 }

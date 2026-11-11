@@ -41,12 +41,33 @@ type fakeHerdr struct {
 type herdrCall struct {
 	Method string
 	Params map[string]any
+	Typed  string // a start's send_input: the line typed, `. <start file>`; Params has the file's command (typedstart.go)
 }
 
 // String is the canonical form tests compare: the method and its params as JSON with sorted keys.
 func (c herdrCall) String() string {
 	b, _ := json.Marshal(c.Params)
 	return c.Method + " " + string(b)
+}
+
+// startFileCommand is the command a start typed through its start file (runAgentCommand) when text is the line that
+// sources one: what the tests that pin a start's command compare.
+func startFileCommand(text string) (string, bool) {
+	_, file, ok := strings.Cut(text, " ")
+	if !ok || !strings.HasPrefix(text, ". ") && !strings.HasPrefix(text, "source ") {
+		return "", false
+	}
+	file, _, _ = strings.Cut(file, " && true ")
+	file = strings.TrimSuffix(strings.TrimPrefix(file, "'"), "'")
+	if !strings.HasPrefix(filepath.Base(file), startScriptPrefix) {
+		return "", false
+	}
+	b, err := os.ReadFile(file)
+	if err != nil {
+		return "", false
+	}
+	_, cmd, _ := strings.Cut(strings.TrimSuffix(string(b), "\n"), "\n") // after its rm of itself
+	return cmd, true
 }
 
 // herdrFail makes a handler answer with a herdr error instead of a result.
@@ -99,6 +120,12 @@ func (f *fakeHerdr) serveConn(c net.Conn) {
 		req.Params = map[string]any{}
 	}
 	call := herdrCall{Method: req.Method, Params: req.Params}
+	if req.Method == "pane.send_input" {
+		if cmd, ok := startFileCommand(str(req.Params["text"])); ok {
+			call.Typed = str(req.Params["text"])
+			call.Params["text"] = cmd
+		}
+	}
 	f.mu.Lock()
 	h := f.on[req.Method]
 	var result any = map[string]any{}
@@ -307,6 +334,9 @@ func agentOf(kind, session, status, pane, tab, ws, cwd, title string) map[string
 func herdrNode(t *testing.T) (*Node, *fakeHerdr, string) {
 	t.Helper()
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	// herdr's config is the temp home's, not one the environment points at (herdr.WorktreesDir)
+	t.Setenv("HERDR_CONFIG_PATH", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
 	f := newFakeHerdr(t)
 	n, home := testNode(t)
 	n.hosts, n.dir, n.bin = herdrHosts(&herdr.Client{Socket: f.sock}), filepath.Join(home, ".persona"), "/tmp/persona-test/personad"
@@ -331,6 +361,7 @@ func herdrNode(t *testing.T) (*Node, *fakeHerdr, string) {
 	withFirstPromptWaits(t, 400*time.Millisecond, 3*time.Second)
 	t.Cleanup(n.firstWait.Wait) // before the waits are put back: a check still going reads them
 	t.Cleanup(n.engLists.Wait)  // before the caches are reset: an engine switch's list, still being built, reads them
+	t.Cleanup(n.starts.close)   // before firstWait, caches and the fake socket: starts can still use all of them
 	return n, f, home
 }
 
@@ -434,6 +465,18 @@ func withSubmitWindow(t *testing.T, window, poll time.Duration) {
 type hubPush struct {
 	Event  string          `json:"event"`
 	Params json.RawMessage `json:"params"`
+}
+
+// pollRepo keeps optional Git decoration stable before a poll test changes its transcript or workflow. Otherwise
+// a cold Git lookup can produce an unrelated sessions.changed on the next tick.
+func pollRepo(t *testing.T) string {
+	t.Helper()
+	cwd := t.TempDir()
+	writeGitFile(t, filepath.Join(cwd, ".git", "HEAD"), "ref: refs/heads/main\n")
+	if got := awaitGitPlace(t, gitPlaces, cwd); got != (gitPlace{cwd, cwd, "main"}) {
+		t.Fatalf("poll repository: %+v", got)
+	}
+	return cwd
 }
 
 // pollNode runs the node's herdr poll loop (no event stream: a snapshot every tick) with a hub connection, and

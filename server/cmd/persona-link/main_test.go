@@ -264,7 +264,7 @@ func TestInstallWithoutSystemd(t *testing.T) {
 	out := f.out.String()
 	bin := f.binPath()
 	for _, want := range []string{"系统不是由 systemd 启动的", "nohup " + bin + " run --log " + f.logPath() + " >/dev/null 2>&1 &",
-		"@reboot " + bin + " run --log", "| crontab -", "群晖", "unless-stopped"} {
+		"@reboot " + bin + " run --log", "| crontab -", "群晖", "unless-stopped", "node --attach --supervised"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}
@@ -458,7 +458,7 @@ func TestKeepLinkSavesItsStatus(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	var out bytes.Buffer
 	done := make(chan error, 1)
-	go func() { done <- keepLink(ctx, path, logPath, &out) }()
+	go func() { done <- keepLink(ctx, path, logPath, &out, nil) }()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		if st, err := link.ReadStatus(path); err == nil && st.State == "unpaired" && st.PID == os.Getpid() {
@@ -472,7 +472,7 @@ func TestKeepLinkSavesItsStatus(t *testing.T) {
 	if !link.Running(path) {
 		t.Fatal("not running by its lock")
 	}
-	if err := keepLink(context.Background(), path, "", &bytes.Buffer{}); !errors.Is(err, link.ErrRunning) {
+	if err := keepLink(context.Background(), path, "", &bytes.Buffer{}, nil); !errors.Is(err, link.ErrRunning) {
 		t.Fatalf("a second one: %v", err)
 	}
 	cancel()

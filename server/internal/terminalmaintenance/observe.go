@@ -52,8 +52,12 @@ func parseProcessTable(data string, pid int) (Process, error) {
 		if err != nil || rowPID <= 0 {
 			return Process{}, errors.New("invalid process table PID")
 		}
+		// Negative is a real owner: macOS ps prints uid_t signed, so nobody (4294967294) is -2 there (#3687).
+		// It is not in os.Getuid()'s number space: on darwin a process running as nobody gets 4294967294 from
+		// os.Getuid() but -2 from ps, so the owner checks in Prepare and Validate never match it and fail closed.
+		// Normalizing both to uint32 is left for later.
 		uid, err := strconv.Atoi(fields[1])
-		if err != nil || uid < 0 {
+		if err != nil {
 			return Process{}, errors.New("invalid process table owner")
 		}
 		if rowPID != pid {
@@ -97,7 +101,18 @@ func observeWait(ctx context.Context, p Prepared, wait time.Duration, read func(
 	ctx, cancel := context.WithTimeout(ctx, wait)
 	defer cancel()
 	for {
-		out, err := observeOnce(ctx, p, read)
+		var readErr error
+		out, err := observeOnce(ctx, p, func(ctx context.Context, pid int) (Process, error) {
+			current, err := read(ctx, pid)
+			readErr = err
+			return current, err
+		})
+		// A deadline that interrupts the census (the real reader's ps child is
+		// killed) is the wait running out, not an unreadable process table.
+		if readErr != nil && ctx.Err() != nil {
+			out.State = "timeout"
+			return out, fmt.Errorf("process departure not observed: %w", ctx.Err())
+		}
 		if err != nil || out.ProcessAbsent {
 			return out, err
 		}

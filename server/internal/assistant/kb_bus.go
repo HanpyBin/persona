@@ -62,13 +62,11 @@ func (s *Service) kbRequest(ctx context.Context, method string, params json.RawM
 		}
 		return map[string]any{"projects": out}, true, nil
 	case assistantwire.MethodKBForget:
-		var p struct {
-			Source string `json:"source"`
-		}
+		var p assistantwire.KBForget
 		if err := decode(&p); err != nil {
 			return nil, true, err
 		}
-		f, err := s.kbForget(ctx, p.Source)
+		f, err := s.kbForget(ctx, p.Source, p.ArchiveSources...)
 		return f, true, kbError(err)
 	case assistantwire.MethodKBPostsPut, assistantwire.MethodKBPostsComments, assistantwire.MethodKBPostsPending, assistantwire.MethodKBArchivedChats:
 		var p assistantwire.KBPosts
@@ -96,6 +94,11 @@ func (s *Service) kbRequest(ctx context.Context, method string, params json.RawM
 func (s *Service) kbEvent(ctx context.Context, name string, params json.RawMessage) (bool, error) {
 	switch name {
 	case assistantwire.EventKBKick:
+		var k assistantwire.KBKick
+		if len(params) > 0 {
+			_ = json.Unmarshal(params, &k) // a manager before #1562 sends {}: only the round
+		}
+		s.kbNoteKick(k)
 		s.kbKick()
 	case assistantwire.EventKBAgentTurn:
 		var t assistantwire.KBAgentTurn
@@ -127,22 +130,25 @@ func (s *Service) kbChatContext(ctx context.Context, id string) *prompts.KBConte
 func kbContext(e *kb.Engine, c *kb.Chat) *prompts.KBContext {
 	out := &prompts.KBContext{ChatID: c.ID, ChatName: c.Name}
 	if sum := e.Store.Summary(kb.KindChat, c.ID); sum != "" {
-		out.Summary = clipRunes(sum, 4000)
+		out.Summary = clip(sum, 4000)
 	}
 	for i, slug := range c.Projects {
 		if i >= 3 {
 			break
 		}
 		if p, ok := e.Store.Project(slug); ok {
-			out.Projects = append(out.Projects, prompts.KBProject{Name: p.Name, Summary: clipRunes(e.Store.Summary(kb.KindProject, slug), 3000)})
+			out.Projects = append(out.Projects, prompts.KBProject{Name: p.Name, Summary: clip(e.Store.Summary(kb.KindProject, slug), 3000)})
 		}
 	}
 	return out
 }
 
-// kbForget removes a source's chats and people from the knowledge base, with their index rows, their places in
-// projects and the cursor (DELETE /api/v1/connectors/{id}/data and …/archive, DELETE /api/v1/imessage/data).
-func (s *Service) kbForget(ctx context.Context, source string) (assistantwire.KBForgotten, error) {
+// kbForget removes a connector's archived content, index rows, project associations and cursors (DELETE /api/v1/connectors/{id}/data and …/archive, DELETE /api/v1/imessage/data).
+func (s *Service) kbForget(ctx context.Context, source string, archiveSources ...string) (assistantwire.KBForgotten, error) {
+	s.kb.sourceWrites.Lock()
+	defer s.kb.sourceWrites.Unlock()
+	s.kb.postWrites.Lock()
+	defer s.kb.postWrites.Unlock()
 	if s.kbReadOnly(ctx) {
 		return assistantwire.KBForgotten{}, kb.ErrReadOnly
 	}
@@ -152,7 +158,7 @@ func (s *Service) kbForget(ctx context.Context, source string) (assistantwire.KB
 	} else if err != nil {
 		return assistantwire.KBForgotten{}, err
 	}
-	f, err := e.ForgetSource(source)
+	f, err := e.ForgetSource(source, archiveSources...)
 	if err != nil {
 		return assistantwire.KBForgotten{}, err
 	}
@@ -163,12 +169,23 @@ func (s *Service) kbForget(ctx context.Context, source string) (assistantwire.KB
 		if err := idx.DeleteKBEntities(ctx, kb.KindPerson, f.People); err != nil {
 			return assistantwire.KBForgotten{}, err
 		}
+		for kind, ids := range f.Items {
+			if err := idx.DeleteKBEntities(ctx, kind, ids); err != nil {
+				return assistantwire.KBForgotten{}, err
+			}
+		}
 	}
-	if err := s.kbForgetOwner(source); err != nil {
-		return assistantwire.KBForgotten{}, err
+	for _, name := range append([]string{source}, archiveSources...) {
+		if err := s.kbForgetOwner(name); err != nil {
+			return assistantwire.KBForgotten{}, err
+		}
 	}
 	s.kbForgotten(source)
-	return assistantwire.KBForgotten{Chats: len(f.Chats), People: len(f.People)}, nil
+	items := 0
+	for _, ids := range f.Items {
+		items += len(ids)
+	}
+	return assistantwire.KBForgotten{Chats: len(f.Chats), People: len(f.People), Posts: len(f.Posts), Items: items}, nil
 }
 
 // kbAgentTurn files an agent's finished turn under the projects whose code directories it works in: one timeline
@@ -240,7 +257,7 @@ func (s *Service) kbFileTurn(e *kb.Engine, t assistantwire.KBAgentTurn) {
 	if title == "" || title == "Claude Code" {
 		title = filepath.Base(t.Cwd)
 	}
-	line := clipRunes(strings.Join(strings.Fields(t.Line), " "), 160)
+	line := clip(strings.Join(strings.Fields(t.Line), " "), 160)
 	for _, p := range projects {
 		if _, err := e.Apply(kb.KindProject, p.Slug, kb.Update{Log: line, Source: "Agent · " + title + " · " + t.MachineID}); err != nil {
 			s.logf("kb: agent log %s: %v", p.Slug, err)

@@ -15,6 +15,10 @@ const (
 	// MethodModelsExtensionComplete is how the manager hands the assistant an extension's model.complete:
 	// ExtensionComplete → ModelCompleteResult. Not on the extensions' allowlist.
 	MethodModelsExtensionComplete = "models.extension_complete"
+	// MethodModelsPurposeComplete is how the manager makes a model call of its own on one of the built-in purposes
+	// it may use (PurposeSubscriptionRecipe): PurposeComplete → ModelCompleteResult, with model.complete's checks and
+	// errors. Not on the extensions' allowlist.
+	MethodModelsPurposeComplete = "models.purpose_complete"
 	// PluginsModels: {} → {extensions: [ModelExtension]}, the extensions switched on that are granted the models
 	// scope: each has a purpose extension.<id> in Settings › Models.
 	PluginsModels = "plugins.models"
@@ -28,14 +32,28 @@ const (
 	// CodeModelPaused: the connection is held (quota used up or busy, ai.IsPaused); data ModelPause. Nothing was
 	// sent: try again after until.
 	CodeModelPaused = "model_paused"
-	// CodeModelFailed: the upstream refused or failed the request (its message says why).
+	// CodeModelFailed: the upstream failed the request (its message says why): an error status, a dropped
+	// connection. A declined request is CodeModelRefused instead.
 	CodeModelFailed = "model_failed"
+	// CodeModelRefused: the model declined to answer this input (a refusal, a content filter); data ModelRefusal.
+	// Sending it again unchanged gets the same answer: split it, drop a part or report it instead.
+	CodeModelRefused = "model_refused"
 	// CodeInvalidOutput: with json_schema, the reply was still not JSON matching it after one more try; data
 	// ModelInvalidOutput.
 	CodeInvalidOutput = "invalid_output"
 	// CodeModelTimeout: the call ran past its timeout_seconds.
 	CodeModelTimeout = "timeout"
 )
+
+// PurposeSubscriptionRecipe drafts a source subscription's recipe (#2040, docs/extensions/subscriptions.md "Drafting
+// with a model"): an API purpose under Information processing (kb), following it until the user picks another.
+const PurposeSubscriptionRecipe = "subscription.recipe"
+
+// PurposeComplete is a model call the manager makes itself, on a built-in purpose.
+type PurposeComplete struct {
+	Purpose string              `json:"purpose"`
+	Params  ModelCompleteParams `json:"params"`
+}
 
 // ExtensionPurposePrefix and an extension's id is its model purpose.
 const ExtensionPurposePrefix = "extension."
@@ -120,4 +138,11 @@ type ModelInvalidOutput struct {
 	Problem string     `json:"problem"`
 	Text    string     `json:"text"`
 	Usage   ModelUsage `json:"usage"`
+}
+
+// ModelRefusal is the data of model_refused: what the upstream said and what the declined call spent.
+type ModelRefusal struct {
+	// StopReason is the upstream's reason: refusal or content_filter.
+	StopReason string     `json:"stop_reason,omitempty"`
+	Usage      ModelUsage `json:"usage"`
 }

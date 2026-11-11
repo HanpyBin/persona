@@ -11,7 +11,7 @@ type Call = { path: string; resolve: (v: unknown) => void; reject: (e: unknown) 
 const calls: Call[] = [];
 vi.mock("../../lib/api", async (orig) => ({
   ...(await orig<typeof import("../../lib/api")>()),
-  api: (path: string) => new Promise((resolve, reject) => calls.push({ path, resolve, reject })),
+  api: (path: string) => path === "/connectors/sent/chat-rules" ? Promise.resolve({ rules: [], most: 500 }) : new Promise((resolve, reject) => calls.push({ path, resolve, reject })),
 }));
 const copied: string[] = [];
 vi.mock("../../ui/atoms", async (orig) => ({
@@ -79,7 +79,7 @@ async function loaded(items: unknown[], next: number | null = null) {
 }
 
 describe("设置 › 以你的名义发出", () => {
-  it("asks for the first page with no query, and for nothing else (the filter needs no list of connectors)", async () => {
+  it("asks for the first page with no query, without a connector inventory (rules load independently)", async () => {
     await render();
     expect(calls.map((c) => c.path)).toEqual(["/connectors/sent"]);
     expect(text()).toContain("加载中");
@@ -407,5 +407,39 @@ describe("设置 › 以你的名义发出", () => {
     expect(dialog.querySelector("pre")?.textContent).toBe(markup);
     expect(dialog.textContent).toContain("<img src=x onerror=alert(3)>");
     expect(document.querySelector("img")).toBeNull();
+  });
+});
+
+describe("recall", () => {
+  const recalls = () => calls.filter((c) => c.path.endsWith("/recall"));
+
+  it("is offered only when the hub says so, asks first, then shows the recalled row and reads the list again", async () => {
+    await loaded([row(5, { connector: "github", target: { ref: "o/r#1" }, can_recall: true }), row(4, { target: { to: ["b@example.com"], subject: "Old" } })]);
+    await click(rowOf("Old"));
+    expect(button("撤回…")).toBeUndefined();
+    await click(button("完成"));
+    await act(async () => void (await new Promise((r) => setTimeout(r, 300))));
+    await click(rowOf("o/r#1"));
+    await click(button("撤回…"));
+    expect(recalls()).toHaveLength(0); // asked first
+    expect(text()).toContain("撤回这条消息");
+    await click(button("撤回消息"));
+    expect(recalls().map((c) => c.path)).toEqual(["/connectors/sent/5/recall"]);
+    const before = reads().length;
+    await answer(recalls()[0], { ok: true, item: row(5, { connector: "github", target: { ref: "o/r#1" }, recalled_at: minutesAgo(0), can_recall: false }) });
+    expect(button("撤回…")).toBeUndefined();
+    expect(text()).toContain("已于");
+    expect(reads().length).toBe(before + 1); // the list is read again
+  });
+
+  it("shows why the hub refused and reads the list again", async () => {
+    await loaded([row(5, { connector: "github", target: { ref: "o/r#1" }, can_recall: true })]);
+    await click(rowOf("o/r#1"));
+    await click(button("撤回…"));
+    await click(button("撤回消息"));
+    const before = reads().length;
+    await refuse(recalls()[0], new ApiError(409, "too old", { error: "too old", code: "too_old" }));
+    expect(text()).toContain("太久");
+    expect(reads().length).toBe(before + 1);
   });
 });

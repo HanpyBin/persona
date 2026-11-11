@@ -1,6 +1,7 @@
 package assistant
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -39,9 +40,14 @@ type fakeHub struct {
 	zshrc         map[string][]proto.Launcher        // a machine\'s own launchers.list (over launcherList)
 	rcFiles       map[string]string                  // a machine's launchers.list rc_file (its shell follows: bash or zsh)
 	slowLaunchers map[string]bool                    // a machine whose launchers.list answers only when the call gives up
+	launcherGate  chan struct{}                      // when set, every launchers.list answer waits for this gate
 	agentModels   map[string][]proto.AgentModel      // the nodes' launchers.models, by launcher
 	modelsLocked  map[string]string                  // launchers.models's locked, by launcher
 	managed       map[string][]proto.ManagedLauncher // what each node was given (launchers.managed)
+	// catalogNodes: the nodes take launchers.catalog (a node from before it answers unknown method); catalog is what each got.
+	catalogNodes  bool
+	catalog       map[string][]proto.ManagedLauncher
+	ownServices   map[string]proto.OwnServiceState // launchers.own_service by machine/agent (none: unknown method)
 	presets       []assistantwire.LauncherPreset
 	voice         []assistantwire.VoicePlugin
 	modelExts     []assistantwire.ModelExtension // plugins.models: the extensions granted models (model_rpc.go)
@@ -53,6 +59,7 @@ type fakeHub struct {
 	sessions      map[string][]proto.Session // by machine: the machines there are
 	sessionsFail  map[string]int             // by machine: sessions.list fails offline this many more times (then recovers)
 	items         []proto.Item               // session.items answers this
+	pageTurns     bool                       // and only the last n turns of it to "turns": n, as the node does (else all of it)
 	itemsPage     int                        // > 0: session.items with after_seq pages them by seq, this many a page
 	calls         []DeviceCall
 	known         map[string]bool  // conversations the nodes have
@@ -63,7 +70,12 @@ type fakeHub struct {
 	noGuest       bool             // the node is older than guest conversations: assistant.guest_prepare is unknown
 	larkCLI       bool
 	slowSnapshots time.Duration // the connectors' live states come this late (nothing: there are none)
+	liveStates    []any         // the connectors' live states (connectors.snapshots), when they come at once
+	snapshotAsks  int           // connectors.snapshots calls
+	hungChannel   string        // the channel whose program never answers a send (hangChannel)
 	replies       []string      // the model's answers, in turn (the last one again when they run out)
+	answers       []fakeAnswer  // how each of those answers comes, in turn (none: at once and whole)
+	modelDown     bool          // the model's gateway answers 502 to the calls replies would answer: asked, never answering
 	noModel       bool
 	asked         []modelCall
 	pushes        []Notification
@@ -76,12 +88,17 @@ type fakeHub struct {
 	agents       int
 	offline      map[string]bool
 	failStart    error
-	worktrees    []map[string]any // worktree.prepare / worktree.create params, {"method": …} added
-	failWorktree error            // worktree.create's answer when set
-	slowStart    bool             // session.start blocks until the call's context ends, then answers with its error (a node that builds the session before answering late)
-	judged       int              // the done judge's calls to the model
-	judge        string           // what they answer ("": an error)
-	outcome      string           // what the outcome model answers (todo_outcome.go; "": an error)
+	refuseUltra  error                     // session.start's answer to a start that asks for ultracode (a node refusing it, #3596)
+	startFailed  string                    // the StartError of the sessions session.start answers (the launcher failed in its new tab)
+	worktrees    []map[string]any          // worktree.prepare / worktree.create params, {"method": …} added
+	failWorktree error                     // worktree.create's answer when set
+	slowStart    bool                      // session.start blocks until the call's context ends, then answers with its error (a node that builds the session before answering late)
+	judged       int                       // the done judge's calls to the model
+	judge        string                    // what they answer ("": an error)
+	judgeFails   int                       // the done judge's next calls that fail before f.judge answers
+	judgeAsked   []string                  // what the done judge was given (its input)
+	judgeBy      func(input string) string // when set, what the done judge answers to its input (instead of f.judge)
+	outcome      string                    // what the outcome model answers (todo_outcome.go; "": an error)
 	outcomeAsked []modelCall
 	retired      []string // session.retire's session ids
 	retireErr    error
@@ -96,6 +113,9 @@ type fakeHub struct {
 	// were asked; the sessions whose pushes are off, by machine.
 	triage      string
 	triageAsked []modelCall
+	// The Progress row's paraphrase of a report (report_line.go): its answer (none: an error), and what was asked.
+	reportLine      string
+	reportLineAsked []modelCall
 	// The delegate's model (delegate.go): its answer ("": it fails), and what it was asked.
 	delegate      string
 	delegateAsked []modelCall
@@ -118,6 +138,7 @@ type fakeHub struct {
 	// does to the checks.
 	checks    map[string]proto.LauncherCheck
 	checked   []string
+	onCheck   func(f *fakeHub) // runs (under the fake's lock) inside each launchers.check
 	repairs   []map[string]any
 	repairRes *proto.LauncherRepair
 	onRepair  func(f *fakeHub)
@@ -131,6 +152,8 @@ type fakeHub struct {
 	// questions it got.
 	auth      map[string]proto.ClaudeAuthStatus
 	authAsked []string
+	// authHold, when set, holds claude.auth_status's answer until it is closed (a node running a slow launcher).
+	authHold chan struct{}
 	// nodes answer node methods on any machine, by method, before the answers below (answerNode).
 	nodes map[string]nodeAnswer
 }
@@ -212,6 +235,12 @@ func (f *fakeHub) deviceCall(ctx context.Context, p DeviceCall) (json.RawMessage
 	var a map[string]any
 	_ = json.Unmarshal(p.Params, &a)
 	switch p.Method {
+	case "fs.stat":
+		var stats []map[string]string
+		for _, path := range a["paths"].([]any) {
+			stats = append(stats, map[string]string{"path": path.(string), "kind": "dir"})
+		}
+		return json.Marshal(map[string]any{"stats": stats})
 	case DeviceSessionSendOnce:
 		if sid, _ := a["session_id"].(string); f.failSendOnce[p.Device+"/"+sid] != nil {
 			return nil, f.failSendOnce[p.Device+"/"+sid]
@@ -244,13 +273,20 @@ func (f *fakeHub) deviceCall(ctx context.Context, p DeviceCall) (json.RawMessage
 			}
 			return json.Marshal(map[string]any{"items": page, "more_after": more})
 		}
-		return json.Marshal(map[string]any{"items": f.items})
+		items := f.items
+		if n, _ := a["turns"].(float64); f.pageTurns && n > 0 {
+			items = lastTurns(items, int(n))
+		}
+		return json.Marshal(map[string]any{"items": items})
 	case DeviceSessionRename:
 		f.sends = append(f.sends, map[string]any{"rename": a})
 		return json.RawMessage(`{"ok":true}`), nil
 	case assistantwire.DeviceLaunchersCheck:
 		name, _ := a["name"].(string)
 		f.checked = append(f.checked, p.Device+"/"+name)
+		if f.onCheck != nil {
+			f.onCheck(f)
+		}
 		if c, ok := f.checks[p.Device+"/"+name]; ok {
 			return json.Marshal(c)
 		}
@@ -271,6 +307,17 @@ func (f *fakeHub) deviceCall(ctx context.Context, p DeviceCall) (json.RawMessage
 		name, _ := a["name"].(string)
 		return json.Marshal(map[string]any{"agent": launcherAgent(name)})
 	case DeviceLaunchersList:
+		if f.launcherGate != nil {
+			gate := f.launcherGate
+			f.mu.Unlock()
+			select {
+			case <-gate:
+			case <-ctx.Done():
+				f.mu.Lock()
+				return nil, ctx.Err()
+			}
+			f.mu.Lock()
+		}
 		if f.slowLaunchers[p.Device] {
 			f.mu.Unlock()
 			<-ctx.Done()
@@ -295,6 +342,26 @@ func (f *fakeHub) deviceCall(ctx context.Context, p DeviceCall) (json.RawMessage
 			models = []proto.AgentModel{}
 		}
 		return json.Marshal(proto.LauncherModels{Agent: launcherAgent(name), Models: models, Locked: f.modelsLocked[name]})
+	case DeviceLaunchersCatalog:
+		if !f.catalogNodes {
+			return nil, fmt.Errorf("unknown method %s", p.Method)
+		}
+		var m struct {
+			Launchers []proto.ManagedLauncher `json:"launchers"`
+		}
+		_ = json.Unmarshal(p.Params, &m)
+		if f.catalog == nil {
+			f.catalog = map[string][]proto.ManagedLauncher{}
+		}
+		f.catalog[p.Device] = m.Launchers
+		return json.RawMessage(`{"ok":true}`), nil
+	case DeviceLaunchersOwnService:
+		agent, _ := a["agent"].(string)
+		st, ok := f.ownServices[p.Device+"/"+agent]
+		if !ok {
+			return nil, fmt.Errorf("unknown method %s", p.Method)
+		}
+		return json.Marshal(st)
 	case assistantwire.DeviceLaunchersManaged:
 		var m struct {
 			Launchers []proto.ManagedLauncher `json:"launchers"`
@@ -305,6 +372,14 @@ func (f *fakeHub) deviceCall(ctx context.Context, p DeviceCall) (json.RawMessage
 	case assistantwire.DeviceClaudeAuthStatus:
 		name, _ := a["name"].(string)
 		f.authAsked = append(f.authAsked, p.Device+"/"+name)
+		if hold := f.authHold; hold != nil {
+			f.mu.Unlock()
+			select {
+			case <-hold:
+			case <-ctx.Done():
+			}
+			f.mu.Lock()
+		}
 		if f.auth == nil {
 			return nil, errors.New("unknown method claude.auth_status")
 		}
@@ -328,6 +403,10 @@ func (f *fakeHub) deviceCall(ctx context.Context, p DeviceCall) (json.RawMessage
 		}
 		f.guestPrepared = append(f.guestPrepared, a)
 		return json.Marshal(map[string]any{"cwd": "/home/me/.persona/guest"})
+	case "worktree.status":
+		return json.Marshal(proto.WorktreeStatus{})
+	case "workspace.resolve":
+		return json.Marshal(proto.Workspace{Cwd: a["path"].(string), Available: true})
 	case DeviceWorktreePrepare, DeviceWorktreeCreate: // the machine's engine: checkouts under /wt/<repo>
 		a["method"] = p.Method
 		f.worktrees = append(f.worktrees, a)
@@ -343,6 +422,9 @@ func (f *fakeHub) deviceCall(ctx context.Context, p DeviceCall) (json.RawMessage
 			return nil, fmt.Errorf("%s: %w", p.Device, apierr.ErrOffline)
 		}
 		f.starts = append(f.starts, a)
+		if f.refuseUltra != nil && a["ultracode"] == true {
+			return nil, f.refuseUltra
+		}
 		if f.onStart != nil {
 			f.onStart(f, a) // the node changes state (for example its session list) while handling this start
 		}
@@ -354,7 +436,8 @@ func (f *fakeHub) deviceCall(ctx context.Context, p DeviceCall) (json.RawMessage
 			return nil, f.failStart
 		}
 		f.agents++
-		return json.Marshal(map[string]any{"session": proto.Session{SessionID: fmt.Sprintf("s%d", f.agents), Cwd: a["cwd"].(string), Agent: "claude"}})
+		return json.Marshal(map[string]any{"session": proto.Session{SessionID: fmt.Sprintf("s%d", f.agents), Cwd: a["cwd"].(string), Agent: "claude",
+			StartError: f.startFailed}})
 	case DeviceSessionSend:
 		if f.failSend != nil {
 			return nil, f.failSend
@@ -400,6 +483,9 @@ func (f *fakeHub) deviceCall(ctx context.Context, p DeviceCall) (json.RawMessage
 }
 
 func (f *fakeHub) AppCall(ctx context.Context, p AppCall) (json.RawMessage, error) {
+	if err := f.hungAppCall(ctx, p); err != nil {
+		return nil, err
+	}
 	if f.inbox != nil { // outside the lock: a round calls back into the assistant
 		if out, ok, err := f.inbox.answer(ctx, p); ok {
 			return out, err
@@ -407,10 +493,14 @@ func (f *fakeHub) AppCall(ctx context.Context, p AppCall) (json.RawMessage, erro
 	}
 	if p.AppID == AppConnectors && p.Method == ConnectorsSnapshots {
 		f.mu.Lock()
-		slow := f.slowSnapshots
+		f.snapshotAsks++
+		slow, live := f.slowSnapshots, f.liveStates
 		f.mu.Unlock()
 		if slow == 0 {
-			return json.Marshal(map[string]any{"snapshots": []any{}})
+			if live == nil {
+				live = []any{}
+			}
+			return json.Marshal(map[string]any{"snapshots": live})
 		}
 		select {
 		case <-time.After(slow):
@@ -425,7 +515,9 @@ func (f *fakeHub) AppCall(ctx context.Context, p AppCall) (json.RawMessage, erro
 	case AppConnectors + " " + ConnectorsSignedIn:
 		return json.Marshal(map[string]any{"connectors": []string{}, "clis": map[string]string{}, "lark_cli": f.larkCLI})
 	case AppPlugins + " " + PluginsAssistant:
-		return json.Marshal(map[string]any{"instructions": "", "skills": nil})
+		if f.apps[p.AppID+" "+p.Method] == nil { // else the test's answer (answerApp), below
+			return json.Marshal(map[string]any{"instructions": "", "skills": nil})
+		}
 	case AppSettings + " " + SettingsList:
 		return json.Marshal(map[string]any{"settings": []Setting{{Key: "inbox.rules", Title: "收件箱分拣规则", About: "the rules",
 			Value: "a string", Actions: []string{"get", "set"}}}})
@@ -455,7 +547,7 @@ func (f *fakeHub) NotifyRequest(_ context.Context, p NotifyRequest) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	switch p.Notification.Kind {
-	case NotifyPush, assistantwire.NotifyDone, assistantwire.NotifyInput, assistantwire.NotifyReply:
+	case NotifyPush, assistantwire.NotifyDone, assistantwire.NotifyInput, assistantwire.NotifyReply, assistantwire.NotifyDecide:
 	default:
 		return fmt.Errorf("kind %q", p.Notification.Kind)
 	}
@@ -558,6 +650,14 @@ func (f *fakeHub) pushed() []Notification {
 	return append([]Notification(nil), f.pushes...)
 }
 
+// started is a copy of the session.start parameters so far: a task starts its agent on a goroutine of its own, which
+// appends to f.starts under f.mu.
+func (f *fakeHub) started() []map[string]any {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.starts)
+}
+
 // pushedBy is pushed once there is a push, or at deadline: a watcher records a run before it pushes it, so a test
 // that saw the run recorded waits for the push instead of reading it at once.
 func (f *fakeHub) pushedBy(deadline time.Time) []Notification {
@@ -633,6 +733,9 @@ func (noPlans) CreateTaskPlan(context.Context, db.TaskPlanRow) error {
 }
 func (noPlans) TaskPlan(context.Context, string) (*db.TaskPlanRow, error) {
 	return nil, errors.New("no task_plans here")
+}
+func (noPlans) TaskPlans(context.Context, string) ([]db.TaskPlanRow, error) {
+	return nil, nil
 }
 func (noPlans) TaskPlansByID(context.Context, []string) ([]db.TaskPlanRow, error) {
 	return nil, errors.New("no task_plans here")
@@ -795,6 +898,9 @@ func newServiceOn(t *testing.T, f *fakeHub, st Store) *Service {
 func withSettings(t *testing.T, f *fakeHub, s *Service) *Service {
 	t.Helper()
 	f.fakeModel(t)
+	// These tests are about what a plan does once it exists; what task_plan requires of a brief is task_brief_test.go's,
+	// which turns this off.
+	s.briefsOptional = true
 	if f.settings != nil {
 		setSettings(t, s, func(v *Settings) { *v = *f.settings })
 	}
@@ -1003,7 +1109,7 @@ func (f *fakeHub) fakeModel(t *testing.T) {
 			user = in.Messages[0].Content
 		}
 		f.mu.Lock()
-		reply, fail := "", false
+		reply, fail, down, delay, stop := "", false, false, time.Duration(0), "end_turn"
 		switch {
 		case in.System == tabName:
 			f.tabAsked = append(f.tabAsked, in.System+"\n---\n"+user)
@@ -1014,6 +1120,9 @@ func (f *fakeHub) fakeModel(t *testing.T) {
 		case strings.Contains(in.System, "盯着用户电脑上的编程 Agent"): // the Agents triage (agents_triage.go)
 			f.triageAsked = append(f.triageAsked, modelCall{strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(in.System), jsonOnly)), user})
 			reply, fail = f.triage, f.triage == ""
+		case strings.Contains(in.System, "向 Persona 的一次汇报转述成一句话"): // the Progress row's line (report_line.go)
+			f.reportLineAsked = append(f.reportLineAsked, modelCall{in.System, user})
+			reply, fail = f.reportLine, f.reportLine == ""
 		case strings.Contains(in.System, "先替用户判断 Agent 的提问"): // the delegate (delegate.go)
 			f.delegateAsked = append(f.delegateAsked, modelCall{strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(in.System), jsonOnly)), user})
 			reply, fail = f.delegate, f.delegate == ""
@@ -1022,7 +1131,16 @@ func (f *fakeHub) fakeModel(t *testing.T) {
 			reply, fail = f.outcome, f.outcome == ""
 		case strings.HasSuffix(strings.TrimSpace(in.System), jsonOnly):
 			f.judged++
+			f.judgeAsked = append(f.judgeAsked, user)
 			reply, fail = f.judge, f.judge == ""
+			if f.judgeBy != nil {
+				reply = f.judgeBy(user)
+				fail = reply == ""
+			}
+			if f.judgeFails > 0 {
+				f.judgeFails--
+				fail = true
+			}
 		case f.noModel:
 			fail = true
 		default:
@@ -1030,13 +1148,29 @@ func (f *fakeHub) fakeModel(t *testing.T) {
 			if len(f.replies) > 0 {
 				reply = f.replies[min(len(f.asked), len(f.replies))-1]
 			}
+			if n := len(f.asked); n <= len(f.answers) {
+				delay = f.answers[n-1].delay
+				stop = cmp.Or(f.answers[n-1].stop, stop)
+			}
+			down = f.modelDown
 		}
 		f.mu.Unlock()
 		if fail {
 			http.Error(w, `{"error":{"message":"no model"}}`, http.StatusBadRequest)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"content": []any{map[string]any{"type": "text", "text": reply}}})
+		if down {
+			http.Error(w, `{"error":{"message":"upstream unavailable"}}`, http.StatusBadGateway)
+			return
+		}
+		if delay > 0 {
+			select {
+			case <-time.After(delay):
+			case <-r.Context().Done():
+				return
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"content": []any{map[string]any{"type": "text", "text": reply}}, "stop_reason": stop})
 	}))
 	t.Cleanup(srv.Close)
 	key := filepath.Join(t.TempDir(), "key")
@@ -1044,6 +1178,26 @@ func (f *fakeHub) fakeModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.hello.Models.AI = ai.Config{BaseURL: srv.URL, APIKeyFile: key, Model: "fake"}
+}
+
+// lastTurns is the last n turns of items, as the node pages a transcript (transcript.File.PageTurns): a turn opens
+// with a prompt.
+func lastTurns(items []proto.Item, n int) []proto.Item {
+	start := len(items)
+	for seen := 0; start > 0 && seen < n; {
+		start--
+		if it := items[start]; it.Role == "user" && it.Kind == proto.KindText && !it.Queued {
+			seen++
+		}
+	}
+	return items[start:]
+}
+
+// fakeAnswer is how the fake model gives one answer: after delay (a caller that gives up first gets none), stopping for
+// stop ("": end_turn; "max_tokens": cut off).
+type fakeAnswer struct {
+	delay time.Duration
+	stop  string
 }
 
 // modelRecordOf is what s's model configuration has purpose set to.

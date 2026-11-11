@@ -45,8 +45,14 @@ type machineTrustStore interface {
 	SetMachinePending(ctx context.Context, id, actor string) error
 	ConfirmMachine(ctx context.Context, id string) (bool, error)
 	ForgetMachineTrust(ctx context.Context, id string) error
-	RevokeMachineCredentials(ctx context.Context, machine string) ([]string, error)
+	credentialRevoker
 	AddMachineAudit(ctx context.Context, machine, action, actor string, detail json.RawMessage) error
+}
+
+// credentialRevoker revokes a computer's Persona Link (db.DB has it): its credentials, and its pairing codes not used
+// yet. The ids of the credentials revoked.
+type credentialRevoker interface {
+	RevokeMachineCredentials(ctx context.Context, machine string) ([]string, error)
 }
 
 // machineTrust is the pending computers as the database has them, kept in memory: the machine list asks often.
@@ -54,7 +60,7 @@ type machineTrust struct {
 	mu      sync.Mutex
 	pending map[string]time.Time // machine id -> since
 	// leaving is the computers rejected or expired that the manager still reports: no row is a confirmed computer, so
-	// until it lets them go they are kept out as a pending one is (applyDeviceStates drops them from here).
+	// until it lets them go they are kept out as a pending one is (applyDeviceStatesFrom drops them from here).
 	leaving map[string]bool
 	// unknown: the pending computers could not be read (loadMachineTrust); every computer is kept out until they are.
 	// A hub that never read them (tests that do not run it) has none.
@@ -250,22 +256,41 @@ func (h *Hub) rejectMachine(ctx context.Context, id, actor, action string) error
 		h.clearKept(ctx, id) // an old record of a manager that kept it (machines_kept.go)
 		h.removeMachineLive(id)
 	}
-	revoked, err := ts.RevokeMachineCredentials(ctx, id)
+	revoked, err := h.revokeComputer(ctx, id)
 	if err != nil {
 		return err
-	}
-	for _, cred := range revoked {
-		h.revoked(cred) // its open link goes too
 	}
 	if err := ts.ForgetMachineTrust(ctx, id); err != nil {
 		return err
 	}
 	h.setPendingLocal(id, time.Time{}, false)
-	detail, _ := json.Marshal(map[string]any{"credentials_revoked": len(revoked)})
+	detail, _ := json.Marshal(map[string]any{"credentials_revoked": revoked})
 	h.machineAudit(ctx, id, action, actor, detail)
 	h.logf("[%s] %s by %s: removed", id, action, actor)
 	h.broadcastMachines()
 	return nil
+}
+
+// dropPending ends a pending computer that went without a reject (dropped with the manager that kept it,
+// ownership_moves.go releaseMachines), as rejectMachine ends one: its Persona Link credentials and pairing codes are
+// revoked, and its row and its place among the pending go. A failure is logged; the expiry removes it later.
+func (h *Hub) dropPending(ctx context.Context, id, why string) {
+	ts := h.trustStore()
+	if ts == nil || !h.machinePending(id) {
+		return
+	}
+	revoked, err := h.revokeComputer(ctx, id)
+	if err == nil {
+		err = ts.ForgetMachineTrust(ctx, id)
+	}
+	if err != nil {
+		h.logf("[%s] %s, but it still waits to be confirmed: %v", id, why, err)
+		return
+	}
+	h.setPendingLocal(id, time.Time{}, false)
+	detail, _ := json.Marshal(map[string]any{"credentials_revoked": revoked, "why": why})
+	h.machineAudit(ctx, id, "remove", "hub", detail)
+	h.broadcastMachines()
 }
 
 // machineAudit writes one audit row; a failure is logged, the change stands.
@@ -447,7 +472,7 @@ func removeMachineEntry(dir, id string) (bool, error) {
 		if !found {
 			return nil
 		}
-		return o.set("machines", kept)
+		return o.Set("machines", kept)
 	})
 	return found, err
 }

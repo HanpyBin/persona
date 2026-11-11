@@ -28,18 +28,38 @@ import (
 // them on the session lists the apps get, so Claude and Codex conversations are named the same way and nothing is
 // written into transcripts. A conversation is named once: a rename in the app (POST …/rename with a title) is
 // recorded as the user's and is never replaced; conversations from before this are left as they were. The main
-// conversation has no title of its own (the hub shows it as "Persona", #1313).
+// conversation has no title of its own (the hub shows it as "Persona", #1313). A naming that ended without an answer
+// leaves "explore | the first message" standing in, and a later turn names it again (#1532). An extension's rename is
+// a hint, not a name (#3758): the model reads it with the first exchange, and a conversation the hub started is named
+// all the same.
 
 var titleKinds = []string{"功能", "设计", "修复", "优化", "发布", "探索", "文档", "研究", "评审", "定时"}
 
 const (
 	maxTitleTopic = 14 // characters, in Chinese; titleTopicMax for the user's language
+	maxTitleHint  = 80 // characters of an extension's title (titleHinted) the model reads
 	titlesKey     = "assistant.titles"
 	titleTask     = "定时"
 	// titleInbox is the inbox's AI twin's kind (#3264): the hub's own, not one the model picks (titleKinds).
 	titleInbox    = "收件箱"
 	titleFallback = "探索"
 )
+
+// What one naming may spend: each model call and the whole naming (reading the first exchange too); tests shorten
+// them. The title model is often a thinking one behind a gateway: a title-sized call measured p50 6 s and p90 21.6 s
+// there (#1532). Nothing waits for a title.
+var (
+	titleCallTimeout = 45 * time.Second
+	titleBudget      = 2 * time.Minute
+)
+
+// titleMaxTokens is a title reply's room: a thinking model's thinking comes out of it (188-192 tokens of a 200 room
+// left half a topic, #1532).
+const titleMaxTokens = 1024
+
+// maxTitleTries is how many namings a conversation gets when none of them ends with an answer (a gateway that is down,
+// calls that keep timing out): the stand-in title stays after that.
+const maxTitleTries = 3
 
 // Who named a conversation.
 const (
@@ -50,6 +70,8 @@ const (
 	titleByUser  = "user"
 	// The assistant renamed it (conversation_rename): not replaced by the automatic title, the user's rename wins.
 	titleByAssistant = "assistant"
+	// An extension named a conversation the hub never noted (titleHinted): shown until someone renames it.
+	titleByExtension = "extension"
 )
 
 type convTitle struct {
@@ -57,6 +79,17 @@ type convTitle struct {
 	Title     string    `json:"title,omitempty"`
 	By        string    `json:"by"`
 	Started   time.Time `json:"started"`
+	// Tries counts the automatic namings that ended for want of an answer: Title is the stand-in, named again after a
+	// later turn until maxTitleTries.
+	Tries int `json:"tries,omitempty"`
+	// Hint is the title the extension that opened it gave (its rename, titleHinted): what the naming reads besides
+	// the first exchange.
+	Hint string `json:"hint,omitempty"`
+}
+
+// awaitsName: the hub names the conversation after its next turn: never named yet, or only given the stand-in.
+func (t *convTitle) awaitsName() bool {
+	return t.By == titlePending || t.By == titleAuto && t.Tries > 0 && t.Tries < maxTitleTries
 }
 
 type titleBook struct {
@@ -188,6 +221,38 @@ func (s *Service) titleSet(machine, id, title, by string) {
 	s.publish(context.Background())
 }
 
+// titleHinted records the title an extension gave conversation id (its rename, #3758) as a hint. A conversation the
+// hub started is still named after its first turn, with the hint to go by, and one already named keeps its name (the
+// node shows the hint until then: it renamed the session). One the hub never noted shows the hint, by: extension,
+// until the user, the assistant or the extension again renames it.
+func (s *Service) titleHinted(machine, id, hint string) {
+	hint = strings.Join(strings.Fields(hint), " ")
+	if hint == "" {
+		return
+	}
+	b := &s.titles
+	b.mu.Lock()
+	if !s.titlesLocked(context.Background()) {
+		b.mu.Unlock()
+		return
+	}
+	t := b.m[id]
+	switch {
+	case t == nil:
+		b.m[id] = &convTitle{MachineID: machine, Title: hint, By: titleByExtension, Hint: hint}
+	case t.By == titleByExtension:
+		t.Title, t.Hint = hint, hint
+	case t.Hint == hint:
+		b.mu.Unlock()
+		return
+	default:
+		t.Hint = hint
+	}
+	s.saveTitlesLocked()
+	b.mu.Unlock()
+	s.publish(context.Background())
+}
+
 // renameConversation names an assistant conversation for the assistant's conversation_rename: like the app's "Rename",
 // Claude's transcript gets the title too (its own lists show it); a Codex conversation's title is only the
 // assistant's (the node would write Claude's custom-title line into the Codex rollout).
@@ -223,7 +288,7 @@ func (s *Service) conversationTitles() (map[string]shownTitle, bool) {
 }
 
 // titleAfterTurn runs when an assistant conversation's turn ends: a conversation the hub started and nobody has
-// named yet is named now (the hub calls it in the background).
+// named yet, or one that only has the stand-in, is named now (the hub calls it in the background).
 func (s *Service) titleAfterTurn(ctx context.Context, machine, id string) {
 	b := &s.titles
 	b.mu.Lock()
@@ -232,7 +297,7 @@ func (s *Service) titleAfterTurn(ctx context.Context, machine, id string) {
 		return
 	}
 	t := b.m[id]
-	if t == nil || t.By != titlePending || b.naming[id] {
+	if t == nil || !t.awaitsName() || b.naming[id] {
 		b.mu.Unlock()
 		return
 	}
@@ -246,41 +311,53 @@ func (s *Service) titleAfterTurn(ctx context.Context, machine, id string) {
 		b.naming = map[string]bool{}
 	}
 	b.naming[id] = true
-	started := t.Started
+	started, hint := t.Started, t.Hint
 	b.mu.Unlock()
 
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), titleBudget)
 	defer cancel()
 	first, reply := s.firstExchange(ctx, machine, id)
-	title := s.makeTitle(ctx, started, first, reply)
+	title, final := s.makeTitle(ctx, started, first, reply, hint)
 
 	b.mu.Lock()
 	delete(b.naming, id)
-	if t := b.m[id]; t != nil && t.By == titlePending { // the user may have renamed it meanwhile
+	if t := b.m[id]; t != nil && t.awaitsName() { // the user may have renamed it meanwhile
 		t.Title, t.By = title, titleAuto
+		if final {
+			t.Tries = 0
+		} else {
+			t.Tries++
+		}
 		s.saveTitlesLocked()
 	}
 	b.mu.Unlock()
-	s.logf("assistant conversation %s: titled %q", short(id), title)
+	if final {
+		s.logf("assistant conversation %s: titled %q", short(id), title)
+	} else {
+		s.logf("assistant conversation %s: titled %q for now, the model was out of reach (named again after a later turn)", short(id), title)
+	}
 	s.publish(context.Background())
 }
 
-// firstExchange is the conversation's first message and the answer to it (it has had one turn).
+// firstExchange is the conversation's first message and the answer to it: its first turn, read from the start (a
+// stand-in title is named again after a later turn, when the newest turn is another one).
 func (s *Service) firstExchange(ctx context.Context, machine, id string) (first, reply string) {
 	var res struct {
 		Items []proto.Item `json:"items"`
 	}
-	if err := s.call(ctx, machine, DeviceSessionItems, map[string]any{"session_id": id, "turns": 1}, &res); err != nil {
+	if err := s.call(ctx, machine, DeviceSessionItems, map[string]any{"session_id": id, "after_seq": 0, "lazy_images": true}, &res); err != nil {
 		s.logf("title %s: %v", short(id), err)
 	}
 	for _, it := range res.Items {
 		if it.Kind != proto.KindText || strings.TrimSpace(it.Text) == "" {
 			continue
 		}
-		switch {
-		case it.Role == "user" && first == "":
+		if it.Role == "user" && !it.Queued { // a prompt: the first opens the turn, the next one ends it
+			if first != "" {
+				break
+			}
 			first = it.Text
-		case it.Role == "assistant":
+		} else if it.Role == "assistant" && first != "" {
 			reply = it.Text
 		}
 	}
@@ -294,41 +371,68 @@ func (s *Service) firstExchange(ctx context.Context, machine, id string) (first,
 	return cutRunes(first, 1500), cutRunes(wire.AssistantCardText(reply), 1500)
 }
 
-// makeTitle asks the model for "kind | topic", once more when that breaks the format, and falls back to
-// "explore | the first message's first 14 characters".
-func (s *Service) makeTitle(ctx context.Context, started time.Time, first, reply string) string {
+// makeTitle asks the model for "kind | topic" and falls back to "explore | the first message's first 14 characters".
+// Each way an answer can go wrong gets one more call, within the naming's time: no answer (the call ran out of time,
+// a gateway error: ai.Transient), a reply stopped at max_tokens (half a title even when it has the format: the
+// thinking used the room, so twice the room) and an answer that breaks the format (told what was wrong). final is
+// false when the naming ended for want of an answer rather than because of one (also when there was no first message
+// to read): the title is a stand-in then, and a later turn names the conversation again. hint is the title the
+// extension that opened it gave ("" for none): the model reads it too, and the stand-in's topic falls back on it.
+func (s *Service) makeTitle(ctx context.Context, started time.Time, first, reply, hint string) (title string, final bool) {
 	reply = wire.AssistantCardText(reply)
+	hint = cutRunes(oneLine(hint), maxTitleHint)
 	day := titleDay(started, s.location(ctx))
-	if strings.TrimSpace(first) != "" {
-		locale := s.hello(ctx).Locale
-		retry, max := "", titleTopicMax(locale)
-		system := prompts.RenderSessionTitle(prompts.SessionTitle{Language: answerLanguage(locale), TopicMax: max})
-		for range 2 {
-			cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-			text, err := s.purposeModel("assistant.title").Complete(cctx, system,
-				prompts.RenderSessionTitleInput(prompts.SessionTitleInput{First: first, Reply: reply, Retry: retry}), 200)
-			cancel()
-			if err != nil {
-				if !ai.IsPaused(err) {
-					s.logf("title: %v", err)
-				}
-				break
-			}
-			kind, topic, ok := parseTitleMax(text, max)
-			if ok {
-				return day + " | " + kind + " | " + topic
-			}
-			if kind != "" && retry != "" { // a known kind and a topic that is still too long: cut it
-				return day + " | " + kind + " | " + cutRunes(topic, max)
-			}
-			retry = cutRunes(oneLine(text), 60)
+	fallback := func(final bool) (string, bool) {
+		topic := titleTopic(first)
+		if topic == "" {
+			topic = titleTopic(hint)
 		}
+		if topic == "" {
+			topic = "新对话"
+		}
+		return day + " | " + titleFallback + " | " + topic, final
 	}
-	topic := titleTopic(first)
-	if topic == "" {
-		topic = "新对话"
+	if strings.TrimSpace(first) == "" {
+		return fallback(false)
 	}
-	return day + " | " + titleFallback + " | " + topic
+	locale := s.hello(ctx).Locale
+	retry, max, room := "", titleTopicMax(locale), titleMaxTokens
+	system := prompts.RenderSessionTitle(prompts.SessionTitle{Language: answerLanguage(locale), TopicMax: max})
+	model := s.purposeModel("assistant.title")
+	var failed, cut, misformed bool // each once
+	for {
+		cctx, cancel := context.WithTimeout(ctx, titleCallTimeout)
+		input := prompts.RenderSessionTitleInput(prompts.SessionTitleInput{First: first, Reply: reply, Retry: retry, Source: hint})
+		r, err := model.Chat(cctx, ai.Request{System: system, Messages: []ai.Message{{Role: ai.RoleUser, Content: input}}, MaxTokens: room})
+		cancel()
+		switch {
+		case err != nil && ai.Transient(err) && !failed && ctx.Err() == nil:
+			s.logf("title: %v (asking once more)", err)
+			failed = true
+			continue
+		case err != nil: // a model that isn't set up or turned it down answers the same next time: that's final
+			if !ai.IsPaused(err) {
+				s.logf("title: %v", err)
+			}
+			return fallback(!ai.Transient(err) && !ai.IsPaused(err))
+		case r.Truncated && !cut:
+			cut, room = true, room*2
+			continue
+		case r.Truncated:
+			return fallback(false)
+		}
+		kind, topic, ok := parseTitleMax(r.Text, max)
+		if ok {
+			return day + " | " + kind + " | " + topic, true
+		}
+		if misformed {
+			if kind != "" { // a known kind and a topic that is still too long: cut it
+				return day + " | " + kind + " | " + cutRunes(topic, max), true
+			}
+			return fallback(true)
+		}
+		misformed, retry = true, cutRunes(oneLine(r.Text), 60)
+	}
 }
 
 // titleDay is MMDD of t in the user's time zone (the hub runs in UTC: 00:30 in Shanghai is the day before there).

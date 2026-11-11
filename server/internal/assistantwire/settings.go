@@ -2,7 +2,7 @@ package assistantwire
 
 import "github.com/nwverse/persona/server/internal/proto"
 
-// ---- the assistant's settings, and the conversations the hub's features start (docs/assistant/assistant.md "The boundary with the hub") ----
+// ---- the assistant's settings, and the conversations the hub's features start (docs/assistant/assistant.md "Boundary with hub") ----
 
 // Profile is the assistant's settings (settings `assistant`, its own) as the hub's own features need them, in every
 // snapshot: a phone's message to the main conversation is told apart, the model configuration's main chat runs on its
@@ -62,6 +62,7 @@ type StartParams struct {
 	Text           string        `json:"text"`
 	Images         []proto.Image `json:"images,omitempty"`
 	Launcher       string        `json:"launcher,omitempty"`
+	ConfigDir      string        `json:"config_dir,omitempty"` // Claude profile on the target machine; "" private, "legacy" old resolution, "default" unset
 	PermissionMode string        `json:"permission_mode,omitempty"`
 	Effort         string        `json:"effort,omitempty"`
 	Purpose        string        `json:"purpose,omitempty"`    // the model configuration's purpose; "" is the main chat's
@@ -77,6 +78,9 @@ type StartParams struct {
 	// Origin and OriginRef: who opens it (SessionView.Origin); "" is the user's.
 	Origin    string `json:"origin,omitempty"`
 	OriginRef string `json:"origin_ref,omitempty"`
+	// OpenedBy: the extension whose token opened it (SessionView.OpenedBy). Only POST /api/v1/assistant/conversations
+	// sets it, from the hub's headers; never over the bus.
+	OpenedBy string `json:"-"`
 	// GuestTools: a guest conversation (assistant/guest.go) that may use only these connector tools; nil is an
 	// ordinary one.
 	GuestTools []string `json:"guest_tools,omitempty"`
@@ -96,6 +100,10 @@ type RenameParams struct {
 	MachineID string         `json:"machine_id"`
 	SessionID string         `json:"session_id"`
 	Params    map[string]any `json:"params"`
+	// Extension is the extension whose token asked, as the hub's auth found it (never what the caller says), "" for
+	// anyone else: its title is a hint the hub names the conversation by, not the user's (docs/protocol/protocol.md
+	// "Origin of assistant chats"). An older hub never sends it, and an older manager takes every rename as the user's.
+	Extension string `json:"extension,omitempty"`
 }
 
 // CodeBadRequest is what the assistant refuses a request of the hub's with when the app's request itself is wrong

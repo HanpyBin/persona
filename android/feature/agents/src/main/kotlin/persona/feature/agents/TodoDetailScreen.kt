@@ -1,5 +1,7 @@
 package persona.feature.agents
 
+import persona.core.domain.tasks.acceptedAtRest
+
 import persona.core.domain.tasks.hold
 import persona.feature.chat.ReviewChecklist
 import persona.core.designsystem.text
@@ -18,6 +20,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import persona.core.contracts.AgentState
 import persona.core.contracts.CoreText
@@ -35,6 +38,7 @@ import persona.core.domain.answer.firstBySession
 import persona.core.designsystem.icons.PhIcons
 import persona.core.domain.sort.slotLabel
 import persona.core.domain.tasks.TasksStore
+import persona.core.domain.tasks.TodoDecisionsSource
 import java.time.Instant
 
 /** Where an agent on a to-do came from (iOS TodosLogic.agentSource): with a project, sent by another agent, the same chat. */
@@ -68,11 +72,19 @@ fun TodoDetailScreen(
     now: Instant = Instant.now(),
     /** The cards waiting for an answer: a waiting agent's row says what its card asks (#3964). */
     pending: List<Interaction> = emptyList(),
+    /** Where the Decisions section reads and records (#1618); the hub's store unless a test passes its own. */
+    decisions: TodoDecisionsSource? = tasks,
 ) {
     val cards = remember(pending) { pending.firstBySession() }
     val todo = todos.firstOrNull { it.id == todoId }
     val scope = rememberCoroutineScope()
     val res = agentResources()
+    val decisionsState = remember(decisions) { TodoDecisionsState(decisions) }
+    // The hub moves the to-do's updated_at when a decision is written, here or anywhere (an answered card too).
+    LaunchedEffect(decisionsState, todoId, todo?.updatedAt) {
+        decisionsState.select(todoId)
+        decisionsState.load()
+    }
 
     if (todo == null) {
         JPage(title = stringResource(R.string.agents_todo_detail), onBack = onBack) {
@@ -89,6 +101,7 @@ fun TodoDetailScreen(
     var editingNotes by remember { mutableStateOf(false) }
     var titleText by remember(todo.title) { mutableStateOf(todo.title) }
     var notesText by remember(todo.notes) { mutableStateOf(todo.notes) }
+    var saving by remember { mutableStateOf(false) }
     var pastFolded by rememberSaveable { mutableStateOf(true) }
 
     val sessionMap = remember(sessions) { sessions.associateBy { it.key } }
@@ -113,6 +126,14 @@ fun TodoDetailScreen(
             },
             destructive = true
         )
+    }
+
+    decisionsState.form?.let { form ->
+        TodoDecisionSheet(form.supersedes, onDismiss = { decisionsState.form = null }) { question, choice, reason ->
+            decisionsState.add(question, choice, reason, form.supersedes) { e ->
+                onError(res.getString(R.string.agents_todo_decision_failed, e.message.orEmpty()))
+            }
+        }
     }
 
     if (menuOpen) {
@@ -157,7 +178,8 @@ fun TodoDetailScreen(
                         },
                         modifier = Modifier.weight(1f)
                     )
-                    JButton(
+                    // A done to-do can't be handed over (the hub refuses, #1856): Reopen comes first.
+                    if (!todo.isDone) JButton(
                         text = stringResource(R.string.agents_todo_hand_to_agent),
                         icon = PhIcons.Robot,
                         onClick = { onHandOff(todo) },
@@ -199,6 +221,9 @@ fun TodoDetailScreen(
                                 } else {
                                     JTag(stringResource(R.string.agents_todos_done))
                                 }
+                            } else if (todo.acceptedAtRest(sessionLookup)) {
+                                // accepted, then reopened by the hub with more work: still Accepted until a new review (#3156)
+                                JTag(stringResource(R.string.agents_todo_state_accepted), Tone.Positive)
                             } else {
                                 JTag(state.label)
                             }
@@ -255,19 +280,26 @@ fun TodoDetailScreen(
                                     notesText = todo.notes
                                     editingTitle = false
                                     editingNotes = false
-                                })
+                                }, enabled = !saving)
                                 Spacer(Modifier.width(Tokens.Space.s))
+                                // The hub refuses a blank title; the editor stays, with what was typed, until the save goes through.
                                 JButton(stringResource(R.string.agents_todo_save), onClick = {
-                                    editingTitle = false
-                                    editingNotes = false
+                                    if (saving || titleText.isBlank()) return@JButton
+                                    saving = true
                                     scope.launch {
                                         try {
                                             tasks?.updateTodo(todo.id, title = titleText.trim(), notes = notesText.trim())
+                                            editingTitle = false
+                                            editingNotes = false
+                                        } catch (e: CancellationException) {
+                                            throw e
                                         } catch (e: Exception) {
                                             onError(res.getString(R.string.agents_todo_save_failed, e.message.orEmpty()))
+                                        } finally {
+                                            saving = false
                                         }
                                     }
-                                })
+                                }, enabled = titleText.isNotBlank() && !saving, loading = saving)
                             }
                         } else if (todo.notes.isNotBlank()) {
                             Text(
@@ -301,6 +333,9 @@ fun TodoDetailScreen(
                     }
                 }
             }
+
+            // Decisions made on it, under the notes as on iOS and the web (#1618)
+            todoDecisionsSection(decisionsState, todo, sessionLookup, now)
 
             // Projects (workspaces linked as a whole, iOS TodoSpacesSection)
             val spaces = todo.spaces.orEmpty().takeIf { tasks?.spacesSupported != false }.orEmpty()
@@ -343,7 +378,8 @@ fun TodoDetailScreen(
 
             if (todo.currentAgents.isEmpty()) {
                 item(key = "active-empty") {
-                    JEmptyState(stringResource(R.string.agents_todo_no_agents), stringResource(R.string.agents_todo_no_agents_hint))
+                    JEmptyState(stringResource(R.string.agents_todo_no_agents),
+                        stringResource(if (todo.isDone) R.string.agents_todo_no_agents_done_hint else R.string.agents_todo_no_agents_hint))
                 }
             } else {
                 itemsIndexed(todo.currentAgents, key = { _, a -> a.key.path }) { index, agent ->
@@ -383,7 +419,7 @@ fun TodoDetailScreen(
                             )
                             if (!agent.startError.isNullOrBlank()) {
                                 Row(
-                                    Modifier.fillMaxWidth().padding(horizontal = Tokens.Space.l, vertical = ContentTokens.tightGap),
+                                    Modifier.fillMaxWidth().padding(horizontal = Tokens.Space.l, vertical = Tokens.Space.sm),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
@@ -412,7 +448,7 @@ fun TodoDetailScreen(
             if (todo.releasedAgents.isNotEmpty()) {
                 item(key = "past-header") {
                     Row(
-                        Modifier.fillMaxWidth().clickable { pastFolded = !pastFolded }.padding(vertical = Tokens.Space.xs),
+                        Modifier.fillMaxWidth().foldToggle(open = !pastFolded) { pastFolded = !pastFolded }.padding(vertical = Tokens.Space.xs),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         JSectionHeader(
@@ -420,7 +456,7 @@ fun TodoDetailScreen(
                             count = todo.releasedAgents.size,
                             modifier = Modifier.weight(1f)
                         )
-                        JIcon(if (pastFolded) PhIcons.CaretDown else PhIcons.CaretRight, null, size = Tokens.Space.l, tint = PersonaTheme.palette.ink3)
+                        JIcon(if (pastFolded) PhIcons.CaretRight else PhIcons.CaretDown, null, size = Tokens.Space.l, tint = PersonaTheme.palette.ink3)
                     }
                 }
 

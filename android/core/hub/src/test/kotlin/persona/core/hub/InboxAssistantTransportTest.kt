@@ -11,6 +11,33 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class InboxAssistantTransportTest {
+    @Test fun handOffPostsTheItemAndStableAttemptIdAndReturnsItsSession() = runBlocking {
+        MockWebServer().use { server ->
+            val transport = HttpInboxAssistantTransport("scope", server.url("/").toString(), "test-token", OkHttpClient())
+            val response = """{"item":{"id":"item/with#separator"},"session":{"machine_id":"hub","session_id":"main"}}"""
+            server.enqueue(MockResponse().setBody(response))
+            assertEquals(JsonCodec.parseToJsonElement(response).jsonObject, transport.handOff("item/with#separator", "Please handle this", "attempt-id"))
+            val request = server.takeRequest()
+            assertEquals("POST", request.method)
+            assertEquals("/api/v1/inbox/item%2Fwith%23separator/handoff", request.path)
+            assertEquals("Bearer test-token", request.getHeader("Authorization"))
+            assertEquals("""{"text":"Please handle this","client_id":"attempt-id"}""", request.body.readUtf8())
+        }
+    }
+
+    @Test fun handOffPreservesUnsupportedAndUncertainFailuresForTheCaller() = runBlocking {
+        MockWebServer().use { server ->
+            val transport = HttpInboxAssistantTransport("scope", server.url("/").toString(), "test-token", OkHttpClient())
+            for (status in listOf(404, 405, 502)) {
+                server.enqueue(MockResponse().setResponseCode(status).setBody("""{"error":"unavailable"}"""))
+                try { transport.handOff("item", "Please handle this", "attempt-id"); fail("The caller must handle HTTP $status") }
+                catch (e: HubFailure) { assertEquals(status, e.status) }
+                assertEquals("/api/v1/inbox/item/handoff", server.takeRequest().path)
+            }
+            assertEquals(3, server.requestCount)
+        }
+    }
+
     @Test fun conversationNamesUseTheCorrectAccountAndCursor() = runBlocking {
         MockWebServer().use { server ->
             val transport = HttpInboxAssistantTransport("scope", server.url("/").toString(), "test-token", OkHttpClient())
@@ -25,6 +52,26 @@ class InboxAssistantTransportTest {
             server.enqueue(MockResponse().setBody("{}"))
             transport.larkConversations()
             assertNull(server.takeRequest().requestUrl?.queryParameter("ol_account"))
+        }
+    }
+
+    /** Done's counts per day (#3016) in the phone's zone with every source, per manager; a group's first page is the one before its end, no id. */
+    @Test fun doneDaysAndAGroupsFirstPage() = runBlocking {
+        MockWebServer().use { server ->
+            val transport = HttpInboxAssistantTransport("scope", server.url("/").toString(), "test-token", OkHttpClient())
+            server.enqueue(MockResponse().setBody("""{"tz":"Asia/Shanghai","days":[{"day":"2026-11-10","count":120}]}"""))
+            transport.doneDays("m-3fa21c", "Asia/Shanghai")
+            val days = server.takeRequest().requestUrl!!
+            assertEquals("/api/v1/inbox/done/days", days.encodedPath)
+            assertEquals("Asia/Shanghai", days.queryParameter("tz"))
+            assertEquals("all", days.queryParameter("sources"))
+            assertEquals("m-3fa21c", days.queryParameter(ManagerQuery))
+            server.enqueue(MockResponse().setBody("""{"items":[]}"""))
+            transport.doneHistory(null, "2026-10-11T16:00:00Z", null)
+            val page = server.takeRequest().requestUrl!!
+            assertEquals("/api/v1/inbox/done", page.encodedPath)
+            assertEquals("2026-10-11T16:00:00Z", page.queryParameter("before"))
+            assertNull(page.queryParameter("before_id"))
         }
     }
 
@@ -170,6 +217,28 @@ class InboxAssistantTransportTest {
             } catch (_: HubFailure) { }
             server.takeRequest()
             assertEquals(3, server.requestCount)
+        }
+    }
+
+    /** The health space (#4329): its chats are listed with `?space=health` and a new one is started in it, never as the main one. */
+    @Test fun theHealthSpaceListsAndStartsItsChatsByName() = runBlocking {
+        MockWebServer().use { server ->
+            val transport = HttpInboxAssistantTransport("scope", server.url("/").toString(), "test-token", OkHttpClient())
+            server.enqueue(MockResponse().setBody("""{"machine_id":"mac","conversations":[]}"""))
+            transport.assistantIn("health")
+            val listed = server.takeRequest()
+            assertEquals("GET", listed.method)
+            assertEquals("/api/v1/assistant", listed.requestUrl?.encodedPath)
+            assertEquals("health", listed.requestUrl?.queryParameter("space"))
+            server.enqueue(MockResponse().setBody("""{"session":{"machine_id":"mac","session_id":"h","space":"health"}}"""))
+            transport.createConversationIn("health")
+            val started = server.takeRequest()
+            assertEquals("POST", started.method)
+            assertEquals("/api/v1/assistant/conversations", started.requestUrl?.encodedPath)
+            assertEquals("health", started.requestUrl?.queryParameter("space"))
+            val body = JsonCodec.parseToJsonElement(started.body.readUtf8()).jsonObject
+            assertEquals("health", body["space"]?.jsonPrimitive?.content)
+            assertNull("a space has no main chat", body["main"])
         }
     }
 

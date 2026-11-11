@@ -46,6 +46,9 @@ func OpenReadOnly(dir string) (*Store, error) {
 		if err := f.Close(); err != nil {
 			return err
 		}
+		if entry.Name() == recordingJournal {
+			return errors.New("knowledge archive requires writable recording recovery")
+		}
 		if entry.Name() == ingestJournal {
 			return errors.New("knowledge archive requires writable ingestion recovery")
 		}
@@ -76,6 +79,8 @@ func validateArchiveMetadata(dir, path string) error {
 			entity = &Project{}
 		case KindRecording:
 			entity = &Recording{}
+		case KindTopic:
+			entity = &Topic{}
 		}
 	} else if len(parts) == 2 && strings.HasSuffix(parts[1], ".json") && !strings.HasPrefix(parts[1], ".") {
 		switch parts[0] {

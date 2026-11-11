@@ -1,6 +1,6 @@
 # App Intents (Siri / Shortcuts)
 
-`apple/Persona/Intents/` holds 9 intents that drive the hub without unlocking the phone or opening the app. This doc covers these 4: Ask Claude, status, approve the first pending item, open a session.
+`apple/Persona/Intents/` holds 9 intents that drive the hub without opening the app; of the background intents, only Approve First Pending needs the phone unlocked (below). This doc covers these 4: Ask Claude, status, approve the first pending item, open a session.
 The other 5 (Ask Persona, have an Agent do it, personal Agent unread, open a personal Agent, new to-do) are in `docs/apple/siri.md`; the two intents behind the Control Center controls live in `apple/LiveActivity/`, also covered in `docs/apple/siri.md`.
 They do not need the app in the foreground and do not use WebSocket: each call reads `Keychain.serverConfig` fresh and talks to the hub's REST API directly through `APIClient`.
 
@@ -8,8 +8,8 @@ They do not need the app in the foreground and do not use WebSocket: each call r
 | --- | --- | --- | --- |
 | `AskClaudeIntent` | Ask Claude | Sends a message to the most recent live session on a machine, or starts a new one with the remembered directory / launcher | Background |
 | `PersonaStatusIntent` | Persona Status | "N working, M need you" + the content of the first pending item | Background |
-| `ApproveFirstIntent` | Approve First Pending | Allows the oldest tool permission request, or approves a plan (`bypassPermissions`) | Background |
-| `OpenSessionIntent` | Open Session | Switches the app to the chat page and jumps to that session (`AppModel.shared.openChat`) | Foreground |
+| `ApproveFirstIntent` | Approve First Pending | Allows the oldest tool permission request, or approves a plan (`acceptEdits`); asks for an unlock on a locked phone | Background |
+| `OpenSessionIntent` | Open Session | Opens that session as a notification does (`AppModel.open`): a Persona conversation on Assistant, an Agent's on Agents | Foreground |
 
 `OpenSessionIntent` is not meant to be used on its own: `AskClaudeIntent` returns it, so one tap on the button in the Siri result card opens that session.
 
@@ -22,6 +22,7 @@ They do not need the app in the foreground and do not use WebSocket: each call r
 | `OpenSessionIntent.swift` | `SessionEntity` + `SessionEntityQuery`, `OpenSessionIntent` |
 | `AskClaudeIntent.swift` / `PersonaStatusIntent.swift` / `ApproveFirstIntent.swift` | The three business intents |
 | `AskPersonaIntent.swift` / `PersonalAgentIntents.swift` / `AddTodoIntent.swift` | Ask Persona, personal Agents, new to-do (`docs/apple/siri.md`) |
+| `ClipboardIntents.swift` | Send Clipboard to Computer / Get Computer's Clipboard (#3064, `docs/apple/ios.md` "Clipboard with your computers"): optional computer (default: the one last sent to, else the first online one that shares its clipboard); Send takes optional Text instead of the clipboard, so a shortcut that starts with Get Clipboard never sees the paste prompt; Get writes the phone's clipboard and returns the text. Listed in Shortcuts, not as App Shortcut phrases; the network part is `ClipboardIntentFlow` (`ClipboardIntentsTests`) |
 | `IntentAnswerSnippet.swift` | The answer card for Ask Persona (question + full text) |
 | `PersonaShortcuts.swift` | `AppShortcutsProvider`, Chinese phrases and icons |
 
@@ -52,8 +53,13 @@ No Apple build, metadata extraction, simulator screenshot or device acceptance w
   task's agent's (the hub's `quiet`, #1731) and a muted agent's (itself or its space unless turned back on, from each
   group's `GET /api/v1/mutes`, or the hub's `muted` stamp on the card) are skipped. So Siri never approves a card other
   than the one it just read out.
-- `permission` → `{allow:true}`; `plan` → `{approve:true, mode:"bypassPermissions"}` (same as **Approve & Auto-Run** in the app,
-  see `docs/integrations/claude-integration.md`).
+- `permission` → `{allow:true}`; `plan` → `{approve:true, mode:"acceptEdits"}`, as the notification and Live Activity buttons
+  send: Siri never shows the plan in full, so edits go through but commands still ask. **Approve & Auto-Run**
+  (`bypassPermissions`) stays in the app (`docs/integrations/claude-integration.md`).
+- `authenticationPolicy` is `.requiresAuthentication`, as on `AllowPermissionIntent` / `ApprovePlanIntent` (`apple/LiveActivity/FleetIntents.swift`):
+  Siri runs intents on a locked phone and the hub credentials are readable after the first unlock, so without it a
+  locked phone could say yes to an agent (#1878). The system asks for Face ID or the passcode before `perform()` runs.
+  The policy covers the whole intent: on a locked phone even "nothing pending" or "open Persona" comes after the unlock.
 - `question` / `screen` need the screen, so it only replies "Open Persona to handle this." and records no decision.
 
 ## Error messages
@@ -101,7 +107,7 @@ The project sets `SWIFT_DEFAULT_ACTOR_ISOLATION=MainActor`, while the AppIntent 
 The fix is to mark each protocol member `nonisolated` (`init`, `perform`, `title`, `supportedModes`, `parameterSummary`, the query methods),
 and put the pure logic they call into a `nonisolated enum`. `@Parameter` wraps mutable stored properties, which cannot be `nonisolated`; leaving them on MainActor is fine.
 
-`OpenSessionIntent` is the only place that touches `AppModel`; it uses `await MainActor.run { … }` to change `selectedTab` / `openChat`.
+`OpenSessionIntent` is the only place that touches `AppModel`; it uses `await MainActor.run { … }` to call `AppModel.open`.
 Its `target` is a `SessionEntity` whose `id` looks like `machine/session`, the same shape as the DEBUG `-openSession` argument.
 
 ## Tests

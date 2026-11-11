@@ -213,7 +213,7 @@ func TestCenterUnreachable(t *testing.T) {
 }
 
 // The headers a hub opens a node stream with mean nothing from outside: a request that carries them is still an app's,
-// and without a credential a member answers it 401 like any other (docs/server/mesh.md "Security boundary").
+// and without a credential a member answers it 401 like any other (docs/server/mesh.md "Security boundaries").
 func TestCenterMemberDropsNodeStreamHeaders(t *testing.T) {
 	box := newMeshNode("uid-box", "box", "s1")
 	lap := newMeshNode("uid-lap", "lap", "s2")
@@ -602,7 +602,7 @@ func newFakeConnector(t *testing.T, node *meshNode) *fakeConnector {
 		t.Fatal(err)
 	}
 	leaf, _ := x509.ParseCertificate(der)
-	fc := &fakeConnector{t: t, node: node, fp: spkiPin(leaf), code: "code-" + randomHex(4)}
+	fc := &fakeConnector{t: t, node: node, fp: link.Pin(leaf), code: "code-" + randomHex(4)}
 	ln, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}},
 		NextProtos: []string{"http/1.1"}})
 	if err != nil {
@@ -790,7 +790,7 @@ func TestCenterServiceConnector(t *testing.T) {
 		_ = c.Close(websocket.StatusGoingAway, "restarting")
 	}
 	// The path failed three times in a row by now (not paired, paired elsewhere, the restart), so the manager waits
-	// 8 s before it tries again (devices/paths.go pathEnded) and only then hears the 401: wait well past that.
+	// 8 s before it tries again (devices/paths_choose.go pathEnded) and only then hears the 401: wait well past that.
 	eventually(t, 30*time.Second, "a wrong credential is refused", func() bool {
 		return strings.Contains(center.machines(t, tok)["example-workstation"].Error, "不认")
 	})

@@ -49,9 +49,14 @@ type Status struct {
 	// Error is one sentence for people when State is not ok ("The gh login on <machine> has expired…"); never a secret.
 	Error string `json:"error,omitempty"`
 	// Guide is how to fix it, a step a sentence, when the user can ("Open System Settings › …"); shown under Error.
-	Guide     []string  `json:"guide,omitempty"`
-	LastSync  time.Time `json:"last_sync,omitempty"`
-	LastEvent time.Time `json:"last_event,omitempty"`
+	Guide []string `json:"guide,omitempty"`
+	// GuideURL is an optional page the App can open for the fix (for example an
+	// Open Platform permission page). Guide remains the localized explanation.
+	GuideURL string `json:"guide_url,omitempty"`
+	// MissingScopes names permissions the connector can identify as absent.
+	MissingScopes []string  `json:"missing_scopes,omitempty"`
+	LastSync      time.Time `json:"last_sync,omitempty"`
+	LastEvent     time.Time `json:"last_event,omitempty"`
 }
 
 // Accounts is a connector that knows how it is doing. Status answers from memory (it is called on every tool list
@@ -152,7 +157,8 @@ type Machines interface {
 
 // Chats is a connector whose conversations the knowledge base reads chat by chat, each with its own cursor
 // (Feishu's chats, Moments posts): one kb.Source per stream, its Name the prefix of its chats' ids (which never
-// changes). A source that can read further back also implements kb.Backfiller.
+// changes). Reading a conversation further back is History's (CapHistory), for the connectors whose conversations
+// come through Archive.
 type Chats interface {
 	ChatSources() []kb.Source
 }

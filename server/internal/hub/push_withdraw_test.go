@@ -1,7 +1,9 @@
 package hub
 
 import (
+	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -39,7 +41,7 @@ func TestWithdrawTakesCardsBackInOnePush(t *testing.T) {
 		t.Fatalf("features %v", d.Features)
 	}
 	for _, id := range []string{"ix_a", "ix_b", "ix_c"} {
-		h.notifyInteraction("", card(id), "笔记本")
+		h.notifyInteraction("", card(id), "笔记本", false)
 	}
 	f.wait(t, 3)
 	h.push.withdraw("ix_a")
@@ -74,7 +76,7 @@ func TestWithdrawTakesCardsBackInOnePush(t *testing.T) {
 func TestWithdrawAtMostOnceAMinute(t *testing.T) {
 	h, f, open := withdrawHub(t, "withdraw")
 	for _, id := range []string{"ix_a", "ix_b", "ix_c"} {
-		h.notifyInteraction("", card(id), "笔记本")
+		h.notifyInteraction("", card(id), "笔记本", false)
 	}
 	f.wait(t, 3)
 	h.push.withdraw("ix_a")
@@ -99,10 +101,45 @@ func TestWithdrawAtMostOnceAMinute(t *testing.T) {
 	}
 }
 
+// Runtime ids may be 128 characters: forty of them do not fit one push (the relay seals about 2.7 KB, APNs takes 4 KB),
+// so they go in several, each within the limit, and every card is named once.
+func TestWithdrawSplitsLongIDsBySize(t *testing.T) {
+	h, f, open := withdrawHub(t, "withdraw")
+	var ids []string
+	for i := range withdrawMost {
+		id := fmt.Sprintf("ix_%03d_", i) + strings.Repeat("a", 120)
+		ids = append(ids, id)
+		h.push.cardPushedTo(id, "phone") // as sendCard notes it; forty card pushes would hit the relay's burst limit
+	}
+	for _, id := range ids {
+		h.push.withdraw(id)
+	}
+	var got []string
+	for n := 1; len(got) < len(ids); n++ {
+		r := f.wait(t, n)[n-1]
+		if r.PushType != "background" || len(r.Body) > apnsMaxAlert {
+			t.Fatalf("withdrawal %d: %s push of %d bytes", n, r.PushType, len(r.Body))
+		}
+		batch, _ := open(r)["resolved_interaction_ids"].([]any)
+		if len(batch) == 0 || len(batch) == len(ids) {
+			t.Fatalf("withdrawal %d named %d cards", n, len(batch))
+		}
+		for _, id := range batch {
+			got = append(got, id.(string))
+		}
+	}
+	if !slices.Equal(got, ids) {
+		t.Fatalf("withdrawn %d cards, want the %d in order", len(got), len(ids))
+	}
+	if r, _ := h.push.routeOfID("phone"); r.Reason != "" {
+		t.Fatalf("route %+v", r)
+	}
+}
+
 // An app that did not say it takes pushes back (an older one) gets no background push for it.
 func TestWithdrawOnlyToAppsThatTakeItBack(t *testing.T) {
 	h, f, _ := withdrawHub(t)
-	h.notifyInteraction("", card("ix_a"), "笔记本")
+	h.notifyInteraction("", card("ix_a"), "笔记本", false)
 	f.wait(t, 1)
 	h.push.withdraw("ix_a")
 	time.Sleep(200 * time.Millisecond)
