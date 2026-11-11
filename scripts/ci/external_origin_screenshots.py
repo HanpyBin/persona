@@ -119,7 +119,7 @@ for index, (origin, title, request) in enumerate([
         adb("shell", "pm", "grant", APP, "android.permission.POST_NOTIFICATIONS")
         adb("shell", "cmd", "locale", "set-app-locales", APP, "--user", "0", "--locales", "en")
         sid = "f00d0001-0000-4000-8000-%012d" % (session + 1)
-        command = ["shell", "am", "start", "-W", "-n", APP + "/persona.android.debug.DebugEntryActivity",
+        command = ["shell", "am", "start", "-n", APP + "/persona.android.debug.DebugEntryActivity",
                    "--es", "debug.mockAddress", "http://127.0.0.1:" + str(port),
                    "--es", "debug.automation", "true", "--es", "debug.style", style,
                    "--es", "debug.theme", theme, "--es", "debug.openSession", machine + "/" + sid,
