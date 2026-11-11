@@ -120,7 +120,7 @@ struct MacInboxList: View {
             state.selection = []
             state.source = ""
             state.composing = nil
-            state.accounts = InboxMailAccounts.cached(model.assistantManagerID)
+            state.accounts = [] // the one before's; this one's are read from the hub
             Task { await state.loadAccounts(model) }
         }
         .pageSearchable(text: $state.query, placement: .toolbar, prompt: String(localized: "Search Titles, Senders, and Content"))

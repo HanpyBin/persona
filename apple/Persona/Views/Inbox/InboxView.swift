@@ -180,7 +180,7 @@ struct InboxPage: View {
                 .onChange(of: model.assistantSwitches) {
                     source = ""
                     composing = nil
-                    accounts = InboxMailAccounts.cached(model.assistantManagerID)
+                    accounts = [] // the one before's; this one's are read from the hub
                     Task { await loadAccounts() }
                     picked = nil
                     autoLoaded = []
