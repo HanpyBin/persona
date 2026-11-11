@@ -78,6 +78,11 @@ fun ChatScreen(
     historyFooter: (@Composable () -> Unit)? = null,
     /** Display metadata for a history entry that is absent from the live session list. */
     historySession: Session? = null,
+    /**
+     * Who opened the conversation ([Session.origin]) when the live session list may not say (the Persona tab passes its
+     * conversation's): one an extension opened says where it came from under its first message (#3758).
+     */
+    origin: String? = null,
 ) {
     PersonaTheme(darkTheme = MaterialTheme.colorScheme.background.luminance() < 0.5f) {
         val storage = repository as? ChatLocalStorage
@@ -90,7 +95,7 @@ fun ChatScreen(
             ChatPage(sessionKey, repository, pageSender, interactions, sessions, onBack, onTerminal, chrome, scopedReadingKey, anchorStore ?: local?.anchors,
                 renderStyle, textUpdates,
                 composerService, composerState ?: rememberChatComposerState(), onDraftChanged, onContextCleared, statusBindings,
-                embedded, showTopBar, historyReadOnly, historyFooter, historySession)
+                embedded, showTopBar, historyReadOnly, historyFooter, historySession, origin)
         }
     }
 }
@@ -108,7 +113,7 @@ private fun ChatPage(
     statusBindings: ChatStatusBindings,
     embedded: Boolean, showTopBar: Boolean,
     historyReadOnly: Boolean, historyFooter: (@Composable () -> Unit)?,
-    historySession: Session?,
+    historySession: Session?, origin: String?,
 ) {
     val scope = rememberCoroutineScope()
     val haptics = persona.core.designsystem.rememberHaptics()
@@ -729,6 +734,11 @@ private fun ChatPage(
         taps = taps.pending(allRequests.map { it.id }.toSet())
     }
     val lastUserId = snapshot.items.lastOrNull { it.role == "user" && it.kind == "text" }?.id
+    // The extension that opened this conversation (#3758), said under the message it opened it with: the first user message,
+    // once the page reaches the conversation's start (with older items still to load, the first one here is not it).
+    val external = ExternalOrigin.of(session?.origin ?: origin)
+    val openerId = if (external == null || snapshot.hasOlder) null
+        else snapshot.items.firstOrNull { it.role == "user" && it.kind == "text" }?.id
     ChatCompletionFeedback(lastUserId, session?.status,
         lifecycle == Lifecycle.State.RESUMED && !chrome.covered && !overlay && !chromeOverlay && !linkVisible &&
             !statusSheet && !terminalHelp && !taskPageVisible && fullText == null && !search.visible &&
@@ -1008,6 +1018,7 @@ private fun ChatPage(
                                         line.recordedDuration(snapshot.recordedTurnDurations),
                                         ::toggle, ::expand, folding, foldErrors,
                                         lastUserId = lastUserId,
+                                        openedFrom = external.takeIf { line is ChatLine.Row && line.row.id == openerId },
                                         onLastLine = { extent -> chatList.reportLastLine(line.contentKey, extent) }, onFullText = { item ->
                                         scope.launch {
                                             try { fullText = repository.fullText(key, item.id) }

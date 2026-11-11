@@ -94,7 +94,8 @@ A component with a composable slot ends with a function-typed parameter, so a ca
 | `JButton` (Primary / Secondary / Quiet / Destructive, Large / Medium / Small), `JTextButton`, `JIconButton` | Buttons. Text is always one line |
 | `Modifier.stableAlpha` | Changing opacity (dimming when disabled). Do not use `Modifier.alpha`: switching between 1 and another value adds or removes a layer, and placed after `clip` + `background` the background color gets lost (`docs/android/android.md` lessons) |
 | `JTextField` / `JSearchField` | Input fields |
-| `JSegmented`, `JChip`, `QuickFilterBar` | Mutually exclusive filters, chips, quick filters at the top of a list (chips in Glass, underlined text tabs in Brief, a big-number count board in Board) |
+| `JSegmented`, `JChip`, `QuickFilterBar` | Mutually exclusive filters, chips, quick filters at the top of a list (chips in Glass, underlined text tabs in Brief, a big-number count board in Board). `JChip(brand)` draws a brand's mark where the icon goes (the drawer's Lark /agent chip, #3758) |
+| `JExternalMark` / `JExternalSource` | A conversation an extension opened (#3758, `ExternalOrigin`): its source's mark beside the title in `JChannelMark`'s place (one mark per row, the origin's over the channel's), and "From Lark /agent" / "From an extension" under its first message, laid out as `JChannelSource` |
 | `JSwitch` / `JCheckbox` / `JRadio` | Switch, checkbox, radio |
 | `JBadge` / `JTag` | Count of things waiting for you, small static tags (draft, demo) |
 | `JChangingText` | Values that change on redraw: numbers count to the new value, other text fades in (numbers in extension Views, row values) |

@@ -150,6 +150,8 @@
     <string name="designsystem_agent_mark_cli">%1$s（コマンドライン版）</string>
     <string name="designsystem_agent_mark_desktop">%1$s（デスクトップ版）</string>
     <string name="designsystem_channel_source">%1$sから</string>
+    <string name="designsystem_origin_lark_agent">Lark /agent</string>
+    <string name="designsystem_origin_extension_source">拡張機能から</string>
     <string name="designsystem_series_separator">／</string>
     <string name="designsystem_plan_spoken">プラン、%2$dステップ中%1$dステップ目、%3$s</string>
     <string name="designsystem_plan_all_done">すべて完了</string>

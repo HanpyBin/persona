@@ -150,6 +150,8 @@
     <string name="designsystem_agent_mark_cli">%1$s（命令行版）</string>
     <string name="designsystem_agent_mark_desktop">%1$s（桌面版）</string>
     <string name="designsystem_channel_source">来自 %1$s</string>
+    <string name="designsystem_origin_lark_agent">飞书 /agent</string>
+    <string name="designsystem_origin_extension_source">来自扩展</string>
     <string name="designsystem_series_separator">；</string>
     <string name="designsystem_plan_spoken">计划，第 %1$d 步，共 %2$d 步，%3$s</string>
     <string name="designsystem_plan_all_done">全部完成</string>

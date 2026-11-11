@@ -26,7 +26,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.TextUnitType
 import androidx.compose.ui.unit.dp
+import persona.core.contracts.ExternalOrigin
 import persona.core.contracts.api.HubChannel
+import persona.core.designsystem.icons.PhIcons
 
 /**
  * Other products' own marks (sources and terms in THIRD_PARTY_NOTICES.md, the same artwork as iOS's `Theme.Brand`).
@@ -103,6 +105,37 @@ fun JChannelSource(channel: HubChannel, modifier: Modifier = Modifier) {
     val text = stringResource(R.string.designsystem_channel_source, channel.label)
     Row(modifier.readAs(text), horizontalArrangement = Arrangement.spacedBy(Tokens.Space.xs), verticalAlignment = Alignment.CenterVertically) {
         JChannelMark(channel, size = MarkSize.Inline)
+        Text(text, style = PersonaTheme.type.micro, color = PersonaTheme.palette.ink3, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/** "From Lark /agent", "From an extension": where a conversation an extension opened came from (#3758). */
+val ExternalOrigin.from: String
+    @Composable get() = when (this) {
+        ExternalOrigin.LarkAgent -> stringResource(R.string.designsystem_channel_source, stringResource(R.string.designsystem_origin_lark_agent))
+        ExternalOrigin.Extension -> stringResource(R.string.designsystem_origin_extension_source)
+    }
+
+/**
+ * The mark of the extension that opened a conversation (#3758), in a channel mark's place: Lark's own for Lark /agent,
+ * else the extensions icon (the Automatic block's Extensions chip) in the colour of a channel's monogram. Read out as [from].
+ */
+@Composable
+fun JExternalMark(origin: ExternalOrigin, modifier: Modifier = Modifier, size: MarkSize = MarkSize.Inline) {
+    val from = origin.from
+    when (origin) {
+        ExternalOrigin.LarkAgent -> JSourceMark(from, modifier, Brand.Lark, size)
+        ExternalOrigin.Extension -> JIcon(PhIcons.PuzzlePiece, null, modifier.clearAndSetSemantics { contentDescription = from },
+            size = size.box, tint = PersonaTheme.palette.ink2)
+    }
+}
+
+/** "From Lark /agent" under the message that opened an external conversation (#3758), as [JChannelSource] under a channel's. */
+@Composable
+fun JExternalSource(origin: ExternalOrigin, modifier: Modifier = Modifier) {
+    val text = origin.from
+    Row(modifier.readAs(text), horizontalArrangement = Arrangement.spacedBy(Tokens.Space.xs), verticalAlignment = Alignment.CenterVertically) {
+        JExternalMark(origin)
         Text(text, style = PersonaTheme.type.micro, color = PersonaTheme.palette.ink3, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }

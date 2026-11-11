@@ -21,6 +21,21 @@ class ModelsTest {
         assertNull(JsonCodec.decodeFromString<Item>("""{"id":"legacy","kind":"tool_result","text":"general-purpose says hello"}""").task)
     }
 
+    // #3758: only Lark /agent and other extensions opened a conversation from outside; the origin is read trimmed.
+    @Test fun externalOriginIsLarkAgentOrAnotherExtension() {
+        assertEquals(ExternalOrigin.LarkAgent, ExternalOrigin.of("lark_agent"))
+        assertEquals(ExternalOrigin.LarkAgent, ExternalOrigin.of(" lark_agent\n"))
+        assertEquals(ExternalOrigin.Extension, ExternalOrigin.of("extension"))
+        for (origin in listOf(null, "", "  ", "user", "channel", "inbox", "task", "spawned", "other", "something_new",
+            "Lark_Agent", "extensions", "lark"))
+            assertNull(origin, ExternalOrigin.of(origin))
+        val decoded = JsonCodec.decodeFromString<Session>("""{"machine_id":"hub","session_id":"c1","assistant":true,"origin":"lark_agent"}""")
+        assertEquals(ExternalOrigin.LarkAgent, decoded.externalOrigin)
+        assertEquals(ExternalOrigin.Extension, Session(machineId = "hub", sessionId = "c2", origin = "extension").externalOrigin)
+        assertNull(Session(machineId = "hub", sessionId = "c3", origin = "channel").externalOrigin)
+        assertNull(Session(machineId = "hub", sessionId = "c4").externalOrigin)
+    }
+
     @Test fun sessionDecodesWithMissingFieldsAndUnknownState() {
         val s = JsonCodec.decodeFromString<Session>(
             """{"machine_id":"server","session_id":"u1","cwd":"/home/x/code/foo","status":"done","state":"later","extra":1}""",

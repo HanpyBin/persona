@@ -49,6 +49,7 @@ import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.model.markdownAnimations
 import com.mikepenz.markdown.model.markdownDimens
 import com.mikepenz.markdown.model.markdownPadding
+import persona.core.contracts.ExternalOrigin
 import persona.core.contracts.Item
 import persona.core.contracts.SessionKey
 import persona.core.contracts.api.ChatRepository
@@ -265,12 +266,13 @@ internal fun ChatPicture(session: SessionKey, item: Item, loader: ImageLoader, a
  * [workRunning] comes from the parent work group's live flag; [lastWorkStep] ends its timeline connector; [plan] is the
  * group's plan ([latestPlan]): its TodoWrite is the full plan card, with earlier updates retained as ordinary steps.
  * [waiting]: the turn waits on you ([turnWaitsOnYou]); a running work line then reads "Waiting for you".
+ * [openedFrom]: this line is the message an extension opened the conversation with (#3758): its bubble says where from.
  */
 @Composable
 internal fun ChatLineContent(
     line: ChatLine, session: SessionKey, loader: ImageLoader, recordedDuration: Long?,
     onToggle: (String) -> Unit, onFold: (Item) -> Unit, folding: Set<String>, foldErrors: Map<String, String>,
-    lastUserId: String? = null, onLastLine: (Int) -> Unit = {},
+    lastUserId: String? = null, openedFrom: ExternalOrigin? = null, onLastLine: (Int) -> Unit = {},
     onFullText: (Item) -> Unit,
     style: ChatRenderStyle = ChatRenderStyle.Agent,
     textUpdates: Map<String, ChatTextUpdate> = emptyMap(),
@@ -292,7 +294,7 @@ internal fun ChatLineContent(
                         images = userPictures(userImages, session, loader))
                     line.row.item?.injected != null -> InjectedLine(line.row.id, line.row.item!!.injected!!)
                     else -> MergedUserBubble(listOf(item), textUpdates, onLastLine.takeIf { line.row.id == lastUserId },
-                        images = userPictures(userImages, session, loader))
+                        images = userPictures(userImages, session, loader), openedFrom = openedFrom)
                 }
             }
             "reply" -> line.row.item?.item?.let { MessageContent(it, false, textUpdates[it.id], boxed = true) }
