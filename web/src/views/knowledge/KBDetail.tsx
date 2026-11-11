@@ -250,7 +250,7 @@ function OwnedEntryDetail({ kind, id, query, reloadKey, onToggleSidebar, onBack,
               <Loading />
             </div>
           )}
-          {error && !d && (
+          {error && (
             <div className="mt-6">
               <ErrorBox text={error} onRetry={() => setRetry((x) => x + 1)} />
             </div>

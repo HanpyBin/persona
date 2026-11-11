@@ -5,7 +5,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { initI18n } from "../../i18n";
+import { initI18n, t } from "../../i18n";
 import { setToken } from "../../lib/api";
 import type { KBDetailResponse } from "../../lib/kb";
 import { chooseManager, resetManagerChoice, setRosterDefault } from "../../lib/manager-choice";
@@ -73,4 +73,68 @@ it("opens the entry again from the assistant made current, writing nothing to th
   act(() => button("Tag").click());
   await act(async () => button("Save").click());
   expect(writes().map(named)).toEqual(["assistant"]);
+});
+
+// A coded refusal is terminal; a bare gateway 503 would leave automatic GET retries pending.
+const refuseKnowledge = (request: Request) => act(async () => request.resolve(new Response(JSON.stringify({ code: "kb_unavailable", error: "Synthetic knowledge unavailable" }), { status: 503, headers: { "Content-Type": "application/json" } })));
+
+it("shows an initial read failure and recovers with a GET-only retry (#5048)", async () => {
+  render();
+  await refuseKnowledge(reads()[0]);
+  expect(host.textContent).toContain(t("lib-api.knowledge_unavailable"));
+  expect(reads()).toHaveLength(1);
+  act(() => button("Retry").click());
+  expect(reads()).toHaveLength(2);
+  await reply(reads()[1], detail);
+  expect(host.textContent).toContain("Example entry");
+  expect(host.textContent).not.toContain(t("lib-api.knowledge_unavailable"));
+  expect(button("Retry")).toBeUndefined();
+  expect(writes()).toHaveLength(0);
+});
+
+it("retains detail beside a failed tag readback, then retries without saving again (#5048)", async () => {
+  act(() => chooseManager("m-work"));
+  let reloadKey = 0;
+  const draw = () => root.render(<EntryDetail kind="people" id="example" reloadKey={reloadKey} onToggleSidebar={() => {}} onBack={() => {}} onOpen={() => {}} onSaved={() => { reloadKey++; draw(); }} />);
+  act(draw);
+  await reply(reads()[0], detail);
+  act(() => button("Tag").click());
+  const tags = document.body.querySelector<HTMLInputElement>('[role=dialog] input[aria-label="Tags"]')!;
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(tags, "updated");
+    tags.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  act(() => button("Save").click());
+  expect(JSON.parse(writes()[0].init.body as string).tags).toEqual(["updated"]);
+  await reply(writes()[0], { id: "example" });
+  expect(reads()).toHaveLength(2);
+  await refuseKnowledge(reads()[1]);
+  expect(host.textContent).toContain("Example entry");
+  expect(host.textContent).toContain("#existing");
+  expect(host.textContent).toContain(t("lib-api.knowledge_unavailable"));
+  act(() => button("Retry").click());
+  expect(reads()).toHaveLength(3);
+  expect(writes()).toHaveLength(1);
+  expect(reads().map(named)).toEqual(["m-work", "m-work", "m-work"]);
+  await reply(reads()[2], { detail: { ...detail.detail, meta: { ...detail.detail.meta, tags: ["updated"] } } });
+  expect(host.textContent).toContain("#updated");
+  expect(host.textContent).not.toContain("#existing");
+  expect(host.textContent).not.toContain(t("lib-api.knowledge_unavailable"));
+  expect(button("Retry")).toBeUndefined();
+  expect(writes()).toHaveLength(1);
+});
+
+it.each(["manager", "credential"])("ignores a retired read failure after changing %s (#5048)", async (change) => {
+  act(() => chooseManager("m-work"));
+  render();
+  const retired = reads()[0];
+  act(() => { if (change === "manager") chooseManager(null); else setToken("synthetic-owner-b"); });
+  expect(retired.init.signal?.aborted).toBe(true);
+  expect(reads()).toHaveLength(2);
+  await reply(reads()[1], { detail: { ...detail.detail, meta: { ...detail.detail.meta, name: "Current entry" } } });
+  await refuseKnowledge(retired);
+  expect(host.textContent).toContain("Current entry");
+  expect(host.textContent).not.toContain(t("lib-api.knowledge_unavailable"));
+  expect(button("Retry")).toBeUndefined();
+  expect(writes()).toHaveLength(0);
 });
