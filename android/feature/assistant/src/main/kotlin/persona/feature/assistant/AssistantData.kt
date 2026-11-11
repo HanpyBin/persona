@@ -33,7 +33,7 @@ internal data class ConversationGroups(
 internal enum class AutoOrigin(val wire: String) { Inbox("inbox"), Task("task"), LarkAgent("lark_agent"), Spawned("spawned"), Extension("extension"), Other("other") }
 
 /** The automatic group of a conversation; null for the user's own (none, user, channel). */
-internal fun Session.autoOrigin(): AutoOrigin? = when (val o = origin.orEmpty()) {
+internal fun Session.autoOrigin(): AutoOrigin? = when (val o = origin.orEmpty().trim()) {
     "", "user", "channel" -> null
     else -> AutoOrigin.entries.firstOrNull { it.wire == o } ?: AutoOrigin.Other
 }
