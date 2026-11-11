@@ -1,5 +1,9 @@
 # Lessons: web UI and interactions
 
+## Renamed Git versions belong to different paths (#4436)
+
+A staged rename's source exists at HEAD under the original status path, while its destination exists in the index under the new path. A later unstaged edit uses the new path for both sides; an unstaged rename reported separately by Git reads the index at its own original path. Keep both paths through the real comparison caller, guard each read, and treat missing rename metadata or a denied read as an error rather than an absent original. Exercise the actual viewer and client with a temporary Git repository, and retire delayed results when the selection, assistant or credential changes.
+
 ## Dismiss a draft, not its source item (#3743)
 
 A task-progress reply card has its own feed id; its Inbox reference can be shared by later progress drafts. Persist

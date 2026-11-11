@@ -32,29 +32,31 @@ async function resolve(mid: string, cwd: string, root: string, path: string, rev
   if (rev === "WORKTREE") return { label: t("session-files-compareview.worktree"), path: `${root.replace(/\/$/, "")}/${path}` };
   const b = await api<{ path?: string; missing?: boolean }>(`/machines/${enc(mid)}/git/blob?cwd=${enc(cwd)}&path=${enc(path)}&rev=${enc(rev)}`, { signal });
   const label = rev === "HEAD" ? "HEAD" : rev === "INDEX" ? t("session-files-compareview.index") : rev.endsWith("^") ? t("session-files-compareview.before_commit", { hash: rev.slice(0, 7) }) : rev.slice(0, 7);
+  if (!b.missing && !b.path) throw new Error(t("session-files-compareview.version_unavailable"));
   return { label, path: b.missing ? undefined : b.path };
 }
 
-export function CompareView({ mid, cwd, root, path, before, after, deleted }: { mid: string; cwd: string; root: string; path: string; before: Rev; after: Rev; deleted?: boolean }) {
-  const [sides, setSides] = useState<[Side, Side] | null>(null);
-  const [error, setError] = useState("");
+export function CompareView({ mid, cwd, root, path, beforePath = path, before, after, deleted }: { mid: string; cwd: string; root: string; path: string; beforePath?: string; before: Rev; after: Rev; deleted?: boolean }) {
+  const [result, setResult] = useState<{ key: string; sides?: [Side, Side]; error?: string } | null>(null);
+  const [retry, setRetry] = useState(0);
+  const key = JSON.stringify([mid, cwd, root, path, beforePath, before, after, deleted, retry]);
   useEffect(() => {
     const ac = new AbortController();
-    setSides(null);
-    setError("");
-    Promise.all([resolve(mid, cwd, root, path, before, ac.signal), deleted && after === "WORKTREE" ? Promise.resolve({ label: t("session-files-compareview.worktree") }) : resolve(mid, cwd, root, path, after, ac.signal)])
-      .then((s) => !ac.signal.aborted && setSides(s))
-      .catch((e) => !isAbort(e) && setError(errorText(e)));
+    Promise.all([resolve(mid, cwd, root, beforePath, before, ac.signal), deleted && after === "WORKTREE" ? Promise.resolve({ label: t("session-files-compareview.worktree") }) : resolve(mid, cwd, root, path, after, ac.signal)])
+      .then((sides) => !ac.signal.aborted && setResult({ key, sides }))
+      .catch((e) => !ac.signal.aborted && !isAbort(e) && setResult({ key, error: errorText(e) }));
     return () => ac.abort();
-  }, [mid, cwd, root, path, before, after, deleted]);
-  if (error) return <Empty icon="info" title={t("session-files-compareview.versions_failed")} detail={error} />;
-  if (!sides)
+  }, [mid, cwd, root, path, beforePath, before, after, deleted, key]);
+  const current = result?.key === key ? result : null;
+  if (current?.error) return <Empty icon="info" title={t("session-files-compareview.versions_failed")} detail={current.error} action={<Button icon="retry" className="touch-hit" onClick={() => setRetry((n) => n + 1)}>{t("session-gitpanel.retry")}</Button>} />;
+  if (!current?.sides)
     return (
       <div className="flex flex-1 items-center justify-center">
         <Loading label={t("session-files-compareview.loading_versions")} />
       </div>
     );
-  return compareKind(path) === "image" ? <ImageCompare mid={mid} sides={sides} /> : <DocCompare mid={mid} sides={sides} ext={extOf(path)} />;
+  const oldExt = extOf(beforePath);
+  return compareKind(path) === "image" ? <ImageCompare key={key} mid={mid} sides={current.sides} /> : <DocCompare key={key} mid={mid} sides={current.sides} beforeExt={DOC_EXTS.includes(oldExt) ? oldExt : extOf(path)} afterExt={extOf(path)} />;
 }
 
 function OpenButtons({ mid, sides }: { mid: string; sides: [Side, Side] }) {
@@ -139,21 +141,22 @@ async function unitsOf(mid: string, side: Side, ext: string, signal: AbortSignal
   return workbookUnits(XLSX, XLSX.read(new Uint8Array(data), { type: "array" }));
 }
 
-function DocCompare({ mid, sides, ext }: { mid: string; sides: [Side, Side]; ext: string }) {
+function DocCompare({ mid, sides, beforeExt, afterExt }: { mid: string; sides: [Side, Side]; beforeExt: string; afterExt: string }) {
   const [state, setState] = useState<{ hunks?: Hunk[]; added?: number; removed?: number; error?: string; tooBig?: boolean }>({});
+  const [retry, setRetry] = useState(0);
   useEffect(() => {
     const ac = new AbortController();
     setState({});
-    Promise.all(sides.map((s) => unitsOf(mid, s, ext, ac.signal)))
+    Promise.all([unitsOf(mid, sides[0], beforeExt, ac.signal), unitsOf(mid, sides[1], afterExt, ac.signal)])
       .then(([a, b]) => {
         if (ac.signal.aborted) return;
         const ops = diffLines(flatten(a), flatten(b));
         if (!ops) return setState({ tooBig: true });
         setState({ hunks: hunks(ops), added: ops.filter((o) => o.kind === "add").length, removed: ops.filter((o) => o.kind === "del").length });
       })
-      .catch((e) => !isAbort(e) && setState({ error: errorText(e) }));
+      .catch((e) => !ac.signal.aborted && !isAbort(e) && setState({ error: errorText(e) }));
     return () => ac.abort();
-  }, [mid, sides, ext]);
+  }, [mid, sides, beforeExt, afterExt, retry]);
   const bar = (
     <div className="flex min-h-10 shrink-0 items-center gap-2 border-b border-line px-3 py-1.5 text-[11.5px] whitespace-nowrap text-ink-3 tabular-nums">
       <span className="min-w-0 flex-1 truncate">
@@ -176,7 +179,7 @@ function DocCompare({ mid, sides, ext }: { mid: string; sides: [Side, Side]; ext
     return (
       <>
         {bar}
-        <Empty icon="info" title={t("session-files-compareview.compare_failed")} detail={state.error} />
+        <Empty icon="info" title={t("session-files-compareview.compare_failed")} detail={state.error} action={<Button icon="retry" className="touch-hit" onClick={() => setRetry((n) => n + 1)}>{t("session-gitpanel.retry")}</Button>} />
       </>
     );
   if (state.tooBig)
