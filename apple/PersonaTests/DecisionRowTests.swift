@@ -141,7 +141,10 @@ import Testing
         #expect(model.armedOption(todo: item.id, ask: ask, group: "") == nil)
     }
 
-    /// The fixed answers are never armed, even on a decision whose options are.
+    /// The fixed answers are never armed, even on a decision whose options are. Nothing is chosen by one, so the row
+    /// stays answerable: it says "Sent back to Persona" and keeps its options, Other… and ⋯ (the hub keeps the round
+    /// open after "Tell Me the Background First"; after the others it ends it, and the to-dos read after the answer
+    /// take the row away). Only an option ends the row here.
     @Test(arguments: TodoAsk.Response.allCases)
     func aFixedAnswerIsSentAtOnce(response: TodoAsk.Response) async throws {
         let hub = FakeHub(), taken = BriefCardTests.Counter()
@@ -149,7 +152,107 @@ import Testing
         let item = try todo(decision(why: "irreversible")), ask = try #require(item.openAsk), model = answers(hub, taken: taken)
         await model.respond(response, to: ask, todo: item.id, group: "")
         #expect(try body(hub) == ["asked_at": asked, "response": response.rawValue])
-        #expect(model.state(todo: item.id, ask: ask, group: "") == .answered("已交回 Persona") && taken.n == 1)
+        #expect(model.state(todo: item.id, ask: ask, group: "") == .sentBack && taken.n == 1)
+        let row = DecisionRow(todo: item, ask: ask, group: "", answers: model, actions: BriefActions(api: { _ in nil }, failed: { _ in }, taken: {}))
+        #expect(row.sentBack && !row.busy, "the row says it went back and its controls stay enabled")
+        // Still answerable: another fixed answer goes, and an option (two taps here) ends the row.
+        await model.respond(.explainFirst, to: ask, todo: item.id, group: "")
+        #expect(try body(hub, at: 1) == ["asked_at": asked, "response": "explain_first"])
+        await model.choose(1, of: ask, todo: item.id, group: "")
+        #expect(hub.sent("POST", accept).count == 2 && model.armedOption(todo: item.id, ask: ask, group: "") == 1)
+        await model.choose(1, of: ask, todo: item.id, group: "")
+        #expect(try body(hub, at: 2) == ["asked_at": asked, "option": "等修复"])
+        #expect(model.state(todo: item.id, ask: ask, group: "") == .answered("已回答：等修复") && taken.n == 3)
+        await model.respond(.decideYourself, to: ask, todo: item.id, group: "")
+        await model.choose(0, of: ask, todo: item.id, group: "")
+        #expect(hub.sent("POST", accept).count == 3, "answered: nothing more is sent")
+    }
+
+    /// The hub says a fixed answer was given (`response`, the round still open): the row says so on every surface and
+    /// on another phone, and its options still answer it.
+    @Test func aRoundTheHubKeptOpenAfterAResponseIsStillAnswerable() async throws {
+        let hub = FakeHub()
+        hub.on("POST", accept, json: #"{"ok":true}"#)
+        let item = try todo(decision(), extra: ""), model = answers(hub)
+        var ask = try #require(item.openAsk)
+        ask.response = "explain_first"
+        let row = DecisionRow(todo: item, ask: ask, group: "", answers: model, actions: BriefActions(api: { _ in nil }, failed: { _ in }, taken: {}))
+        #expect(row.sentBack && !row.busy && model.state(todo: item.id, ask: ask, group: "") == nil)
+        await model.choose(0, of: ask, todo: item.id, group: "")
+        #expect(try body(hub) == ["asked_at": asked, "option": "发 beta"])
+    }
+
+    /// A failed fixed answer after one that went still says the first one went, and sends again on the next tap.
+    @Test func aFailedResponseKeepsWhatWasSentBefore() async throws {
+        let hub = FakeHub(), failures = BriefCardTests.Failures()
+        var fail = false
+        hub.on("POST", accept) { _ in
+            if fail { throw APIError(status: 503, message: "助手没有连上") }
+            return Data(#"{"ok":true}"#.utf8)
+        }
+        let item = try todo(decision()), ask = try #require(item.openAsk), model = answers(hub, failures: failures)
+        await model.respond(.explainFirst, to: ask, todo: item.id, group: "")
+        fail = true
+        await model.respond(.decideYourself, to: ask, todo: item.id, group: "")
+        #expect(model.state(todo: item.id, ask: ask, group: "") == .sentBack && failures.messages.count == 1)
+        fail = false
+        await model.choose(2, of: ask, todo: item.id, group: "")
+        #expect(try body(hub, at: 2) == ["asked_at": asked, "option": "取消发布"])
+    }
+
+    /// Complete Directly in the ⋯ menu (#3038) holds the whole row while its request is out, as `BriefAcceptRow` does:
+    /// no option, Other… or ⋯ can be tapped meanwhile. Done, the row goes.
+    @Test func completeDirectlyHoldsTheWholeRow() async throws {
+        let hub = FakeHub()
+        let item = try todo(decision()), ask = try #require(item.openAsk), model = answers(hub)
+        let gate = Gate()
+        let actions = BriefActions(api: { _ in hub.client }, failed: { _ in }, taken: {}, complete: { _, _ in await gate.wait() })
+        let row = DecisionRow(todo: item, ask: ask, group: "", answers: model, actions: actions)
+        #expect(!row.busy)
+        let completing = Task { await actions.completeDirectly(ask.row(for: item), group: "") }
+        await gate.arrived()
+        #expect(row.busy, "every control of the row is disabled while Complete Directly is out")
+        #expect(actions.outcome(accepting: item.id, askedAt: ask.askedAt) == .busy)
+        gate.open()
+        await completing.value
+        #expect(actions.outcome(accepting: item.id, askedAt: ask.askedAt) == .completed && !row.busy)
+        // Another round of the same to-do is its own.
+        #expect(actions.outcome(accepting: item.id, askedAt: "2026-11-11T09:00:00Z") == nil)
+    }
+
+    /// An armed option never moves into the ⋯ menu when its longer "Confirm: …" label leaves room for fewer buttons:
+    /// it takes the last button's place.
+    @Test func theArmedOptionKeepsItsButton() async throws {
+        let item = try todo(decision(why: "irreversible")), ask = try #require(item.openAsk)
+        let model = answers(FakeHub())
+        let row = DecisionRow(todo: item, ask: ask, group: "", answers: model)
+        #expect(row.buttonIndices(shown: 3) == [0, 1, 2] && row.buttonIndices(shown: 1) == [0])
+        await model.choose(2, of: ask, todo: item.id, group: "")
+        #expect(row.buttonIndices(shown: 3) == [0, 1, 2] && row.buttonIndices(shown: 2) == [0, 2] && row.buttonIndices(shown: 1) == [2])
+        await model.choose(0, of: ask, todo: item.id, group: "")
+        #expect(row.buttonIndices(shown: 1) == [0] && row.buttonIndices(shown: 2) == [0, 1])
+        #expect(row.buttonIndices(shown: 0) == [0] && row.buttonIndices(shown: 9) == [0, 1, 2])
+    }
+
+    /// The default line and the cost of waiting, worked out once per round and day, not in the row's body.
+    @Test func theWaitingLineIsKeptPerRound() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "Asia/Shanghai"))
+        let now = try #require(JSON.parseDate("2026-11-10T09:00:00Z"))
+        let ask = TodoAsk(askedAt: asked, costOfWaiting: "beta 窗口 18:00 关闭", deadline: "2026-11-10T09:30:00Z", defaultAction: "taken")
+        #expect(ask.waitingLine(now: now, calendar: calendar) == "17:30 没回复就按推荐办 · 等下去的代价：beta 窗口 18:00 关闭")
+        #expect(DecisionWaitingLines.line(for: ask, now: now, calendar: calendar) == ask.waitingLine(now: now, calendar: calendar))
+        #expect(TodoAsk(askedAt: asked, costOfWaiting: "x").waitingLine() == "等下去的代价：x")
+        #expect(TodoAsk(askedAt: asked, defaultAction: "never").waitingLine() == "不会默认执行，等你回复")
+        #expect(TodoAsk(askedAt: asked, costOfWaiting: "").waitingLine() == nil && TodoAsk(askedAt: asked).waitingLine() == nil)
+        // A new round, or the same deadline on the next day, is worked out again.
+        var later = ask
+        later.askedAt = "2026-11-11T01:00:00Z"
+        later.costOfWaiting = nil
+        #expect(DecisionWaitingLines.line(for: later, now: now, calendar: calendar) == "17:30 没回复就按推荐办")
+        let tomorrow = now.addingTimeInterval(24 * 3600)
+        let next = try #require(DecisionWaitingLines.line(for: ask, now: tomorrow, calendar: calendar))
+        #expect(next != "17:30 没回复就按推荐办 · 等下去的代价：beta 窗口 18:00 关闭" && next.contains("17:30"))
     }
 
     /// 409: the round was over (asked again since, or answered on another device). The row says so and reads the to-dos again.
@@ -234,5 +337,32 @@ import Testing
     @Test func anOrphanedReasonInAnotherShapeStillSaysNobody() throws {
         let item = try JSON.decoder.decode(TodoItem.self, from: Data(#"{"id":"t","title":"检查 PR","orphaned":{"reason":7}}"#.utf8))
         #expect(item.orphaned == TodoOrphaned() && item.orphanedLine == "没人在做")
+    }
+
+    /// Holds a request open until the test lets it go.
+    @MainActor final class Gate {
+        private var waiting: CheckedContinuation<Void, Never>?
+        private var arrival: CheckedContinuation<Void, Never>?
+        private var isOpen = false
+
+        func wait() async {
+            if isOpen { return }
+            await withCheckedContinuation { continuation in
+                waiting = continuation
+                arrival?.resume()
+                arrival = nil
+            }
+        }
+
+        func arrived() async {
+            if waiting != nil { return }
+            await withCheckedContinuation { arrival = $0 }
+        }
+
+        func open() {
+            isOpen = true
+            waiting?.resume()
+            waiting = nil
+        }
     }
 }

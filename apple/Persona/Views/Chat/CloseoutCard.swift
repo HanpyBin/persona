@@ -16,8 +16,17 @@ struct CloseoutCard: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.openURL) private var openURL
-    @State private var open = true
+    @State private var open: Bool
     @State private var detailsHeight: CGFloat = 0
+
+    /// `startsOpen` false: the details start folded, as when the workflow section is open above the card and the two
+    /// would take most of the page.
+    init(closeout: Closeout, artifacts: [WorkArtifact] = [], maxHeight: CGFloat? = nil, startsOpen: Bool = true) {
+        self.closeout = closeout
+        self.artifacts = artifacts
+        self.maxHeight = maxHeight
+        _open = State(initialValue: startsOpen)
+    }
 
     private var did: [String] { (closeout.did ?? []).filter { !$0.isEmpty } }
     private var merged: Closeout.Claim? { closeout.claim(.merged) }
@@ -30,13 +39,18 @@ struct CloseoutCard: View {
 
     var body: some View {
         if let status = closeout.statusLine {
-            VStack(alignment: .leading, spacing: Theme.Space.s) {
+            VStack(alignment: .leading, spacing: Theme.Space.flush) {
                 if hasDetails {
+                    // The card's top padding is inside the button: the whole band of the head, at least a finger tall
+                    // at every text size, folds the details (DESIGN_SYSTEM.md 6.3).
                     Button {
                         Haptics.tap()
                         withAnimation(reduceMotion ? nil : Theme.Motion.reveal) { open.toggle() }
                     } label: {
-                        head(status).contentShape(.rect)
+                        head(status)
+                            .scaledFrame(minHeight: Theme.Size.tapTarget)
+                            .frame(minHeight: Theme.Size.tapTarget)
+                            .contentShape(.rect)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(spoken(status))
@@ -44,6 +58,7 @@ struct CloseoutCard: View {
                     .accessibilityIdentifier("closeout.head")
                 } else {
                     head(status)
+                        .padding(.vertical, Theme.Space.s)
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel(spoken(status))
                         .accessibilityIdentifier("closeout.head")
@@ -55,10 +70,10 @@ struct CloseoutCard: View {
                     }
                     .scrollBounceBehavior(.basedOnSize)
                     .frame(height: shownHeight)
+                    .padding(.vertical, Theme.Space.s)
                 }
             }
             .padding(.horizontal, Theme.Space.m)
-            .padding(.vertical, Theme.Space.s)
             // A plain fill as GoalBar's and the workflow card's: the folded header fades the open one out, and glass
             // does not fade with it.
             .background(Theme.Fill.well, in: .rect(cornerRadius: Theme.Radius.control, style: .continuous))
@@ -97,16 +112,20 @@ struct CloseoutCard: View {
                 .foregroundStyle(mark.color)
                 .scaledFrame(width: Theme.Size.markM)
                 .accessibilityHidden(true)
-            Text(status)
-                .font(Theme.Font.secondaryStrong)
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-                .layoutPriority(1)
-            Text("The agent's own report")
-                .font(Theme.Font.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            // The status with "The agent's own report" beside it; a status too long for both puts that line under
+            // it, where beside it it was cut to its first letter.
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline, spacing: Theme.Space.s) {
+                    Text(status).font(Theme.Font.secondaryStrong).foregroundStyle(.primary).lineLimit(1)
+                    ownReport
+                }
+                VStack(alignment: .leading, spacing: Theme.Space.flush) {
+                    Text(status).font(Theme.Font.secondaryStrong).foregroundStyle(.primary).lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    ownReport
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
             if hasDetails {
                 ThemedIcon(open ? Theme.Icon.collapse : Theme.Icon.expand)
                     .font(Theme.Font.labelStrong)
@@ -114,7 +133,10 @@ struct CloseoutCard: View {
                     .accessibilityHidden(true)
             }
         }
-        .scaledFrame(minHeight: hasDetails ? Theme.Size.tapTarget - Theme.Space.s * 2 : nil)
+    }
+
+    private var ownReport: some View {
+        Text("The agent's own report").font(Theme.Font.caption).foregroundStyle(.secondary).lineLimit(1)
     }
 
     // MARK: Details
@@ -132,7 +154,9 @@ struct CloseoutCard: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         } else {
-            Grid(alignment: .topLeading, horizontalSpacing: Theme.Space.m, verticalSpacing: Theme.Space.sm) {
+            // On the value's first line: a link artifact is a tap target taller than its words, and a label at its
+            // top stood above them.
+            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: Theme.Space.m, verticalSpacing: Theme.Space.sm) {
                 ForEach(fields) { field in
                     GridRow {
                         label(field.title).gridColumnAlignment(.leading)

@@ -136,15 +136,24 @@ nonisolated struct TodoAsk: Codable, Hashable, Sendable {
         return String(localized: "Taken by default at \(time)")
     }
 
+    /// "Taken by default at 17:30 · If it waits: …": what happens when nobody answers, and what waiting costs; nil when
+    /// the hub said neither. A row asks `DecisionWaitingLines`, which keeps it per round, never in `body`.
+    func waitingLine(now: Date = .now, calendar: Calendar = .current) -> String? {
+        let fallback = defaultLine(now: now, calendar: calendar)
+        let cost = costOfWaiting.flatMap { $0.isEmpty ? nil : String(localized: "If it waits: \($0)") }
+        switch (fallback, cost) {
+        case (let fallback?, let cost?): return String(localized: "\(fallback) · \(cost)")
+        case (let line?, nil), (nil, let line?): return line
+        case (nil, nil): return nil
+        }
+    }
+
     /// "17:30" today, "Nov 12, 17:30" on another day: a fixed 24-hour time (a localized hour style reads 17:00 as 05:00
-    /// in Chinese, docs/lessons/ios.md "Swift and compilation").
+    /// in Chinese, docs/lessons/ios.md "Swift and compilation"), from the calendar's own hour and minute, so no
+    /// formatter is made for it (docs/apple/performance.md P4).
     static func clock(_ date: Date, now: Date = .now, calendar: Calendar = .current) -> String {
-        let hm = DateFormatter()
-        hm.calendar = calendar
-        hm.timeZone = calendar.timeZone
-        hm.locale = Locale(identifier: "en_US_POSIX")
-        hm.dateFormat = "HH:mm"
-        let time = hm.string(from: date)
+        let parts = calendar.dateComponents([.hour, .minute], from: date)
+        let time = String(format: "%02d:%02d", parts.hour ?? 0, parts.minute ?? 0)
         if calendar.isDate(date, inSameDayAs: now) { return time }
         var style = Date.FormatStyle.dateTime.month(.abbreviated).day()
         style.timeZone = calendar.timeZone

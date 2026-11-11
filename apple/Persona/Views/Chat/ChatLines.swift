@@ -33,6 +33,9 @@ struct ChatLines {
     /// header says it, so the reply does not say it again as text. Exactly that block goes (`Closeout.strip`), from
     /// the last exchange's last words only; a reply that was nothing but the block is not drawn at all. An earlier
     /// turn's block stays as it was written: the card is about the turn that just ended.
+    /// What `hidingCloseout` adds to the id of the reply it draws without its block.
+    static let closeoutShownSuffix = "#closeout-shown"
+
     static func hidingCloseout(_ lines: [ChatLine]) -> [ChatLine] {
         for index in lines.indices.reversed() {
             switch lines[index].content {
@@ -45,7 +48,12 @@ struct ChatLines {
                 } else {
                     var shown = item
                     shown.text = stripped
-                    var line = ChatLine.row(.assistant(shown))
+                    // Its own id for what is worked out from the words: a message's Markdown is kept by its id
+                    // (`RowMemo`, filled off the main thread as items arrive), which may already hold the reply with
+                    // its block, and that was drawn in place of these words. The line keeps the reply's id, so the
+                    // list keeps its place when the card comes or goes.
+                    shown.id = item.id + Self.closeoutShownSuffix
+                    var line = ChatLine.replacing(lines[index], with: .assistant(shown))
                     line.showsSource = lines[index].showsSource
                     out[index] = line
                 }

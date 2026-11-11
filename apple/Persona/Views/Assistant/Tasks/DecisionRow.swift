@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Answering a decision on its row (#3804, docs/assistant/todos.md "Decisions the owner can answer"): which option of
 /// a round is armed, which answer is on its way, and what became of it. Kept here by round, not in the row, so the same
-/// decision drawn in the conversation's card, the Needs You tray and the task board says the same thing, and a row
+/// decision drawn in the Needs You tray and on the task board says the same thing, and a row
 /// drawn again (scrolled away and back) still says what happened. Every answer goes through
 /// `POST /api/v1/todos/{id}/accept`, as the recommendation's Take always did.
 @MainActor @Observable final class DecisionAnswers {
@@ -10,10 +10,22 @@ import SwiftUI
     enum State: Equatable, Sendable {
         /// Its request is out: `answer` names the button that shows it ("option:1", "response:explain_first").
         case busy(answer: String)
-        /// The hub took it; the row says this instead of its buttons.
+        /// The hub took one of the fixed answers: nothing was chosen and the round may still wait (`explain_first`
+        /// keeps it open until the decision is asked again), so the row says "Sent back to Persona" and keeps its
+        /// options, Other… and ⋯. Only an option, or the hub ending the round, ends the row.
+        case sentBack
+        /// The hub took an option; the row says this instead of its buttons.
         case answered(String)
         /// 409: that round was over (asked again since, or answered elsewhere).
         case alreadyHandled
+
+        /// The round is over for this row: no button sends anything again.
+        var ended: Bool {
+            switch self {
+            case .answered, .alreadyHandled: true
+            case .busy, .sentBack: false
+            }
+        }
     }
 
     static let shared = DecisionAnswers()
@@ -48,37 +60,42 @@ import SwiftUI
         let options = ask.decisionOptions
         guard options.indices.contains(index) else { return }
         let key = Self.key(todo: todo, ask: ask, group: group)
-        guard states[key] == nil else { return }
+        guard Self.free(states[key]) else { return }
         if ask.needsConfirmation, armed[key] != index {
             armed[key] = index
             return
         }
         let label = options[index].label
-        await send(key, group: group, answer: "option:\(index)", done: String(localized: "Answered: \(label)")) {
+        await send(key, group: group, answer: "option:\(index)", done: .answered(String(localized: "Answered: \(label)"))) {
             try await $0.acceptTodo(todo, askedAt: ask.askedAt, option: label)
         }
     }
 
     /// One of the fixed answers ("You Decide", "This Isn't What I Asked For", "Tell Me the Background First"): never armed,
-    /// nothing is taken, the task's supervisor hears it.
+    /// nothing is taken, the task's supervisor hears it. The row stays answerable: "Tell Me the Background First"
+    /// leaves the round open on the hub, and the others end it there, which the to-dos read after it says.
     func respond(_ response: TodoAsk.Response, to ask: TodoAsk, todo: String, group: String) async {
         let key = Self.key(todo: todo, ask: ask, group: group)
-        guard states[key] == nil else { return }
-        await send(key, group: group, answer: "response:\(response.rawValue)", done: String(localized: "Sent back to Persona")) {
+        guard Self.free(states[key]) else { return }
+        await send(key, group: group, answer: "response:\(response.rawValue)", done: .sentBack) {
             try await $0.acceptTodo(todo, askedAt: ask.askedAt, response: response.rawValue)
         }
     }
 
-    private func send(_ key: String, group: String, answer: String, done: String, _ call: (APIClient) async throws -> Void) async {
+    /// No request of the round is out and it has not ended: a tap may send.
+    private static func free(_ state: State?) -> Bool { state == nil || state == .sentBack }
+
+    private func send(_ key: String, group: String, answer: String, done: State, _ call: (APIClient) async throws -> Void) async {
         guard let api = api(group) else {
             let why = String(localized: "Not connected to a hub [Todo Store 04f822]")
             failed(String(localized: "Couldn't send your answer. \(why)"))
             return
         }
+        let before = states[key]
         states[key] = .busy(answer: answer)
         do {
             try await call(api)
-            states[key] = .answered(done)
+            states[key] = done
             armed[key] = nil
             taken()
         } catch let e as APIError where e.status == 409 {
@@ -87,16 +104,16 @@ import SwiftUI
             taken()
         } catch {
             // A 502 (the choice did not reach the task's agent), a 503 or no answer: nothing was taken. The option
-            // stays armed, so the next tap sends it again.
-            states[key] = nil
+            // stays armed, so the next tap sends it again, and a fixed answer sent before still says so.
+            states[key] = before
             failed(String(localized: "Couldn't send your answer. \(error.localizedDescription)"))
         }
     }
 }
 
-/// A to-do's open ask where the app lists what needs the owner (the conversation's task card, the Needs You tray, the
-/// task board): a decision with options is answered on its row (`DecisionRow`); any other ask keeps its one button
-/// (`BriefAcceptRow`), as does a decision from a hub that sends no options.
+/// A to-do's open ask where the app lists what needs the owner (the Needs You tray, the task board): a decision with
+/// options is answered on its row (`DecisionRow`); any other ask keeps its one button (`BriefAcceptRow`), as does a
+/// decision from a hub that sends no options.
 struct TodoAskRow: View {
     var todo: TodoItem
     var ask: TodoAsk
@@ -128,48 +145,63 @@ struct DecisionRow: View {
     var group: String
     var open: (() -> Void)? = nil
     var answers: DecisionAnswers = .shared
+    /// Complete Directly (#3038) goes through the briefing's actions, as `BriefAcceptRow`'s button does.
+    var actions: BriefActions = .shared
     @Environment(\.dynamicTypeSize) private var typeSize
 
     private var options: [TodoAsk.Option] { ask.decisionOptions }
     private var state: DecisionAnswers.State? { answers.state(todo: todo.id, ask: ask, group: group) }
     private var armed: Int? { answers.armedOption(todo: todo.id, ask: ask, group: group) }
-    private var busy: Bool { if case .busy = state { true } else { false } }
+    /// Complete Directly's request for this round, or what it came to.
+    private var completion: BriefActions.Outcome? { actions.outcome(accepting: todo.id, askedAt: ask.askedAt, group: group) }
+    /// A request of this round is out, an answer's or Complete Directly's: every control of the row waits for it, so
+    /// nothing is sent twice and an option cannot race the completion.
+    var busy: Bool {
+        if case .busy? = state { return true }
+        return completion == .busy
+    }
+    /// A fixed answer went back to Persona (from this phone, or the hub says so): the decision may still wait, and the
+    /// row keeps its controls.
+    var sentBack: Bool { state == .sentBack || ask.response != nil }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.xs) {
-            Text(todo.title)
-                .font(Theme.Font.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            Text(ask.questionLine)
-                .font(Theme.Font.secondaryMedium)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
-                .accessibilityIdentifier("decision.question")
-            if let background = ask.background, !background.isEmpty {
-                Text(background)
+        // Completed directly: the task is done, and the row goes as `BriefAcceptRow` does.
+        if completion != .completed {
+            VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                Text(todo.title)
                     .font(Theme.Font.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .accessibilityIdentifier("decision.background")
-            }
-            VStack(alignment: .leading, spacing: Theme.Space.xxs) {
-                ForEach(Array(options.enumerated()), id: \.offset) { index, option in
-                    leads(option, recommended: index == 0)
-                }
-            }
-            .padding(.top, Theme.Space.xxs)
-            if let waits = waitingLine {
-                Text(waits)
-                    .font(Theme.Font.caption)
-                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Text(ask.questionLine)
+                    .font(Theme.Font.secondaryMedium)
                     .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("decision.default")
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("decision.question")
+                if let background = ask.background, !background.isEmpty {
+                    Text(background)
+                        .font(Theme.Font.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .accessibilityIdentifier("decision.background")
+                }
+                VStack(alignment: .leading, spacing: Theme.Space.xxs) {
+                    ForEach(Array(options.enumerated()), id: \.offset) { index, option in
+                        leads(option, recommended: index == 0)
+                    }
+                }
+                .padding(.top, Theme.Space.xxs)
+                if let waits = DecisionWaitingLines.line(for: ask) {
+                    Text(waits)
+                        .font(Theme.Font.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("decision.default")
+                }
+                footer.padding(.top, Theme.Space.xs)
             }
-            footer.padding(.top, Theme.Space.xs)
+            .padding(.vertical, Theme.Space.xs)
+            .accessibilityElement(children: .contain)
         }
-        .padding(.vertical, Theme.Space.xs)
-        .accessibilityElement(children: .contain)
     }
 
     /// An option and what choosing it leads to, the recommended one marked.
@@ -186,17 +218,6 @@ struct DecisionRow: View {
         .accessibilityElement(children: .combine)
     }
 
-    /// "Taken by default at 17:30 · If it waits: …": what happens when nobody answers, and what waiting costs.
-    private var waitingLine: String? {
-        let fallback = ask.defaultLine()
-        let cost = ask.costOfWaiting.flatMap { $0.isEmpty ? nil : String(localized: "If it waits: \($0)") }
-        switch (fallback, cost) {
-        case (let fallback?, let cost?): return String(localized: "\(fallback) · \(cost)")
-        case (let line?, nil), (nil, let line?): return line
-        case (nil, nil): return nil
-        }
-    }
-
     // MARK: Answers
 
     @ViewBuilder private var footer: some View {
@@ -205,11 +226,16 @@ struct DecisionRow: View {
             outcome(text)
         case .alreadyHandled?:
             outcome(String(localized: "Already handled"))
-        case .busy?, nil:
+        case .busy?, .sentBack?, nil:
             VStack(alignment: .leading, spacing: Theme.Space.xs) {
-                // "Tell Me the Background First" was given: the decision still waits, and can still be answered.
-                if ask.response != nil {
-                    Text("Sent back to Persona").font(Theme.Font.caption).foregroundStyle(.secondary).lineLimit(1)
+                // A fixed answer was given ("Tell Me the Background First"): the decision still waits, and can still
+                // be answered here.
+                if sentBack {
+                    Text("Sent back to Persona")
+                        .font(Theme.Font.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .accessibilityIdentifier("decision.sent-back.\(todo.id)")
                 }
                 if typeSize.isAccessibilitySize {
                     // At the accessibility sizes the whole group is one column, the recommended option first, each
@@ -221,7 +247,8 @@ struct DecisionRow: View {
                             HStack(spacing: Theme.Space.s) { controls(shown: shown) }
                                 .fixedSize(horizontal: true, vertical: false)
                         }
-                        // Alone and still wider than the row, the button gives way and cuts its label; it never wraps.
+                        // Alone and still wider than the row, the option gives way and cuts its label; it never wraps,
+                        // and "Other…" and ⋯ keep theirs.
                         HStack(spacing: Theme.Space.s) { controls(shown: 1) }
                     }
                 }
@@ -238,10 +265,21 @@ struct DecisionRow: View {
             .accessibilityIdentifier("decision.outcome.\(todo.id)")
     }
 
-    /// The first `shown` options as buttons, "Other…", and the menu with the rest.
+    /// The options drawn as buttons when `shown` fit: the first ones, and always the armed one, so that the "Confirm: …"
+    /// a first tap made (a longer label) never moves into the ⋯ menu; it takes the last place instead.
+    func buttonIndices(shown: Int) -> [Int] {
+        let count = min(max(shown, 1), options.count)
+        guard count > 0 else { return [] }
+        var indices = Array(0..<count)
+        if let armed, options.indices.contains(armed), !indices.contains(armed) { indices[count - 1] = armed }
+        return indices
+    }
+
+    /// The options as buttons (`buttonIndices`), "Other…", and the menu with the rest.
     @ViewBuilder private func controls(shown: Int) -> some View {
-        ForEach(Array(options.prefix(shown).enumerated()), id: \.offset) { index, option in
-            optionButton(option, index: index)
+        let indices = buttonIndices(shown: shown)
+        ForEach(indices, id: \.self) { index in
+            optionButton(options[index], index: index)
         }
         Button {
             if let open { open() } else { TasksStore.shared.detailTask = todo.id }
@@ -250,20 +288,24 @@ struct DecisionRow: View {
         }
         .font(Theme.Font.captionStrong)
         .themedButton()
+        .fixedSize()
         .disabled(busy)
         .accessibilityLabel(String(localized: "Open \(todo.title) to answer another way"))
         .accessibilityIdentifier("decision.other.\(todo.id)")
         Menu {
-            menuItems(from: shown)
+            menuItems(without: indices)
         } label: {
             // An icon-only themed button takes its glyph's size (docs/lessons/ios.md): a line of the buttons' own
-            // text gives it their height, and the icon token its width.
+            // text gives it their height, and the icon token its width. While Complete Directly is out it spins.
             Text(verbatim: " ").lineLimit(1)
                 .scaledFrame(width: Theme.Size.icon)
-                .overlay { ThemedIcon(Theme.Icon.more) }
+                .overlay {
+                    if completion == .busy { ProgressView().controlSize(.small) } else { ThemedIcon(Theme.Icon.more) }
+                }
         }
         .font(Theme.Font.captionStrong)
         .themedButton()
+        .fixedSize()
         .disabled(busy)
         .accessibilityLabel("More answers")
         .accessibilityIdentifier("decision.more.\(todo.id)")
@@ -292,8 +334,9 @@ struct DecisionRow: View {
 
     /// The options that have no button, each with what it leads to; the fixed answers, each with what it does; and
     /// Complete Directly (#3038), which ends the task without sending anything to its agent.
-    @ViewBuilder private func menuItems(from shown: Int) -> some View {
-        ForEach(Array(options.enumerated()).filter { $0.offset >= shown }, id: \.offset) { index, option in
+    @ViewBuilder private func menuItems(without shown: [Int]) -> some View {
+        ForEach(options.indices.filter { !shown.contains($0) }, id: \.self) { index in
+            let option = options[index]
             Button {
                 Task { await answers.choose(index, of: ask, todo: todo.id, group: group) }
             } label: {
@@ -316,7 +359,7 @@ struct DecisionRow: View {
         }
         Section {
             Button {
-                Task { await BriefActions.shared.completeDirectly(ask.row(for: todo), group: group) }
+                Task { await actions.completeDirectly(ask.row(for: todo), group: group) }
             } label: {
                 Text("Complete Directly")
             }
@@ -337,5 +380,31 @@ struct DecisionRow: View {
         case .notWhatIAsked: String(localized: "The work pauses until Persona checks it against your request.")
         case .explainFirst: String(localized: "Persona asks again with what this is and why.")
         }
+    }
+}
+
+/// "Taken by default at 17:30 · If it waits: …" for each round, worked out once (docs/apple/performance.md P4): the
+/// date parsing and formatting stay out of the `body` of a row the tray and the board redraw on every
+/// push. Kept by round and day (the line names the date on another day); a handful of rounds are open at a time.
+@MainActor enum DecisionWaitingLines {
+    private struct Key: Hashable {
+        var asked: String
+        var deadline: String?
+        var defaultAction: String?
+        var cost: String?
+        var day: Date
+    }
+
+    private struct Line { var text: String? }
+    private static var lines: [Key: Line] = [:]
+
+    static func line(for ask: TodoAsk, now: Date = .now, calendar: Calendar = .current) -> String? {
+        let key = Key(asked: ask.askedAt, deadline: ask.deadline, defaultAction: ask.defaultAction, cost: ask.costOfWaiting,
+                      day: calendar.startOfDay(for: now))
+        if let hit = lines[key] { return hit.text }
+        let text = ask.waitingLine(now: now, calendar: calendar)
+        if lines.count >= 64 { lines.removeAll() }
+        lines[key] = Line(text: text)
+        return text
     }
 }

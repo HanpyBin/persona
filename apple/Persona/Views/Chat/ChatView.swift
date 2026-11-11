@@ -365,8 +365,9 @@ struct ChatView: View {
     /// The card, at most a share of the page tall (as the workflow section): the conversation stays under it.
     @ViewBuilder private var closeoutCard: some View {
         if let closeout = shownCloseout {
+            // Under an open workflow section it starts folded: the two would take most of the page.
             CloseoutCard(closeout: closeout, artifacts: session?.work?.artifacts ?? [],
-                         maxHeight: pageHeight > 0 ? pageHeight * Theme.Size.workflowShare : nil)
+                         maxHeight: pageHeight > 0 ? pageHeight * Theme.Size.workflowShare : nil, startsOpen: !hasWorkflows)
                 // A list row carries only where the closeout stands; what changed and what was verified come with
                 // the session's own read. One that arrived without them (a list push after the chat opened) is read again.
                 .task(id: CloseoutRead(key: key, closeout: closeout)) {
@@ -5638,6 +5639,14 @@ struct ChatLine: Identifiable {
         id = content.id
         self.content = content
     }
+
+    private init(id: String, content: Content) {
+        self.id = id
+        self.content = content
+    }
+
+    /// `line` drawn as `row` under its own id: the list keeps its place (`ChatLines.hidingCloseout`).
+    static func replacing(_ line: ChatLine, with row: ChatRow) -> Self { Self(id: line.id, content: .row(row)) }
 
     static func supervision(id: String, lines: [ChatLine], live: Bool, source: MessageSource? = nil) -> Self {
         Self(.supervision(id: id, lines: lines, live: live, source: source))

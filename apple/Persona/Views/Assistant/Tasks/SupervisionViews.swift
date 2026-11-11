@@ -147,12 +147,11 @@ struct OrphanedLine: View {
     var body: some View {
         #if !os(macOS)
         if state != .needsYou, let line = todo.orphanedLine {
-            Label {
-                Text(line).lineLimit(1)
-            } icon: {
+            // Not a `Label`: in a list row its icon takes the row's icon column, far from the words.
+            HStack(alignment: .firstTextBaseline, spacing: Theme.Space.xs) {
                 ThemedIcon(Theme.Icon.error).font(Theme.Font.labelStrong)
+                Text(line).lineLimit(2)
             }
-            .labelStyle(.titleAndIcon)
             .font(Theme.Font.caption)
             .foregroundStyle(Theme.cautionText)
             .accessibilityElement(children: .combine)

@@ -52,6 +52,21 @@ struct CloseoutTests {
         #expect(s.listPreview(muted: false) == "✓ 已合并 PR #12")
     }
 
+    /// Without a closeout nothing new is drawn (DESIGN_SYSTEM.md 1.2 rule 2): no card (`shownCloseout`, which the chat's
+    /// header and its lines key on), no suffix, the row's line as before, and an empty phase with a line is not
+    /// "not finished" (that needs the closeout).
+    @Test(arguments: [("idle", #"{"phase":"done","line":"已合并 PR #12"}"#, "✓ 已合并 PR #12"),
+                      ("unread", #"{"phase":"","line":"还在等 CI"}"#, "还在等 CI"),
+                      ("idle", nil, "最后一句")])
+    func withoutACloseoutTheRowAndTheChatAreAsBefore(state: String, work: String?, line: String) throws {
+        let s = try session(state: state, work: work)
+        #expect(s.shownCloseout == nil && s.closeoutPreview() == nil && s.work?.notFinished != true)
+        #expect(s.listPreview(muted: false) == line)
+        let user = item(1, .text, role: "user", text: "修一下导出")
+        let lines = [ChatLine.row(.user(user)), .row(.assistant(item(2, .text, text: "修好了。")))]
+        #expect(ChatLines.hidingCloseout(lines).map(\.id) == lines.map(\.id))
+    }
+
     /// A closeout or an artifact list in a shape this build does not know is as if there were none: the work state
     /// and the session stay.
     @Test(arguments: [#""closeout":"done""#, #""closeout":42"#, #""closeout":["done"]"#, #""artifacts":"pr""#, #""artifacts":[1,2]"#])
@@ -195,7 +210,10 @@ struct CloseoutTests {
             Issue.record("expected the answers in place")
             return
         }
-        #expect(answer.text == "修好了。" && answer.id == last.id)
+        // The words without the block under an id of their own, so the Markdown kept for the raw reply (by its id) is
+        // never drawn for them; the line keeps the reply's id.
+        #expect(answer.text == "修好了。" && answer.id == last.id + ChatLines.closeoutShownSuffix && shown[4].id == last.id)
+        #expect(shown[4].holds(answer.id))
         #expect(before.text == earlier.text, "an earlier turn's block stays as it was written")
     }
 
