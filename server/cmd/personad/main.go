@@ -60,7 +60,7 @@ const usage = `usage:
                            (docs/assistant/managers.md; personad manager for the details)
 ` + nodecmd.NodeUsage + `
 ` + nodecmd.Usage + `
-  personad share-http --listen <address> --upstream <loopback HTTP origin> --public-origin <HTTP sharing origin>
+  personad share-http --listen <address> --upstream <loopback HTTP origin> --public-origin <HTTP sharing origin> --hub-config <private configuration>
                            isolated anonymous sharing ingress on a separate unprivileged port (docs/server/agent-sharing.md)
   personad relay [config]   run the push relay (config ~/.persona/relay.json): pushes for hubs without the app's APNs
                            key, payloads sealed to the phone (docs/operations/push-relay.md)
@@ -72,7 +72,7 @@ const usage = `usage:
                            secret, uninstall, markets (docs/extensions/extensions.md "Command line"; personad extension for the details;
                            also personad ext …, and personad plugin … as before)
 ` + nodecmd.SysmonUsage + `
-  personad release manifest|check-next …
+  personad release manifest|verify|check-next …
                            the publisher's release manifest and checks (scripts/release/publish.sh, docs/operations/hub-update.md "Public publishing")
   personad update-watch <pending>
                            the watchdog the hub starts over its own update (docs/operations/hub-update.md "Updating")
