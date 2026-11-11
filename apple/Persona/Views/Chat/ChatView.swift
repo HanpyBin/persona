@@ -322,7 +322,8 @@ struct ChatView: View {
         // Agents chats draw their own header (devChrome) so it can follow the scroll; the assistant's floats over the
         // chat (AssistantTopBar, drawn by AssistantView over this page and the new-conversation page). Where the system
         // puts bars down the side (iPhone Duo), an Agents chat hands its actions to it instead: they go in that column.
-        .toolbarVisibility(sideBars ? .visible : .hidden, for: .navigationBar)
+        // Persona's page beside the one sidebar under side bars has New Chat there (#4854, `AssistantView`): its bar shows.
+        .toolbarVisibility(sideBars || newInSideBar ? .visible : .hidden, for: .navigationBar)
         .navigationBarBackButtonHidden(sideBars)
         .pageToolbar { if sideBars { sideBarItems } }
         // The system draws that bar's title over the content, not in the column: a second title right above the
@@ -3369,6 +3370,8 @@ struct ChatView: View {
 
     /// An Agents chat whose actions are in the system's side column (no header of its own).
     private var sideBars: Bool { style == .dev && barsVertical }
+    /// Persona's conversation beside the one sidebar under side bars: the page's New Chat is in the system's column (#4854).
+    private var newInSideBar: Bool { style == .assistant && oneSidebar && barsVertical }
 
     /// The header's actions as system toolbar items, for the side column: back on top (a custom one, so it leaves files /
     /// Git for the chat first), then the panes, the terminal and ⋯. Each has a title as well as a symbol: the column

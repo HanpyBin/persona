@@ -271,7 +271,8 @@ struct AssistantView: View {
             }
             .toolbar(removing: newInSideBar ? .title : nil)
             #if os(iOS) || os(visionOS)
-            .background { RootBarHidden(atRoot: atRoot) }
+            // Not where the system's bar is New Chat's, down the side (#4854): hidden again, the button went with it.
+            .background { RootBarHidden(atRoot: atRoot && !newInSideBar) }
             #endif
             .overlay(alignment: .top) {
                 AssistantTopBar(key: pending == nil ? current : nil,
@@ -1630,11 +1631,20 @@ private struct RootBarHidden: UIViewRepresentable {
         return v
     }
 
+    /// Whether the bar is to be hidden now: read when each late hide runs, so one asked for before the bar was
+    /// wanted (New Chat in the side bars' column, #4854) does not hide it after.
+    @MainActor final class Wanted { var hidden = false }
+
+    func makeCoordinator() -> Wanted { Wanted() }
+
     func updateUIView(_ v: UIView, context: Context) {
+        let wanted = context.coordinator
+        wanted.hidden = atRoot
         guard atRoot else { return }
         // Now, and once the pop and the search's own dismissal have finished.
         for delay in [0.0, 0.4, 0.9] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak v] in
+                guard wanted.hidden else { return }
                 var r: UIResponder? = v
                 while let next = r?.next, !(next is UIViewController) { r = next }
                 guard let nav = (r?.next as? UIViewController)?.navigationController,

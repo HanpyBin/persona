@@ -263,9 +263,6 @@ struct RootView: View {
         ChatsView()
             .environment(\.oneSidebar, true)
             .environment(\.oneSidebarSideBars, barEdge != nil)
-            // Under side bars nothing is above the columns: a margin at their top (#4853). Read at the root, as the shell
-            // reads it, so it never follows the padding it gives.
-            .safeAreaPadding(.top, OneSidebarMetrics.topMargin(sideBars: barEdge != nil))
             .readsVerticalBarEdge($barEdge)
             .modifier(PadRoutes(router: pad))
         #else

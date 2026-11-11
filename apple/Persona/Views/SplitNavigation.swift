@@ -36,6 +36,12 @@ struct SplitNavigation<Sidebar: View, Empty: View, Destinations: ViewModifier>: 
     /// narrow (the open iPhone Duo held upright, #4852). Read while the list is out, kept while it is away; nil: not read
     /// yet (the split's own first moves, out or away, are no one's choice).
     @State private var overlays: Bool?
+    /// The system's bars down the side beside the one sidebar (the open Duo on its side): nothing is above the columns.
+    @Environment(\.oneSidebarSideBars) private var sideBars
+    /// Each column's own top safe area, outside the margin it is given (the page's has the system's bar room under side
+    /// bars, the list's does not).
+    @State private var listSafeTop: CGFloat = 0
+    @State private var pageSafeTop: CGFloat = 0
     #endif
 
     init(path: Binding<NavigationPath>, listKey: String? = nil, destinations: Destinations, home: AnyView? = nil,
@@ -95,6 +101,12 @@ struct SplitNavigation<Sidebar: View, Empty: View, Destinations: ViewModifier>: 
                 // stack that refused its pushes (a path binding that always read empty) first slid the list away, then
                 // back: the sidebar folded and unfolded on every tap.
                 sidebar.modifier(destinations)
+                    #if os(iOS)
+                    .safeAreaPadding(.top, topPad(listSafeTop))
+                    .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top } action: { listSafeTop = $0 }
+                    #endif
+                    // Last, on the column's root: under the top margin's padding the dragged width no longer reached the
+                    // split (SplitDividerTests on the Duo on its side).
                     .modifier(SidebarWidth())
             } detail: {
                 if let home {
@@ -111,6 +123,8 @@ struct SplitNavigation<Sidebar: View, Empty: View, Destinations: ViewModifier>: 
                         if path.isEmpty { home }
                     }
                     #if os(iOS)
+                    .safeAreaPadding(.top, topPad(pageSafeTop))
+                    .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top } action: { pageSafeTop = $0 }
                     .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minX } action: { pageStart = $0; notePosture() }
                     #endif
                 } else {
@@ -161,6 +175,17 @@ struct SplitNavigation<Sidebar: View, Empty: View, Destinations: ViewModifier>: 
         nil
         #endif
     }
+
+    #if os(iOS)
+    /// Beside the one sidebar under side bars both columns start lower, together (#4853): at least the margin, and as low
+    /// as the lower of their own tops (the system gives the page room for its bar there), so the fold and the page's face
+    /// stay on one line. Set inside each column, as the split's columns do not take a safe area given around it.
+    private func topPad(_ own: CGFloat) -> CGFloat {
+        let margin = home == nil ? 0 : OneSidebarMetrics.topMargin(sideBars: sideBars)
+        guard margin > 0 else { return 0 }
+        return max(0, max(margin, listSafeTop, pageSafeTop) - own)
+    }
+    #endif
 
     private var overlaysNow: Bool? {
         #if os(iOS)
@@ -324,6 +349,9 @@ private struct SplitDetailPage: ViewModifier {
 struct SplitPlaceholder: View {
     @Environment(\.splitDetail) private var split
     @Environment(\.splitShowList) private var showList
+    #if os(iOS)
+    @Environment(\.oneSidebarSideBars) private var sideBars
+    #endif
     var symbol: String
     var title: String
     var message: String
@@ -342,7 +370,16 @@ struct SplitPlaceholder: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.pageBackground)
-        .toolbarVisibility(.hidden, for: .navigationBar)
+        // Under the one sidebar's home (#4206), out of sight: on its side the bar there is the home's (New Chat, #4854).
+        .toolbarVisibility(homeHasBar ? .automatic : .hidden, for: .navigationBar)
+    }
+
+    private var homeHasBar: Bool {
+        #if os(iOS)
+        sideBars
+        #else
+        false
+        #endif
     }
 }
 

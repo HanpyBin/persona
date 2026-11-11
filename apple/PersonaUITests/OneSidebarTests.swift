@@ -190,6 +190,13 @@ final class OneSidebarTests: XCTestCase {
     @MainActor func testTheSegmentsPickTheGrouping() throws {
         try launch()
         let segments = element("agents.grouping.segments")
+        // On its side the column is short: the segments are under Pinned, below its first screen, and not built until
+        // scrolled to. A short drag, so the heading above them stays in.
+        let column = app.collectionViews.firstMatch
+        for _ in 0..<3 where !segments.waitForExistence(timeout: 3) {
+            let from = column.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8))
+            from.press(forDuration: 0.05, thenDragTo: from.withOffset(CGVector(dx: 0, dy: -200)))
+        }
         XCTAssertTrue(segments.waitForExistence(timeout: 10), "no grouping segments:\n\(app.debugDescription)")
         XCTAssertGreaterThan(segments.frame.minY, element("sidebar-agents-heading").frame.minY, "the segments are not under the heading")
         XCTAssertFalse(element("agents.grouping").exists, "the phone's grouping pill shows beside the segments")

@@ -661,10 +661,15 @@ sidebar. Code in `Persona/Views/OneSidebar.swift`; the column is the Agents list
   centered on the window's height. With the column away, Persona's page brings it back from its own top-left button, a page pushed there from the system's,
   and Messages, whose stack has no system button for it, from Show Sidebar in its top corner (`feishu-sidebar-button`). On its side and on the iPad the column sits beside the page.
 - **On its side** (the open Duo, the system's bars at the side; `RootTabs` reads `readsVerticalBarEdge` at the root and passes `\.oneSidebarSideBars`):
-  both columns start `Theme.Space.l` lower (`safeAreaPadding(.top, OneSidebarMetrics.topMargin)`, #4853: the display's corner clipped the mark), and the fold and
-  the page's face still start on one line. Persona's page shows New Chat (`assistant-new`) as the system navigation bar's `.topBarTrailing` item, title removed,
-  so the system puts it in its side column under the clock and the camera and moves it with the island and the safe area (#4854, no offset of our own);
-  `AssistantTopBar` keeps a blank in its place so the face stays centered. Upright and on the iPad New Chat stays in the page's top bar.
+  both columns' content starts at least `Theme.Space.l` below the window's top (#4853: the display's corner clipped the mark), and the fold and the page's
+  face still start on one line. A safe area padded around the split view does not reach its columns, so `SplitNavigation` pads each column itself
+  (`topPad`): it measures both columns' own top safe areas and pads each up to the larger of the two and `OneSidebarMetrics.topMargin`, so the column
+  whose system bar sits higher is lowered to the other's line. The padding goes inside `SidebarWidth`, which stays the list column's outermost modifier:
+  under the padding the handle's dragged width no longer reached the split. Persona's page shows New Chat (`assistant-new`) as the system navigation bar's
+  `.topBarTrailing` item, title removed, so the system puts it in its side column under the clock and the camera and moves it with the island and the safe
+  area (#4854, no offset of our own). That bar must stay shown there: `RootBarHidden` does not hide it (and drops a delayed hide once the page wants it
+  back), the hidden stack under the home (`SplitPlaceholder`) keeps its bar, and the assistant's `ChatView` shows its bar too. `AssistantTopBar` keeps a
+  blank in New Chat's place so the face stays centered. Upright and on the iPad New Chat stays in the page's top bar.
 - **The iPad column's color** (#4855, iPad and glass only): the column, its header and foot and the status-bar strip above it are `Theme.Shell.drawer`, a
   neutral near-white / near-black (`OneSidebarMetrics.padColumn`), not the blue-grey `Theme.systemSidebar`, which stays as it was for the Mac and the open Duo.
 - **Selection**: one row at a time looks chosen: the main row, a place or a Pinned row while Persona's page is shown, Messages while it is, the open agent's
