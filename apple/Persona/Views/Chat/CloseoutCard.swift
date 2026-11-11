@@ -47,9 +47,12 @@ struct CloseoutCard: View {
                         Haptics.tap()
                         withAnimation(reduceMotion ? nil : Theme.Motion.reveal) { open.toggle() }
                     } label: {
+                        // Its own height, whatever the row around it offers: a frame with only a minimum takes a smaller
+                        // offer (a Form row's first guess in Settings' sample) and the words ran over the card's edge.
                         head(status)
                             .scaledFrame(minHeight: Theme.Size.tapTarget)
                             .frame(minHeight: Theme.Size.tapTarget)
+                            .fixedSize(horizontal: false, vertical: true)
                             .contentShape(.rect)
                     }
                     .buttonStyle(.plain)
@@ -59,17 +62,26 @@ struct CloseoutCard: View {
                 } else {
                     head(status)
                         .padding(.vertical, Theme.Space.s)
+                        .fixedSize(horizontal: false, vertical: true)
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel(spoken(status))
                         .accessibilityIdentifier("closeout.head")
                 }
                 if hasDetails, open {
                     Divider()
-                    ScrollView(.vertical) {
-                        details.onGeometryChange(for: CGFloat.self) { $0.size.height } action: { detailsHeight = $0 }
+                    Group {
+                        if let maxHeight, maxHeight > 0 {
+                            ScrollView(.vertical) {
+                                details.onGeometryChange(for: CGFloat.self) { $0.size.height } action: { detailsHeight = $0 }
+                            }
+                            .scrollBounceBehavior(.basedOnSize)
+                            .frame(height: shownHeight(maxHeight))
+                        } else {
+                            // No cap (Settings' sample): as tall as they are, laid out at once. A height measured after
+                            // layout never reached the Form row around it, and the card ran over its neighbours.
+                            details.fixedSize(horizontal: false, vertical: true)
+                        }
                     }
-                    .scrollBounceBehavior(.basedOnSize)
-                    .frame(height: shownHeight)
                     .padding(.vertical, Theme.Space.s)
                 }
             }
@@ -83,10 +95,8 @@ struct CloseoutCard: View {
     }
 
     /// The details' height up to the cap; nil until measured.
-    private var shownHeight: CGFloat? {
-        guard detailsHeight > 0 else { return nil }
-        guard let maxHeight, maxHeight > 0 else { return detailsHeight }
-        return min(detailsHeight, maxHeight)
+    private func shownHeight(_ maxHeight: CGFloat) -> CGFloat? {
+        detailsHeight > 0 ? min(detailsHeight, maxHeight) : nil
     }
 
     private func spoken(_ status: String) -> String {
@@ -112,18 +122,13 @@ struct CloseoutCard: View {
                 .foregroundStyle(mark.color)
                 .scaledFrame(width: Theme.Size.markM)
                 .accessibilityHidden(true)
-            // The status with "The agent's own report" beside it; a status too long for both puts that line under
-            // it, where beside it it was cut to its first letter.
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .firstTextBaseline, spacing: Theme.Space.s) {
-                    Text(status).font(Theme.Font.secondaryStrong).foregroundStyle(.primary).lineLimit(1)
-                    ownReport
-                }
-                VStack(alignment: .leading, spacing: Theme.Space.flush) {
-                    Text(status).font(Theme.Font.secondaryStrong).foregroundStyle(.primary).lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                    ownReport
-                }
+            // The status, "The agent's own report" under it: one layout at every width and text size. A `ViewThatFits`
+            // choosing between beside and under measured a Form row (Settings' sample) with one and drew the other, so
+            // the head ran over what is around it.
+            VStack(alignment: .leading, spacing: Theme.Space.flush) {
+                Text(status).font(Theme.Font.secondaryStrong).foregroundStyle(.primary).lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                ownReport.lineLimit(2).fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if hasDetails {
@@ -135,8 +140,8 @@ struct CloseoutCard: View {
         }
     }
 
-    private var ownReport: some View {
-        Text("The agent's own report").font(Theme.Font.caption).foregroundStyle(.secondary).lineLimit(1)
+    private var ownReport: Text {
+        Text("The agent's own report").font(Theme.Font.caption).foregroundStyle(.secondary)
     }
 
     // MARK: Details

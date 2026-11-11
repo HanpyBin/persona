@@ -1354,17 +1354,18 @@ Mac app is frozen: it decodes the same models and draws none of this (`#if os(ma
   `did`, `verified` and the artifacts come with the session's own read (`AppModel.refreshSessionDetail`), which the card
   asks for again when a list row replaced them.
 - **Closeout card** (`CloseoutCard`, `Persona/Views/Chat/CloseoutCard.swift`): in the chat's header, under the
-  workflow section, for a stopped Agent session with a closeout whose status this build knows (`Session.shownCloseout`:
-  not while it works, not on a subagent's page or an assistant conversation). It is in the header and not a row of the
-  list, so it is above the transcript and outside message rendering (super rule 2 is untouched), and it folds away
-  with the header as the list scrolls. The head says the status and "The agent's own report"; a tap anywhere on it (one
-  button at least `tapTarget` tall at every text size, the card's padding inside it; a status too long to share its line
-  puts "The agent's own report" under it) folds the details, which start folded under an open workflow section:
-  what changed, artifacts (a web link opens in the chat's link sheet, "PR #12" for a pull request), merged and deployed,
-  verified, still needs. Each claim shows what the Agent said and the hub's finding in one of three states that differ
-  in words, mark and color: confirmed (the check, `Theme.positive`), contradicted (the warning mark on the caution chip,
-  `Chip` with `.review(.caution)`) and not checked (a dash, secondary). The details scroll inside past a share of the page
-  (`Theme.Size.workflowShare`), and stack label over value at the accessibility text sizes.
+  workflow section, for a stopped Agent session with a closeout whose status this build knows
+  (`Session.shownCloseout`: not while it works, not on a subagent's page or an assistant conversation). It is in the
+  header and not a row of the list, so it is above the transcript and outside message rendering (super rule 2 is
+  untouched), and it folds away with the header as the list scrolls. The head says the status with "The agent's own
+  report" under it; a tap anywhere on it (one button at least `tapTarget` tall at every text size, the card's padding
+  inside it) folds the details, which start folded under an open workflow section: what changed, artifacts (a web link
+  opens in the chat's link sheet, "PR #12" for a pull request), merged and deployed, verified, still needs. Each claim
+  shows what the Agent said and the hub's finding in one of three states that differ in words, mark and color:
+  confirmed (the check, `Theme.positive`), contradicted (the warning mark on the caution chip, `Chip` with
+  `.review(.caution)`) and not checked (a dash, secondary). In the chat the details scroll inside past a share of the
+  page (`Theme.Size.workflowShare`); without that cap (Settings' sample) they take their own height. They stack label
+  over value at the accessibility text sizes.
 - **The raw block** (`ChatLines.hidingCloseout`, `Closeout.strip`): while the card shows, the last reply is drawn without
   its `<closeout …>…</closeout>` block: exactly the last block, the blank lines it leaves and a code fence that held
   nothing else. A reply that was only the block is not drawn; an earlier turn's block and a reply followed by a new
@@ -1396,16 +1397,18 @@ Mac app is frozen: it decodes the same models and draws none of this (`#if os(ma
   failure shows the reason as a toast, sends nothing twice and leaves the buttons (and an armed option, or "Sent back")
   as they were. One request at a time: while an answer or Complete Directly (`BriefActions`, which ends the task) is
   out, its control spins and the whole row is disabled; completed, the row goes as `BriefAcceptRow`'s does. An armed
-  option keeps a button even when its longer "Confirm: …" leaves room for fewer (`DecisionRow.buttonIndices`), and
-  "Other…" and ⋯ never cut their labels. The default line is worked out once per round and day
-  (`DecisionWaitingLines`), not in `body`. An ask without options, and every ask on the Mac, keeps `BriefAcceptRow`.
+  option keeps a button even when its longer "Confirm: …" leaves room for fewer, in the last place
+  (`DecisionRow.buttonIndices`), and "Other…" and ⋯ never cut their labels. The default line is worked out once per
+  round and day (`DecisionWaitingLines`), not in `body`. An ask without options, and every ask on the Mac, keeps
+  `BriefAcceptRow`.
 - **Not built**: the `TODO_DECIDE` notification's option and response actions (the push payload carries `options` and
   `responses`); the watch.
 - **Tests**: `CloseoutTests` (decoding, claims, the rows' line, the stripped block, nothing new without a closeout),
   `DecisionRowTests` (the ask's fields, the default line and its memo, every answer with `FakeHub`, the row staying
   answerable after a fixed answer, the row held during Complete Directly, the armed option keeping its button,
-  orphaned to-dos), and cases in `SessionWorkTests` and `TriageSettingsTests`. DEBUG `-showCloseoutSample confirmed|contradicted|blocked|rows|orphaned|decision|armed` shows
-  each state with made-up content and no hub.
+  orphaned to-dos), and cases in `SessionWorkTests` and `TriageSettingsTests`. DEBUG
+  `-showCloseoutSample confirmed|contradicted|blocked|rows|orphaned|decision|armed` shows each state with made-up
+  content and no hub.
 
 ## Quiet supervision rounds (#2092)
 
