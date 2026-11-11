@@ -217,7 +217,8 @@ func (m *Machine) establishVia(ctx context.Context, p *nodePath, via string) (*n
 	peer.OnEvent = m.nodeTimingEvents(m.onEvent)
 	peer.OnRequest = m.nodeTimingRequests(m.onRequest)
 	c := &nodeConn{path: p, via: via, pipe: l, peer: peer, served: make(chan error, 1), cancel: cancel}
-	go func() { c.served <- peer.Serve(cctx, l.r) }()
+	reader := m.nodeTimingReceiver(cctx, peer, l.r)
+	go func() { c.served <- peer.Serve(cctx, reader) }()
 
 	ictx, icancel := context.WithTimeout(cctx, 40*time.Second)
 	// The engine first, before anything else the node is asked: it then never lists or watches the wrong one.

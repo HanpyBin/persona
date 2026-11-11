@@ -247,3 +247,32 @@ func TestTraceWriterPreservesPartialWriteAndError(t *testing.T) {
 		t.Fatal("transport trace leaked content")
 	}
 }
+
+func TestTraceReceiveDistinguishesBlockedDispatchFromScan(t *testing.T) {
+	r := newTraceRecorder()
+	p := New("h", io.Discard)
+	p.Trace = r.add
+	entered, release := make(chan struct{}), make(chan struct{})
+	p.OnEvent = func(_ string, _ json.RawMessage) { close(entered); <-release }
+	reader, writer := io.Pipe()
+	done := make(chan error, 1)
+	go func() { done <- p.Serve(context.Background(), reader) }()
+	t.Cleanup(func() { writer.Close(); reader.Close(); <-done })
+	_, err := io.WriteString(writer, "{\"event\":\"metrics\",\"params\":{\"secret\":\"private\"}}\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-entered
+	var phases []string
+	for _, e := range r.snapshot() {
+		if strings.HasPrefix(e.Phase, "receive.") {
+			phases = append(phases, e.Phase)
+		}
+	}
+	want := []string{"receive.scan.start", "receive.scan.end", "receive.decode.start", "receive.decode.end", "receive.dispatch.start"}
+	if strings.Join(phases, ",") != strings.Join(want, ",") {
+		t.Fatalf("wrong blocked stage: %v", phases)
+	}
+	close(release)
+	r.wait(t, "receive.dispatch.end")
+}

@@ -149,11 +149,36 @@ func (p *Peer) Serve(ctx context.Context, r io.Reader) error {
 		maximum = p.Limits.FrameBytes
 	}
 	sc := newLineReader(r, maximum) // a bufio.Scanner that gives back what a long line grew (linereader.go)
-	for sc.Scan() {
+	var receiveFrame uint64
+	for {
+		t := traceMeta{kind: "receive"}
+		if p.Trace != nil {
+			receiveFrame++
+			t.frame = receiveFrame
+		}
+		started := p.traceStart()
+		p.trace(t, "receive.scan.start", 0, 0, time.Time{}, nil)
+		scanned := sc.Scan()
+		p.trace(t, "receive.scan.end", len(sc.Bytes()), 0, started, sc.Err())
+		if !scanned {
+			break
+		}
 		var m message
-		if err := json.Unmarshal(sc.Bytes(), &m); err != nil {
+		started = p.traceStart()
+		p.trace(t, "receive.decode.start", len(sc.Bytes()), 0, time.Time{}, nil)
+		decodeErr := json.Unmarshal(sc.Bytes(), &m)
+		p.trace(t, "receive.decode.end", len(sc.Bytes()), 0, started, decodeErr)
+		if decodeErr != nil {
 			continue
 		}
+		if p.Trace != nil {
+			t.label = traceLabel(m.Method)
+			if m.Event != "" {
+				t.label = traceLabel(m.Event)
+			}
+		}
+		started = p.traceStart()
+		p.trace(t, "receive.dispatch.start", len(sc.Bytes()), 0, time.Time{}, nil)
 		switch {
 		case m.Method != "":
 			p.trace(p.traceMeta(m), "request.received", 0, 0, time.Time{}, nil)
@@ -199,6 +224,7 @@ func (p *Peer) Serve(ctx context.Context, r io.Reader) error {
 				ch <- m
 			}
 		}
+		p.trace(t, "receive.dispatch.end", len(sc.Bytes()), 0, started, nil)
 	}
 	err := sc.Err()
 	if err == nil {
