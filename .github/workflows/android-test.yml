@@ -62,6 +62,8 @@ jobs:
       - name: Native emulator captures in all styles and font sizes
         uses: reactivecircus/android-emulator-runner@v2
         with:
+          # Controlled version comparison for Android emulator issue 568480829.
+          emulator-build: '15917651'
           api-level: 34
           target: google_apis
           arch: x86_64
@@ -136,6 +138,8 @@ jobs:
       - name: Native emulator captures in all styles and font sizes
         uses: reactivecircus/android-emulator-runner@v2
         with:
+          # Controlled version comparison for Android emulator issue 568480829.
+          emulator-build: '15917651'
           api-level: 34
           target: google_apis
           arch: x86_64
