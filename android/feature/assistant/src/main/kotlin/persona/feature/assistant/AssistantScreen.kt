@@ -663,7 +663,8 @@ fun AssistantScreen(
                     if (demo) AssistantDemoNotice()
                     Box(Modifier.weight(1f)) {
                         CompositionLocalProvider(LocalChromeInsets provides if (demo) host else host.copy(top = padding.calculateTopPadding())) {
-                            if (assistantChatContent != null) assistantChatContent(active, AssistantChatOptions(readOnlyNote = managers.offline))
+                            if (assistantChatContent != null) assistantChatContent(active, AssistantChatOptions(readOnlyNote = managers.offline,
+                                origin = snapshot.conversations.firstOrNull { it.key == active }?.origin))
                             else chatContent?.invoke(active)
                         }
                         // A compaction of the main conversation: under the bar, over the conversation.
@@ -1083,19 +1084,26 @@ private fun ConversationRow(
     pinned: Boolean = false, onPin: (() -> Unit)? = null, onCopy: () -> Unit = {}, onArchive: (() -> Unit)? = null,
 ) {
     var menu by remember { mutableStateOf(false) }
-    // The channel its latest message came in from (WeChat, the Feishu bot…), as a small mark after the title.
+    // The channel its latest message came in from (WeChat, the Feishu bot…), as a small mark after the title; one an
+    // extension opened has that source's mark there instead (#3758), one source mark a row.
     val channels = LocalChannels.current
     val channel = remember(session.channels, channels) { ChannelSources.latest(session.channels, channels) }
+    val external = session.externalOrigin
+    val sourceMark: (@Composable () -> Unit)? = when {
+        external != null -> ({ JExternalMark(external) })
+        channel != null -> ({ JChannelMark(channel, size = MarkSize.Inline) })
+        else -> null
+    }
     val title = session.conversationTitle(conversationWords())
     if (LocalHomeDrawer.current) {
         JSidebarHistoryRow(title, session.conversationStatus(), selected, onOpen, { menu = true },
             stringResource(R.string.assistant_conversation_actions),
-            titleAccessory = channel?.let { c -> { JChannelMark(c, size = MarkSize.Inline) } })
+            titleAccessory = sourceMark)
     } else JGroupItem(position, modifier) {
         // The time goes on the line under the title, with the state: beside the title it left the title two or three
         // characters in the wide window's 300dp list (2026-11-02), and a narrow drawer cut it short too.
         JRow(title, onClick = onOpen, onLongClick = { menu = true },
-            titleAccessory = channel?.let { c -> { JChannelMark(c, size = MarkSize.Inline) } },
+            titleAccessory = sourceMark,
             subtitle = session.lastText?.takeIf { it.isNotBlank() },
             leading = { JIcon(if (selected) PhIcons.CheckCircle else PhIcons.ChatCircle, null,
                 selected = selected, tint = if (selected) PersonaTheme.palette.accent else PersonaTheme.palette.ink2) },
@@ -1135,6 +1143,9 @@ private val AutoOrigin.icon: PhIcon get() = when (this) {
     AutoOrigin.Extension -> PhIcons.PuzzlePiece
     AutoOrigin.Other -> PhIcons.DotsThree
 }
+
+/** An origin's product mark, drawn on its chip in [icon]'s place: Lark's for Lark /agent (#3758). */
+private val AutoOrigin.brand: Brand? get() = if (this == AutoOrigin.LarkAgent) Brand.Lark else null
 
 @Composable
 private fun AutoOrigin.label(): String = stringResource(when (this) {
@@ -1179,7 +1190,8 @@ private fun AutoOriginChips(origins: List<OriginTally>, picked: AutoOrigin?, onP
         horizontalArrangement = Arrangement.spacedBy(Tokens.Space.s), verticalArrangement = Arrangement.spacedBy(Tokens.Space.s)) {
         for (o in origins) {
             val origin = o.origin ?: continue
-            JChip(origin.label(), selected = origin == picked, onClick = { onPick(origin) }, icon = origin.icon, status = o.status(), count = o.count)
+            JChip(origin.label(), selected = origin == picked, onClick = { onPick(origin) }, icon = origin.icon, status = o.status(), count = o.count,
+                brand = origin.brand)
         }
     }
 }

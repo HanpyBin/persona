@@ -171,6 +171,9 @@
     <string name="designsystem_agent_mark_cli">%1$s, command line</string>
     <string name="designsystem_agent_mark_desktop">%1$s, desktop app</string>
     <string name="designsystem_channel_source">From %1$s</string>
+    <!-- Who opened a conversation from outside the app (#3758): its name in "From %1$s", and an extension's whole line. -->
+    <string name="designsystem_origin_lark_agent">Lark /agent</string>
+    <string name="designsystem_origin_extension_source">From an extension</string>
     <string name="designsystem_series_separator">"; "</string>
     <!-- Chat parts: plans, work rows, the send button -->
     <string name="designsystem_plan_spoken">Plan, step %1$d of %2$d, %3$s</string>

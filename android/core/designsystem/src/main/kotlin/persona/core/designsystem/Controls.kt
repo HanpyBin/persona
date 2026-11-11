@@ -477,7 +477,8 @@ object JChipTokens {
  * A filter or a fact. With [onClick] it toggles; without, it is a quiet label. [onLongClick] (with [onClick]) is a long
  * press for more (a menu of other ways to use it); the chip looks the same. [dot] is a plain colored mark in the place
  * of a [status] dot, for a category rather than a state. Pass [Role.Button] as [role] for an action instead of a toggle.
- * [trailingIcon] adds a compact affordance such as an expansion chevron.
+ * [trailingIcon] adds a compact affordance such as an expansion chevron. [brand] is a product's own mark drawn in [icon]'s
+ * place, as its owner publishes it (Lark /agent's origin chip, #3758).
  */
 @Composable
 fun JChip(
@@ -494,6 +495,7 @@ fun JChip(
     dot: Color? = null,
     role: Role = Role.Checkbox,
     trailingIcon: PhIcon? = null,
+    brand: Brand? = null,
 ) {
     val palette = PersonaTheme.palette
     val style = PersonaTheme.style
@@ -521,7 +523,8 @@ fun JChip(
     ) {
         status?.let { JStatusDot(it, size = JChipTokens.dotSize); Spacer(Modifier.width(JChipTokens.dotGap)) }
         if (status == null) dot?.let { Box(Modifier.size(JChipTokens.dotSize).clip(CircleShape).background(it)); Spacer(Modifier.width(JChipTokens.dotGap)) }
-        icon?.let { JIcon(it, null, size = JChipTokens.iconSize, tint = ink); Spacer(Modifier.width(JChipTokens.iconGap)) }
+        if (brand != null) { JBrandMark(brand, JChipTokens.iconSize, contentDescription = null); Spacer(Modifier.width(JChipTokens.iconGap)) }
+        else icon?.let { JIcon(it, null, size = JChipTokens.iconSize, tint = ink); Spacer(Modifier.width(JChipTokens.iconGap)) }
         Text(text, style = PersonaTheme.type.labelSmall.copy(fontWeight = FontWeight.Medium), color = ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
         count?.let {
             Spacer(Modifier.width(JChipTokens.countGap))

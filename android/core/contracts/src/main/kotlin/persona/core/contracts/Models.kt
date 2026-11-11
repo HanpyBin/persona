@@ -494,6 +494,22 @@ data class Session(
     val backgroundTasks: List<BackgroundTask> get() = if (workflows == null) background.orEmpty() else background.orEmpty().filter { !it.isWorkflow }
     /** An older hub says a workflow runs in [background] but sends no [workflows] to show. */
     val legacyWorkflowRunning: Boolean get() = workflows == null && background.orEmpty().any { it.isWorkflow }
+    /** The extension that opened this assistant conversation ([ExternalOrigin], #3758); null for any other. */
+    val externalOrigin: ExternalOrigin? get() = ExternalOrigin.of(origin)
+}
+
+/**
+ * An assistant conversation an extension opened (#3758, [Session.origin]): Lark /agent, or another extension. The user's
+ * own (none, user, channel), the hub's other origins (inbox, task, spawned) and ones this app doesn't know are not external.
+ * The apps mark these with their source; which drawer group they fold into is decided by the origin as before.
+ */
+enum class ExternalOrigin(val wire: String) {
+    LarkAgent("lark_agent"), Extension("extension");
+
+    companion object {
+        /** The external origin [origin] names, trimmed; null for every other origin and for none. */
+        fun of(origin: String?): ExternalOrigin? = origin?.trim()?.let { o -> entries.firstOrNull { it.wire == o } }
+    }
 }
 
 /** A host's failure notice without its leading warning signs (U+26A0, U+FE0F) and spaces, as iOS `Session.failureText`. */

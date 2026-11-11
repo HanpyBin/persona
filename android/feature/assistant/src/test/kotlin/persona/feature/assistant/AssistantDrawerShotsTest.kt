@@ -59,6 +59,12 @@ class AssistantDrawerShotsTest {
         Session(machineId = "hub", sessionId = "r1", title = "整理收件箱", status = "working", updatedAt = minutesAgo(5)),
         Session(machineId = "hub", sessionId = "r2", title = "周末去哪儿", status = "idle", updatedAt = minutesAgo(90)),
     )
+    /** Conversations extensions opened (#3758): one from Lark /agent, one from another extension. */
+    private val larkAgent = Session(machineId = "hub", sessionId = "x1", title = "1105 | 研究 | 群里的需求汇总", status = "idle",
+        origin = "lark_agent", updatedAt = minutesAgo(120), lastText = "汇总好了，已经回复到群里。")
+    private val byExtension = Session(machineId = "hub", sessionId = "x2", title = "1104 | 文档 | 周报草稿", status = "idle",
+        origin = "extension", updatedAt = minutesAgo(1560), lastText = "周报草稿写好了。")
+    private val external = listOf(larkAgent, byExtension)
 
     private fun out(): File = File(System.getProperty("persona.shots") ?: "build/drawer-shots").also { it.mkdirs() }
 
@@ -219,7 +225,7 @@ class AssistantDrawerShotsTest {
                 origin = "inbox", updatedAt = minutesAgo(40), lastText = "需要你确认：发票抬头用哪个？"),
             Session(machineId = "hub", sessionId = "a3", title = "1106 | 定时 | 早报", status = "working", origin = "task", updatedAt = minutesAgo(3)),
             Session(machineId = "hub", sessionId = "a4", title = "1105 | 研究 | 群里的发布计划", status = "idle", origin = "lark_agent", updatedAt = minutesAgo(600)),
-        )
+        ) + external
         rule.setContent {
             PersonaTheme(darkTheme = dark, reduceMotion = true, style = style) {
                 Box(Modifier.testTag("shot").width(400.dp).height(1300.dp).background(PersonaTheme.palette.background)) {
@@ -245,5 +251,73 @@ class AssistantDrawerShotsTest {
         }
         rule.onAllNodesWithText("定时任务")[1].performClick() // The More row now precedes the automatic-origin chip.
         rule.onNodeWithText("1106 | 定时 | 早报").assertExists()
+        // #3758: the conversations extensions opened, under the Lark /agent chip and the Extensions chip, each with its
+        // source's mark after the title (both Lark /agent ones here), read out as where it came from.
+        rule.onNodeWithText("飞书 /agent").performClick()
+        rule.onNodeWithText(larkAgent.title).assertExists()
+        rule.onAllNodesWithContentDescription("来自 飞书 /agent", useUnmergedTree = true).assertCountEquals(2)
+        for (s in AppStyle.entries) for (d in listOf(false, true)) {
+            style = s; dark = d
+            capture("drawer-auto-lark-${s.name.lowercase()}-${if (d) "dark" else "light"}")
+        }
+        rule.onNodeWithText("扩展").performClick()
+        rule.onNodeWithText(byExtension.title).assertExists()
+        rule.onAllNodesWithContentDescription("来自扩展", useUnmergedTree = true).assertCountEquals(1)
+        rule.onAllNodesWithContentDescription("来自 飞书 /agent", useUnmergedTree = true).assertCountEquals(0)
+        for (s in AppStyle.entries) for (d in listOf(false, true)) {
+            style = s; dark = d
+            capture("drawer-auto-extension-${s.name.lowercase()}-${if (d) "dark" else "light"}")
+        }
+    }
+
+    // #3758 in the phone's drawer (its history rows): the Lark /agent conversation open under its chip, then an extension's.
+    @Test fun marksTheExternalConversationsInThePhonesDrawer() {
+        var style by mutableStateOf(AppStyle.Glass)
+        var dark by mutableStateOf(false)
+        rule.setContent {
+            PersonaTheme(darkTheme = dark, reduceMotion = true, style = style) {
+                CompositionLocalProvider(LocalHomeDrawer provides true) {
+                    Box(Modifier.testTag("shot").width(360.dp).height(1100.dp).background(PersonaTheme.palette.background)) {
+                        AssistantDrawer("", {}, ConversationGroups(main, emptyList(), recent, external), active = larkAgent.key,
+                            hasMain = true, onEnd = null, onMain = {}, onOpen = {}, onInfo = {}, onNew = {}, onHome = {},
+                            onSettings = {}, autoOpen = true)
+                    }
+                }
+            }
+        }
+        rule.onNodeWithText("飞书 /agent").performClick()
+        rule.onNodeWithText(larkAgent.title).assertExists()
+        rule.onAllNodesWithContentDescription("来自 飞书 /agent", useUnmergedTree = true).assertCountEquals(1)
+        for (s in AppStyle.entries) for (d in listOf(false, true)) {
+            style = s; dark = d
+            capture("drawer-external-phone-lark-${s.name.lowercase()}-${if (d) "dark" else "light"}")
+        }
+        rule.onNodeWithText("扩展").performClick()
+        rule.onNodeWithText(byExtension.title).assertExists()
+        for (s in AppStyle.entries) for (d in listOf(false, true)) {
+            style = s; dark = d
+            capture("drawer-external-phone-extension-${s.name.lowercase()}-${if (d) "dark" else "light"}")
+        }
+        rule.onAllNodesWithContentDescription("来自扩展", useUnmergedTree = true).assertCountEquals(1)
+    }
+
+    // #3758: one source mark a row. An external conversation's own mark takes the channel mark's place; the user's own
+    // conversation from a channel keeps the channel's (a search lists both in Recent).
+    @Test fun anExternalConversationsMarkTakesTheChannelMarksPlace() {
+        val channels = listOf(persona.core.contracts.api.HubChannel("feishu", "飞书机器人", "im", "builtin"))
+        val fromChannel = Session(machineId = "hub", sessionId = "c1", title = "群里的需求：飞书里开的", origin = "channel",
+            channels = listOf("feishu"), updatedAt = minutesAgo(10))
+        val larkWithChannel = larkAgent.copy(channels = listOf("feishu"))
+        rule.setContent {
+            PersonaTheme(darkTheme = false, reduceMotion = true, style = AppStyle.Glass) {
+                CompositionLocalProvider(LocalHomeDrawer provides true, LocalChannels provides channels) {
+                    AssistantDrawer("群里", {}, ConversationGroups(main, emptyList(), listOf(fromChannel, larkWithChannel)), active = null,
+                        hasMain = true, onEnd = null, onMain = {}, onOpen = {}, onInfo = {}, onNew = {}, onHome = {}, onSettings = {})
+                }
+            }
+        }
+        rule.onNodeWithText(larkWithChannel.title).assertExists()
+        rule.onAllNodesWithContentDescription("来自 飞书 /agent", useUnmergedTree = true).assertCountEquals(1)
+        rule.onAllNodesWithContentDescription("飞书机器人", useUnmergedTree = true).assertCountEquals(1)
     }
 }

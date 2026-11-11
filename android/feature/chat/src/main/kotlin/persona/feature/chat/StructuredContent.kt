@@ -22,6 +22,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
+import persona.core.contracts.ExternalOrigin
 import persona.core.contracts.Item
 import persona.core.contracts.api.ChannelSources
 import persona.core.designsystem.*
@@ -117,10 +118,12 @@ internal fun userBubbleTime(ts: String, locale: java.util.Locale, zone: java.tim
  * Your message (several queued ones read as one): the photos it carries above its text (`<attached_images>`, read from
  * the session's machine, R3), its file paths as chips under the bubble, a long press for the message menu. Its
  * `<persona-context>` blocks fold into one row above the bubble; a message of nothing but blocks has no bubble (#876).
+ * [openedFrom]: the extension that opened the conversation with this message (#3758), said under it unless a channel is.
  */
 @Composable
 internal fun MergedUserBubble(items: List<Item>, updates: Map<String, ChatTextUpdate> = emptyMap(),
-    onLastLine: ((Int) -> Unit)? = null, images: (@Composable () -> Unit)? = null, menu: Boolean = true) {
+    onLastLine: ((Int) -> Unit)? = null, images: (@Composable () -> Unit)? = null, menu: Boolean = true,
+    openedFrom: ExternalOrigin? = null) {
     // Keyed on this bubble's own texts: [updates] is the whole chat's, and changes with every streamed chunk of a reply.
     val texts = bubbleTexts(items, updates)
     val models = remember(items, texts) { items.mapIndexed { index, item -> messageModel(texts[index], item.from, user = true) } }
@@ -139,12 +142,14 @@ internal fun MergedUserBubble(items: List<Item>, updates: Map<String, ChatTextUp
     // A message that came in from a channel (WeChat, the Feishu bot…) says so under it; the app's own say nothing.
     val channels = LocalChannels.current
     val source = remember(items, channels) { items.firstNotNullOfOrNull { ChannelSources.of(it.clientMsgId, channels) } }
-    val footer: (@Composable () -> Unit)? = if (time == null && files.isEmpty() && source == null) null else ({
+    // The message an extension opened the conversation with says so too, in the same place (#3758); a channel's own wins.
+    val external = openedFrom.takeIf { source == null }
+    val footer: (@Composable () -> Unit)? = if (time == null && files.isEmpty() && source == null && external == null) null else ({
         Column(horizontalAlignment = Alignment.End) {
             FileChips(files, alignEnd = true)
-            if (source == null) time?.let { Text(it, style = PersonaTheme.type.micro, color = PersonaTheme.palette.ink3) }
+            if (source == null && external == null) time?.let { Text(it, style = PersonaTheme.type.micro, color = PersonaTheme.palette.ink3) }
             else Row(horizontalArrangement = Arrangement.spacedBy(Tokens.Space.s), verticalAlignment = Alignment.CenterVertically) {
-                JChannelSource(source)
+                if (source != null) JChannelSource(source) else if (external != null) JExternalSource(external)
                 time?.let { Text(it, style = PersonaTheme.type.micro, color = PersonaTheme.palette.ink3) }
             }
         }

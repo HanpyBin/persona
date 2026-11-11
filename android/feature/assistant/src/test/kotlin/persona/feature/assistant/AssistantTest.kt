@@ -88,6 +88,18 @@ class AssistantTest {
         assertTrue(searched.auto.isEmpty())
     }
 
+    // #3758: the conversations extensions opened are marked as external, and still fold into "Automatic chats" by origin.
+    @Test fun externalConversationsStayInTheirAutomaticGroups() {
+        val lark = Session(machineId = "demo", sessionId = "lark", title = "1105 | 研究 | 群里的需求汇总", origin = "lark_agent")
+        val extension = Session(machineId = "demo", sessionId = "ext", title = "1104 | 文档 | 周报草稿", origin = "extension")
+        val inbox = Session(machineId = "demo", sessionId = "inbox", title = "1106 | 收件箱 | 周报", origin = "inbox")
+        val result = conversationGroups(AssistantSnapshot(null, listOf(lark, extension, inbox)), "", emptySet(), words)
+        assertTrue(result.recent.isEmpty())
+        assertEquals(listOf(AutoOrigin.Inbox, AutoOrigin.LarkAgent, AutoOrigin.Extension), autoGroups(result.auto).map { it.origin })
+        assertEquals(listOf(persona.core.contracts.ExternalOrigin.LarkAgent, persona.core.contracts.ExternalOrigin.Extension, null),
+            listOf(lark, extension, inbox).map { it.externalOrigin })
+    }
+
     @Test fun archivedConversationsLeaveTheHistory() {
         val kept = Session(machineId = "demo", sessionId = "kept", title = "留着")
         val archived = Session(machineId = "demo", sessionId = "gone", title = "归档了", archived = true)

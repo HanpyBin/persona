@@ -232,6 +232,11 @@ data class AssistantChatOptions(
     val showTopBar: Boolean = false,
     /** The conversation's manager is offline (docs/assistant/managers.md step 4): history only, this note where the composer was. */
     val readOnlyNote: String? = null,
+    /**
+     * Who opened the conversation ([Session.origin]), as the conversation list has it: the chat page says where an external
+     * one came from under its first message (#3758) even when the live session list does not carry it.
+     */
+    val origin: String? = null,
 )
 
 /**
