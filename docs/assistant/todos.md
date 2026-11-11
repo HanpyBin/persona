@@ -427,6 +427,10 @@ Agents linked to no task (user-created, `agent_start`, inspection sessions such 
 
 **Idle Agents close too** (`assistant/tasks_idle.go`, #2784): in the same minute loop, an Agent Persona started (including a closed one a message resumed, `agent_send` or the chat) that has been still for `idle_close_hours` (assistant setting, default 12, `0` turns it off, `GET`/`PUT /api/v1/assistant`) is closed like a finished task's, by the same checks and the same `session.retire`. The idle time counts from the later of its last activity and when the hub first saw it running, so a freshly resumed Agent is not closed at once (and after a hub restart the clock restarts). Besides the "Do not close" list below, it is left open when its work state is blocked (on the user, another Agent, CI or a deploy) or has a wake due, and when it belongs to an open task, unless that task itself has had no update for three times the idle time (stalled or never accepted). Transcripts and launch state stay, so the next message resumes it.
 
+**A task leader's workspace closes too** (#4786): on herdr a task leader and its workers share one workspace named after the task;
+once the leader's task is done and nothing runs there any more, the same minute loop closes that workspace
+(`docs/integrations/engines.md` "Task workspaces"). Only a workspace a node opened for the task is closed.
+
 **`/exit` from the assistant**: `agent_send` with only `/exit` or `/quit` closes a running Agent as **Close** does (its tab goes too) instead of typing it in; to an Agent that is not running it does nothing, so a closed Agent is not resumed in a new tab only to quit there.
 
 **Tabs left with a bare shell** (`node/shelltabs.go`): an Agent Persona started can also end on its own (`/exit` typed by hand, an API error it gives up on, a launcher that quits), leaving its tab with only the login shell and `Resume this session with: claude --resume <id>`.

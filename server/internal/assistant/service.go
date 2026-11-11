@@ -123,6 +123,7 @@ type Service struct {
 	adoptMu        sync.Mutex     // agent_control.go: one agent_supervise at a time
 	placeBook      placeBook      // places.go
 	accept         acceptBook     // acceptance.go
+	spaces         taskSpaceBook  // task_space.go
 	deploy         deployProbe    // deploy_check.go: is the work in the running hub
 	// ownerVerifiesAll: every deployed task asks the owner to verify, not only the big ones (ownerVerifies; tests).
 	ownerVerifiesAll bool
@@ -342,6 +343,10 @@ func (s *Service) call(ctx context.Context, device, method string, params, out a
 			s.releasePushes(ctx, id) // something else speaks there: its turns are pushed again (a supervision message holds them anew)
 		}
 	}
+	var spaceRoot string
+	if p, ok := params.(map[string]any); ok && method == DeviceSessionSend {
+		spaceRoot = s.withSendTaskSpace(ctx, device, p) // a resumed task agent's tab opens in its task's workspace (task_space.go)
+	}
 	raw, err := json.Marshal(params)
 	if err != nil {
 		return err
@@ -350,6 +355,9 @@ func (s *Service) call(ctx context.Context, device, method string, params, out a
 	res, ok, err := s.localFleetDeviceCall(ctx, p) // what the hub answered before the nodes' events were the manager's
 	if !ok {
 		res, err = s.hub.DeviceCall(ctx, p)
+	}
+	if err == nil && spaceRoot != "" {
+		s.noteSendTaskSpace(ctx, spaceRoot, device, res)
 	}
 	if err != nil || out == nil || len(res) == 0 {
 		return err

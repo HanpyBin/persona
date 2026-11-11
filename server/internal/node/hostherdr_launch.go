@@ -62,6 +62,11 @@ func (h *herdrHost) RenameSlot(ctx context.Context, slot, name string) error {
 	return t.c.TabRename(ctx, t.id, name)
 }
 
+// CloseSpace closes a workspace of the own server with every tab in it (taskspace.go).
+func (h *herdrHost) CloseSpace(ctx context.Context, space string) error {
+	return h.c.WorkspaceClose(ctx, space)
+}
+
 // Close closes the pane when its tab is split, else the whole tab. When the panes cannot be counted it closes only the
 // pane: herdr closes the tab itself when that was its last pane, and a split tab keeps its other panes (#4873).
 func (h *herdrHost) Close(ctx context.Context, pane host.PaneRef, space, slot string) error {

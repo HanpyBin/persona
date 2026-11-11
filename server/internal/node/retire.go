@@ -189,7 +189,7 @@ func (n *Node) resumeOtherWith(ctx context.Context, id string, st sessionState, 
 	if len(paths) > 0 {
 		text = strings.TrimSpace(text) + "\n\n<attached_images>\n" + strings.Join(paths, "\n") + "\n</attached_images>"
 	}
-	ws, err := n.workspaceFor(ctx, launch, st.Cwd)
+	ws, err := n.tabSpace(ctx, launch, st.Cwd, "") // a task's own workspace on herdr (taskspace.go)
 	if err != nil {
 		return err
 	}
@@ -249,7 +249,7 @@ func (n *Node) resumeCodex(ctx context.Context, launch host.Launcher, id string,
 }
 
 // newTab opens a tab in workspace ws for cwd, named tabName (or agent-<n>); with no workspace, a new one named after
-// the directory, whose first tab it is. The pane is marked as Persona's (personaTabToken, the session id when it is
+// the directory (a task's: after the task, taskspace.go), whose first tab it is. The pane is marked as Persona's (personaTabToken, the session id when it is
 // already known): once its agent exits, the shell left behind is cleaned up (shelltabs.go).
 func (n *Node) newTab(ctx context.Context, launch host.Launcher, cwd, ws, tabName, id string) (*host.Created, error) {
 	if c := adoptedPane(ctx); c != nil { // "Run Agent Here": the pane the user picked, not a new tab (panes_actions.go)
@@ -260,8 +260,13 @@ func (n *Node) newTab(ctx context.Context, launch host.Launcher, cwd, ws, tabNam
 	}
 	var created *host.Created
 	var err error
+	ts := taskSpaceIn(ctx, launch)
 	if ws == "" {
-		if created, err = launch.CreateSpace(ctx, cwd, filepath.Base(cwd)); err == nil && created.SlotID != "" {
+		label := filepath.Base(cwd)
+		if ts != nil {
+			label = ts.label
+		}
+		if created, err = launch.CreateSpace(ctx, cwd, label); err == nil && created.SlotID != "" {
 			var taken map[string]bool
 			if _, ok := launch.(*herdrCoreHost); ok {
 				taken = n.tabLabels(ctx, launch, created.SpaceID) // CreateSpace can reuse an app space by its folder.
@@ -273,6 +278,9 @@ func (n *Node) newTab(ctx context.Context, launch host.Launcher, cwd, ws, tabNam
 	}
 	if err != nil {
 		return nil, fmt.Errorf("创建终端标签页失败：%w", err)
+	}
+	if ts != nil {
+		ts.opened(cmp.Or(ws, created.SpaceID))
 	}
 	markPersonaTab(ctx, launch, created.Pane, id)
 	return created, nil

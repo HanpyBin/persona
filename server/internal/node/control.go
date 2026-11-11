@@ -140,11 +140,9 @@ func (n *Node) start(ctx context.Context, cwd, launcher, prompt, resume, workspa
 	if err != nil {
 		return nil, err
 	}
-	ws := workspaceID
-	if ws == "" {
-		if ws, err = n.workspaceFor(ctx, launch, cwd); err != nil {
-			return nil, err
-		}
+	ws, err := n.tabSpace(ctx, launch, cwd, workspaceID) // a task's own workspace on herdr (taskspace.go)
+	if err != nil {
+		return nil, err
 	}
 	if codex && kind != traexAgent { // codex_start.go
 		if resume != "" { // a Codex thread is resumed above: this id is not one

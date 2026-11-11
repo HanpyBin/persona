@@ -84,7 +84,12 @@ type fakeHub struct {
 	snaps         []Snapshot
 
 	// Agents a task starts (session.start a1, a2…) and what was sent to them; a machine offline, a node refusing.
-	starts       []map[string]any
+	starts []map[string]any
+	// herdrSpaces: the node opens task workspaces as herdr does (node taskspace.go): a start naming workspace_label
+	// opens its tab in workspace_id when it is not in spacesGone, else in a new workspace wT<n>, and says which.
+	herdrSpaces  bool
+	spacesMade   int
+	spacesGone   map[string]bool
 	agentSent    []map[string]any
 	agents       int
 	offline      map[string]bool
@@ -441,8 +446,17 @@ func (f *fakeHub) deviceCall(ctx context.Context, p DeviceCall) (json.RawMessage
 			return nil, f.failStart
 		}
 		f.agents++
-		return json.Marshal(map[string]any{"session": proto.Session{SessionID: fmt.Sprintf("s%d", f.agents), Cwd: a["cwd"].(string), Agent: "claude",
-			StartError: f.startFailed}})
+		res := map[string]any{"session": proto.Session{SessionID: fmt.Sprintf("s%d", f.agents), Cwd: a["cwd"].(string), Agent: "claude",
+			StartError: f.startFailed}}
+		if label, _ := a["workspace_label"].(string); f.herdrSpaces && label != "" {
+			ws, _ := a["workspace_id"].(string)
+			if ws == "" || f.spacesGone[ws] {
+				f.spacesMade++
+				ws = fmt.Sprintf("wT%d", f.spacesMade)
+			}
+			res["task_workspace"] = map[string]any{"workspace_id": ws, "label": label}
+		}
+		return json.Marshal(res)
 	case DeviceSessionSend:
 		if f.failSend != nil {
 			return nil, f.failSend

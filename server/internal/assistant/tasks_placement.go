@@ -205,6 +205,7 @@ func (s *Service) startTaskAgent(ctx context.Context, t *PlanTask, retry bool) (
 	if t.WorkspaceResolved != nil && t.WorkspaceResolved.WorkspaceID != "" {
 		params["workspace_id"] = t.WorkspaceResolved.WorkspaceID
 	}
+	s.taskSpaceParams(ctx, *t, m.ID, params) // a leader's task workspace, its workers' tabs in it (task_space.go)
 	if t.Model != "" {
 		params["model"] = t.Model
 	}
@@ -221,6 +222,7 @@ func (s *Service) startTaskAgent(ctx context.Context, t *PlanTask, retry bool) (
 	}
 	var res struct {
 		Session proto.Session `json:"session"`
+		taskSpaceReply
 	}
 	picked, _ := params["launcher"].(string)
 	s.setPlanThen(ctx, m.ID, params)
@@ -249,6 +251,7 @@ func (s *Service) startTaskAgent(ctx context.Context, t *PlanTask, retry bool) (
 	if !res.Session.Starting {
 		s.recordStartSuccess(ctx, m.ID, s.startLauncher(ctx, picked))
 	}
+	s.noteTaskSpace(ctx, taskSpaceRoot(*t), m.ID, res.taskSpaceReply)
 	if refused { // only once it started here: a task moved elsewhere after a failed start asks again
 		off := false
 		t.Ultracode = &off // a retry does not ask again

@@ -142,6 +142,34 @@ Selecting `herdr-both` attaches both herdr and herdr-core hosts:
   it works normally while the other list is empty).
 - Orca next to herdr goes through "Host sets" above; there are no more combination options.
 
+## Task workspaces (#4786)
+
+On herdr a task leader and its workers share one workspace, so one task reads as one window in herdr's UI, and the workspace goes
+away once the task is done. The hub decides which task an Agent belongs to (`server/internal/assistant/task_space.go`); the node only
+places tabs and closes what it is told to (`server/internal/node/taskspace.go`).
+
+- **Opening.** A task leader's `session.start` carries `workspace_label`, the task's title. With no `workspace_id`, the node opens a new
+  workspace under that label for the leader's tab (never the one named after the directory) and answers `task_workspace`
+  (`{workspace_id, label}`). The hub records it per leader task (settings key `task_workspaces`).
+- **Workers.** A worker's start carries the leader's `workspace_id` and `workspace_label`, and its tab opens there. A writable worker
+  still works in its own Git worktree, made with `worktree.add` (a checkout only), not `worktree.create`, which would open a workspace
+  of its own. Its tab's directory is that worktree, so Git stays isolated.
+- **Rework and "go on"** go to the same session as before. Every `session.send` to a task's Agent names the task's workspace, so a
+  retired Agent resumes as a new tab there, not in a workspace found or opened by the directory's name.
+- **Gone or renamed.** herdr removes a workspace with its last tab, so the task's workspace may be gone when the next tab opens. The node
+  then opens a new one under the same label and answers its id; the hub records the new id. A workspace listed under another label was
+  renamed by the user and is no longer the task's: the node leaves it alone and opens a new one.
+- **Closing.** Accepted or cancelled workers lose their tabs as before (`session.retire`, or `session.close` on cancel). Once the leader's
+  task is done (accepted, cancelled or closed by the user) and no Agent runs in its workspace any more, the hub's minute loop asks the node
+  for `workspace.close` with the recorded id and label. The node closes it only while herdr lists that id under that label on its own
+  server. Already gone is not an error. A workspace the user opened, renamed or that belongs to another task is never closed.
+- **Other hosts.** Paseo, Orca, Tern, Herdr App and older nodes ignore `workspace_label` and answer no `task_workspace`, so the hub records
+  nothing, workers keep their own worktree workspaces, and nothing is closed. Agents already running are not moved.
+
+herdr 0.8.2, checked on a test workspace: `herdr workspace close <id>` (socket `workspace.close {workspace_id}`) closes the workspace with
+every tab in it; closing it again answers `workspace_not_found`. Closing a workspace's last tab removes the workspace too. Workspace ids
+are not reused while the server runs (`wM`, `wN`, `wP`, `wQ` in a row).
+
 ## Tern
 
 [Tern](https://stencil.so) is Stencil's multiplexing terminal. The node drives it through its `tern` command line (`server/internal/terncli`,

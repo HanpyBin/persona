@@ -55,6 +55,7 @@ func (s *Service) taskCloseLoop(ctx context.Context) {
 		case <-t.C:
 		}
 		s.closeDoneTaskAgents(ctx, refused)
+		s.closeDoneTaskSpaces(ctx, time.Now()) // a done leader task's own workspace (task_space.go)
 		s.closeIdleAgents(ctx, refused, idleSeen)
 		s.orphanWatch(ctx, time.Now()) // open to-dos whose agents are all gone (tasks_orphan.go)
 		if now := time.Now(); now.Sub(archived) >= autoArchiveEvery {

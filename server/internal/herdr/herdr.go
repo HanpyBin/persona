@@ -592,6 +592,12 @@ func (c *Client) WorkspaceRename(ctx context.Context, workspace, label string) e
 		"workspace", "rename", workspace, label)
 }
 
+// WorkspaceClose closes a workspace with every tab in it. herdr 0.8.2 answers a second close of the same id with
+// workspace_not_found (IsNotFound), and never reuses a closed workspace's id while the server runs.
+func (c *Client) WorkspaceClose(ctx context.Context, workspace string) error {
+	return c.call(ctx, "workspace.close", map[string]any{"workspace_id": workspace}, nil, "workspace", "close", workspace)
+}
+
 func (c *Client) TabClose(ctx context.Context, tab string) error {
 	return c.call(ctx, "tab.close", map[string]any{"tab_id": tab}, nil, "tab", "close", tab)
 }

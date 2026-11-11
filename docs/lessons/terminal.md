@@ -2,6 +2,10 @@
 
 Pitfalls, odd behavior, and the tradeoffs made at the time (originally in `CLAUDE.md`; index in `docs/lessons/README.md`). Add new lessons to the relevant section, or start a section if none fits.
 
+- herdr (0.8.2) removes a workspace when its last tab closes, so a workspace id Persona keeps can be gone by the time the next tab opens:
+  check that herdr still lists it (under the label it was opened with, since the user may rename it) before opening a tab there, and
+  treat `workspace_not_found` from `workspace close` as already done (#4786, `docs/integrations/engines.md` "Task workspaces").
+  `workspace close` takes every tab with it, so only close a workspace Persona opened and recorded, never one found by its name.
 - herdr `pane read --source recent` returns at most about 1000 lines (even with a larger --lines), has no offset or scrolling API, and does not persist them: terminal history can only be read in chunks within those 1000 lines; the transcript holds the complete history.
 - For keys that distinguish single tap / quick double tap / hold (terminal key-bar modifiers), do not track press and release with `DragGesture(minimumDistance: 0)`: it misses the second tap of a quick double tap
   (XCUITest's doubleTap sends only one down / up pair). Overlay a UIView that overrides touchesBegan / Ended (`TouchArea` in `TerminalKeys.swift`).

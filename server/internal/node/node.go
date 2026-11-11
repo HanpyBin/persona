@@ -583,6 +583,7 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 		ResumeSessionID  string        `json:"resume_session_id"`
 		Host             string        `json:"host"` // session.start: the enabled host to open in ("" the default host, #2576)
 		WorkspaceID      string        `json:"workspace_id"`
+		WorkspaceLabel   string        `json:"workspace_label"` // session.start, session.send: a task's workspace (taskspace.go)
 		Text             string        `json:"text"`
 		Images           []proto.Image `json:"images"`
 		PreKeys          []string      `json:"pre_keys"`
@@ -1022,8 +1023,10 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 		if p.ResumeSessionID != "" {
 			r = n.fillResume(p.ResumeSessionID, r) // what it ran with, for what the start leaves out (retire.go)
 		}
+		ctx, ts := withTaskSpace(ctx, p.WorkspaceID, p.WorkspaceLabel) // taskspace.go
 		s, err := n.start(ctx, r.cwd, r.launcher, p.Prompt, p.ResumeSessionID, p.WorkspaceID, r.mode, r.effort, r.tab, "", p.AgentType, r.execution)
-		return n.creationResult(s, err, p.ResumeSessionID, p.CreationID, p.Incarnation)
+		res, err := n.creationResult(s, err, p.ResumeSessionID, p.CreationID, p.Incarnation)
+		return withTaskSpaceReply(res, ts), err
 	case "session.fork": // "Branch to new chat" (fork.go)
 		id, err := n.fork(ctx, p.SessionID, p.AtItemID)
 		return map[string]any{"session_id": id}, err
@@ -1102,7 +1105,8 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 	case "session.send":
 		var opts sendOpts
 		_ = json.Unmarshal(params, &opts)
-		return ok(n.sends.once(opts.ClientMsgID, func() error {
+		ctx, ts := withTaskSpace(ctx, p.WorkspaceID, p.WorkspaceLabel) // a resume opens its tab there (taskspace.go)
+		res, err := ok(n.sends.once(opts.ClientMsgID, func() error {
 			var after int
 			if opts.ClientMsgID != "" {
 				after = n.echoBase(p.SessionID)
@@ -1115,6 +1119,7 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 				return n.send(ctx, p.SessionID, p.Text, p.Images, opts)
 			})
 		}))
+		return withTaskSpaceReply(res, ts), err
 	case "session.echoes": // what the hub kept of earlier sends (echo.go), after this node started
 		var a struct {
 			Echoes []echoRecord `json:"echoes"`
@@ -1302,6 +1307,8 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 		}
 		_ = json.Unmarshal(params, &a)
 		return n.worktreeSnapshot(ctx, p.Kind, p.Cwd, a.NameHint)
+	case "workspace.close": // a done task's own workspace (taskspace.go)
+		return n.closeTaskSpace(ctx, p.WorkspaceID, p.Label)
 	case "tabs.close":
 		return ok(n.closeTab(ctx, p.Kind, p.TabID))
 	case "tabs.rename":

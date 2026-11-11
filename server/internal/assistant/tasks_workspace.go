@@ -239,7 +239,7 @@ func (s *Service) admitTaskWorkspace(ctx context.Context, t *PlanTask) error {
 			return err
 		}
 		if t.Workspace.Mode == workspaceNew {
-			wt, err := s.newWorktree(ctx, t.Machine, t.Cwd, t.WorkspaceResolved.Branch)
+			wt, err := s.newTaskWorktree(ctx, t)
 			if err != nil {
 				return fmt.Errorf("%s: %w", i18n.T(s.lang(ctx), "assistant-tasks_workspace.create"), err)
 			}
