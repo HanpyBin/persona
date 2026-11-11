@@ -513,7 +513,7 @@ struct AddComputerSheet: View {
     private let confirming: Bool
 
     init(request: AddComputerRequest, group: String? = nil) {
-        _page = State(initialValue: AddComputerModel(request, group: group ?? AppModel.shared.hubGroup))
+        _page = State(initialValue: AddComputerModel(request, group: group ?? AppModel.shared.hub?.group ?? AppModel.shared.hubGroup))
         if case .confirm = request { confirming = true } else { confirming = false }
     }
 
