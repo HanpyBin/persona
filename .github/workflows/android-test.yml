@@ -82,6 +82,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           path: .ci-evidence/
+          include-hidden-files: true
   emulator-shots:
     needs: [baseline-readiness]
     runs-on: ubuntu-latest
@@ -158,3 +159,4 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           path: .ci-evidence/
+          include-hidden-files: true
