@@ -118,6 +118,24 @@ class AssistantTest {
             conversationActions(resources, false, true, {}, {}, {}, onArchive = {}).map { it.label })
     }
 
+    @Test fun trimmedExternalOriginsKeepTheirNamedAutomaticGroups() {
+        val lark = Session(machineId = "hub", sessionId = "lark", origin = " \tlark_agent\n")
+        val extension = Session(machineId = "hub", sessionId = "extension", origin = "\nextension ")
+        val unknown = Session(machineId = "hub", sessionId = "unknown", origin = "future_origin")
+        val mine = Session(machineId = "hub", sessionId = "mine", origin = "user")
+        val channel = Session(machineId = "hub", sessionId = "channel", origin = "channel")
+        val legacy = Session(machineId = "hub", sessionId = "legacy")
+        val result = conversationGroups(AssistantSnapshot(null, listOf(lark, extension, unknown, mine, channel, legacy)),
+            "", emptySet(), words)
+        assertEquals(setOf(mine.key, channel.key, legacy.key), result.recent.map { it.key }.toSet())
+        val groups = autoGroups(result.auto)
+        assertEquals(listOf(AutoOrigin.LarkAgent, AutoOrigin.Extension, AutoOrigin.Other), groups.map { it.origin })
+        assertEquals(listOf(1, 1, 1), groups.map { it.count })
+        assertEquals(AutoOrigin.LarkAgent, lark.autoOrigin())
+        assertEquals(AutoOrigin.Extension, extension.autoOrigin())
+        assertEquals(AutoOrigin.Other, unknown.autoOrigin())
+    }
+
     @Test fun firstConversationBecomesMainAndSendUsesOutbox() = runTest {
         val repository = DemoAssistantRepository(DemoWords("周报素材", "整理这周完成的工作", "下周出差的行程", "文档的要点", "新对话"))
         val main = repository.start()
