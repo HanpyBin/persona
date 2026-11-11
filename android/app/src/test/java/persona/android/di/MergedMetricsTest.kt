@@ -69,6 +69,15 @@ class MergedMetricsTest {
             assertEquals(2, mergedMetrics(groups).machines.size)
             second.status.set(404)
             assertEquals(listOf("same"), mergedMetrics(groups).machines.map { it.machineId })
+            second.status.set(503)
+            assertEquals(listOf("same"), mergedMetrics(groups).machines.map { it.machineId })
+            second.status.set(200)
+            assertEquals(2, mergedMetrics(groups).machines.size)
+            second.legacy.set(true)
+            second.status.set(404)
+            assertEquals(listOf("same"), mergedMetrics(groups).machines.map { it.machineId })
+            second.status.set(503)
+            assertEquals(listOf("same"), mergedMetrics(groups).machines.map { it.machineId })
         } }
     }
 
@@ -94,11 +103,12 @@ private class MetricsHub(cpu: Int) : Closeable {
     val refused = AtomicBoolean(false)
     val status = AtomicInteger(200)
     val step = AtomicInteger(60)
+    val legacy = AtomicBoolean(false)
     private val client = OkHttpClient()
     private val server = MockWebServer().apply {
         dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse = when (request.requestUrl!!.encodedPath) {
-                "/api/v1/managers" -> MockResponse().setBody(
+                "/api/v1/managers" -> if (legacy.get()) MockResponse().setResponseCode(404) else MockResponse().setBody(
                     """{"default":"primary","managers":[{"id":"primary","name":"Primary","online":true}]}""")
                 "/api/v1/metrics" -> if (refused.get()) MockResponse().setResponseCode(503)
                     else if (status.get() != 200) MockResponse().setResponseCode(status.get())

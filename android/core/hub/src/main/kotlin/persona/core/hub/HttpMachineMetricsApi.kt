@@ -58,7 +58,8 @@ class HttpMachineMetricsApi(
         val roster = try {
             get<ManagerRoster>(base.newBuilder().addPathSegments("api/v1/managers").build())
         } catch (_: MetricsUnavailable) {
-            return@withLock readDashboard(null).also { cache.previous = it }
+            return@withLock try { readDashboard(null).also { cache.previous = it } }
+            catch (unsupported: MetricsUnavailable) { cache.previous = null; throw unsupported }
         }
         checkScope()
         val installed = roster.installed
@@ -79,7 +80,9 @@ class HttpMachineMetricsApi(
         val fresh = results.mapNotNull { (manager, result) -> result.getOrNull()?.let { manager to it } }
         if (fresh.isEmpty()) {
             val errors = results.mapNotNull { it.second.exceptionOrNull() }
-            throw (errors.firstOrNull { it !is MetricsUnavailable } ?: errors.first())
+            val error = errors.firstOrNull { it !is MetricsUnavailable } ?: errors.first()
+            if (error is MetricsUnavailable) cache.previous = null
+            throw error
         }
         cache.snapshots.keys.retainAll(installed.map { it.id }.toSet())
         fresh.forEach { (manager, dashboard) -> cache.snapshots[manager] = dashboard }
