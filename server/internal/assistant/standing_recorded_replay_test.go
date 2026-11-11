@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -84,7 +85,7 @@ func TestRecordedStandingReplay(t *testing.T) {
 				r.Reason = a.Reason
 				if err != nil {
 					r.Error = err.Error()
-					r.ModelError = model.result == ""
+					r.ModelError = model.result == "" && !model.validation
 					r.Reason = "Model or validation failed; preserve the existing confirmation route."
 				} else {
 					grant := StandingAuthorization{Directory: ix.Cwd, Actions: []string{"merge", "push", "deploy-test"}, Conditions: []string{"ci_green", "no_conflicts"}}
@@ -188,11 +189,12 @@ func recordedReplayScopeMatches(ix proto.Interaction) bool {
 }
 
 type recordedManagedModel struct {
-	dir      string
-	raw      json.RawMessage
-	result   string
-	launcher string
-	model    string
+	dir        string
+	raw        json.RawMessage
+	result     string
+	launcher   string
+	model      string
+	validation bool
 }
 
 func (m *recordedManagedModel) JSON(ctx context.Context, system, user string, out any) error {
@@ -242,6 +244,7 @@ func (m *recordedManagedModel) JSON(ctx context.Context, system, user string, ou
 		return fmt.Errorf("invalid managed bridge response envelope: %w", err)
 	}
 	if envelope.Error != "" {
+		m.validation = envelope.Validation
 		return fmt.Errorf("configured production AI client failed: %s", envelope.Error)
 	}
 	m.result = string(envelope.Result)
@@ -260,8 +263,9 @@ type recordedBridgeInput struct {
 }
 
 type recordedBridgeOutput struct {
-	Result json.RawMessage `json:"result,omitempty"`
-	Error  string          `json:"error_category,omitempty"`
+	Result     json.RawMessage `json:"result,omitempty"`
+	Error      string          `json:"error_category,omitempty"`
+	Validation bool            `json:"validation_error,omitempty"`
 }
 
 // TestRecordedStandingReplayBridge is entered only by the managed launcher.
@@ -287,6 +291,22 @@ func TestRecordedStandingReplayBridge(t *testing.T) {
 			cancel()
 			if err != nil {
 				output.Error = "production_client_error"
+				var syntax *json.SyntaxError
+				var valueType *json.UnmarshalTypeError
+				switch {
+				case errors.Is(err, ai.ErrNoObject):
+					output.Error, output.Validation = "model_no_json_object", true
+				case errors.Is(err, ai.ErrUnterminated):
+					output.Error, output.Validation = "model_unterminated_json", true
+				case errors.Is(err, ai.ErrTruncated):
+					output.Error, output.Validation = "model_truncated_json", true
+				case errors.Is(err, ai.ErrRefused):
+					output.Error, output.Validation = "model_refused", true
+				case errors.As(err, &syntax), errors.As(err, &valueType):
+					output.Error = "model_or_response_invalid_json"
+				case ai.Transient(err):
+					output.Error = "transient_transport_or_status"
+				}
 				for _, code := range []string{"400", "401", "403", "404", "408", "429", "500", "502", "503", "504"} {
 					if strings.Contains(err.Error(), code) {
 						output.Error = "http_" + code
