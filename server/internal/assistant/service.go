@@ -51,6 +51,8 @@ type Service struct {
 	id string
 	// build is Options.Build.
 	build string
+	// northStarOn: the north star's recording start is saved (north_star.go).
+	northStarOn atomic.Bool
 	// nodeAnswering: the computers' requests being answered now, but the ones that wait on a person (idle.go).
 	nodeAnswering atomic.Int64
 	// taskStarting counts queued and running task starts through linking or failure bookkeeping (idle.go).
@@ -318,14 +320,6 @@ func (s *Service) call(ctx context.Context, device, method string, params, out a
 			}
 		}
 	}
-	if p, ok := params.(map[string]any); ok && startScopeMethods[method] {
-		// A Persona-managed provider out of this computer's scope does not run there (models_launchers_scope.go).
-		if name, _ := p["launcher"].(string); name != "" {
-			if err := s.launcherScopeErr(ctx, device, name); err != nil {
-				return err
-			}
-		}
-	}
 	if p, ok := params.(map[string]any); ok && method == DeviceAssistantSend {
 		// The node reads a missing is_main as false, and is_main is part of what a process runs: a relay into the main
 		// conversation (deliverRelay) without it started that conversation, or restarted it when idle, on the ordinary
@@ -337,6 +331,17 @@ func (s *Service) call(ctx context.Context, device, method string, params, out a
 		}
 		if _, set := p["interject_background"]; !set && s.interjectBackground(ctx) {
 			p["interject_background"] = true // what the node does with a message that comes while it answers
+		}
+	}
+	if p, ok := params.(map[string]any); ok && startScopeMethods[method] {
+		// A Persona-managed provider out of this computer's scope does not run there (models_launchers_scope.go).
+		if name, _ := p["launcher"].(string); name != "" {
+			if err := s.launcherScopeErr(ctx, device, name); err != nil {
+				if method == DeviceAssistantSend {
+					s.recordManagerSend(device, p, nil, err) // a failed start or resume all the same (north_star.go)
+				}
+				return err
+			}
 		}
 	}
 	if p, ok := params.(map[string]any); ok && method == DeviceAssistantSend && p[holdPushesParam] != true && !meetingSource(p) {

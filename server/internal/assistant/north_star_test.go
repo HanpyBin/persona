@@ -217,7 +217,7 @@ func TestNorthStarBeforeRecordingIsUnknown(t *testing.T) {
 		t.Fatalf("truncated runs: %v", cut.Availability.Gaps)
 	}
 	lines := briefNorthStar{Today: ns, todayOK: true}.lines(i18n.Lang("en"))
-	if lines[0] != "Interruptions today: unknown (not recorded yet); no comparison with yesterday" {
+	if lines[0] != "Interruptions today: unknown (not recorded yet); not comparable with yesterday" {
 		t.Fatalf("unrecorded interruptions line: %q", lines[0])
 	}
 }
@@ -303,7 +303,7 @@ func TestNorthStarBriefingOpensWithIt(t *testing.T) {
 	want := []string{
 		"Interruptions today: 1 (0 questions · 0 cards to act on · 1 notifications · 0 authorization cards); yesterday by this time 3, -2",
 		"Availability today (main and leader conversations): 75% (3 of 4 starts and resumes worked); yesterday by this time 50%, +25 pp",
-		"Failures by reason: conversation_not_found 1",
+		"Failures by reason: conversation not found 1",
 		"Source: Persona's own records: cards and notifications that reached you (cards a supervisor took, standing authorizations and test probes excluded), and every start and resume of the main and leader conversations.",
 	}
 	if strings.Join(f.NorthStarLines, "\n") != strings.Join(want, "\n") {
@@ -433,28 +433,214 @@ func TestNorthStarCommandReadsReadOnly(t *testing.T) {
 	}
 }
 
-// A dot's daily report (a daily task in a leader conversation, with no facts of its own) opens with the north star;
-// a daily task elsewhere does not.
-func TestNorthStarOpensADotsDailyReport(t *testing.T) {
+// Only a daily report (Task.Report, set with schedule_routine's report) opens with the north star: a plain daily task
+// in the same leader conversation, such as a reminder, does not (#4622 review).
+func TestNorthStarOpensOnlyADailyReport(t *testing.T) {
 	ctx := context.Background()
 	s, database, _ := northStarDB(t)
 	now := time.Now()
 	mustDo(t, database.PutSetting(ctx, northStarSinceKey, northStarSince{At: now.Add(-72 * time.Hour)}))
 	mustDo(t, database.AddWorkEvent(ctx, db.WorkEvent{At: now.Add(-time.Minute), MachineID: "pc", SessionID: "dot-chat", Kind: sendEvent,
 		Detail: map[string]any{"op": "resume", "origin": originManager, "role": roleDot, "outcome": outcomeOK}}))
-	facts := s.northStarRunFacts(ctx, "dot-chat", now)
+	reminder := Task{ID: "fu_reminder", Title: "Stand up", Repeat: repeatDaily, Time: "10:00", SessionID: "dot-chat", Prompt: "Remind me to stand up."}
+	if got := s.runFacts(ctx, reminder, now); got != "" {
+		t.Fatalf("a daily reminder in a leader conversation got the north star:\n%s", got)
+	}
+	out, err := s.runTool(ctx, "pc", "dot-chat", "schedule_routine", json.RawMessage(`{"title":"Dot daily report","prompt":"Write today's report.","time":"18:00","report":true}`))
+	mustDo(t, err)
+	var report Task
+	for _, x := range s.tasksView(ctx, nil) {
+		if x.Title == "Dot daily report" {
+			report = x
+		}
+	}
+	if !report.Report {
+		t.Fatalf("schedule_routine report:true did not mark it (%s): %+v", out, report)
+	}
+	if _, err := s.runTool(ctx, "pc", "dot-chat", "schedule_routine", json.RawMessage(`{"id":"`+report.ID+`","time":"18:30"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if kept, _ := s.taskView(ctx, report.ID); !kept.Report {
+		t.Fatal("a change that left report out cleared it")
+	}
+	facts := s.runFacts(ctx, report, now)
 	if !strings.HasPrefix(facts, "Persona 算好的北极星指标") || !strings.Contains(facts, "\n- ") || !strings.Contains(facts, "100%") {
-		t.Fatalf("dot report facts:\n%s", facts)
+		t.Fatalf("daily report facts:\n%s", facts)
 	}
-	if got := s.northStarRunFacts(ctx, "routine-chat", now); got != "" {
-		t.Fatalf("another conversation's daily task got the north star: %q", got)
-	}
-	task := Task{ID: "fu_report", Title: "Dot daily report", Repeat: repeatDaily, SessionID: "dot-chat", Prompt: "Write today's report.", factsText: facts}
-	prompt := taskPrompt(task, now, now, time.UTC, false, false, false)
+	report.factsText = facts
+	prompt := taskPrompt(report, now, now, time.UTC, false, false, false)
 	if i, j := strings.Index(prompt, "北极星指标"), strings.Index(prompt, "Write today's report."); i < 0 || i > j {
 		t.Fatalf("the report does not open with the north star:\n%s", prompt)
 	}
-	t.Logf("DOT_REPORT_PROMPT\n%s", prompt)
+}
+
+// A day recording began in the middle of is not comparable with a fully recorded one: the change reads "not
+// comparable", never a number (#4622 review: "yesterday 100%, -4.6 pp" from two differently counted days).
+func TestNorthStarChangeAgainstAPartlyRecordedDayIsNotComparable(t *testing.T) {
+	ctx := context.Background()
+	s, database, _ := northStarDB(t)
+	loc := shanghai(t)
+	midnight := time.Date(2026, 11, 11, 0, 0, 0, 0, loc)
+	now := midnight.Add(15 * time.Hour)
+	mustDo(t, database.PutSetting(ctx, northStarSinceKey, northStarSince{At: midnight.Add(-14 * time.Hour), Build: "b1"})) // yesterday 10:00
+	ev := func(at time.Time, kind string, detail map[string]any) {
+		mustDo(t, database.AddWorkEvent(ctx, db.WorkEvent{At: at, MachineID: "pc", SessionID: "main-chat", Kind: kind, Detail: detail}))
+	}
+	ok := map[string]any{"op": "resume", "origin": originApp, "role": roleMain, "outcome": outcomeOK}
+	bad := map[string]any{"op": "resume", "origin": originApp, "role": roleMain, "outcome": outcomeFailed, "reason": "conversation_not_found"}
+	ev(midnight.Add(-12*time.Hour), sendEvent, ok) // yesterday 12:00, after recording began
+	ev(midnight.Add(-11*time.Hour), notifyEvent, map[string]any{})
+	ev(midnight.Add(2*time.Hour), sendEvent, ok)
+	ev(midnight.Add(3*time.Hour), sendEvent, bad)
+	b := s.briefNorthStarAt(ctx, now, loc)
+	if !b.yesterdayOK || !b.Yesterday.Interruptions.Partial {
+		t.Fatalf("yesterday should read, partly: %+v", b.Yesterday)
+	}
+	lines := b.lines(i18n.Lang("en"))
+	want := []string{
+		"Interruptions today: 0 (0 questions · 0 cards to act on · 0 notifications · 0 authorization cards); not comparable with yesterday",
+		"Availability today (main and leader conversations): 50% (1 of 2 starts and resumes worked); not comparable with yesterday",
+	}
+	if strings.Join(lines[:2], "\n") != strings.Join(want, "\n") {
+		t.Fatalf("lines:\n%s", strings.Join(lines, "\n"))
+	}
+	if zh := b.lines(i18n.ZhHans); !strings.HasSuffix(zh[1], "与昨天无法比较") {
+		t.Fatalf("zh-Hans: %q", zh[1])
+	}
+}
+
+// The failures the hub never sends are failures too: an app's message the manager refused (SendParams) and a send whose
+// launcher is out of the computer's scope (#4622 review).
+func TestNorthStarRecordsSendsRefusedBeforeTheyRan(t *testing.T) {
+	ctx := context.Background()
+	s, database, _ := northStarDB(t)
+	b := &BusHub{svc: s, helloed: make(chan struct{})}
+	if _, err := b.request(ctx, assistantwire.MethodSendParams, json.RawMessage(`{"machine_id":"server","session_id":"main-chat","params":{"text":"hi","model":"not a model id!"}}`)); err == nil {
+		t.Fatal("a bad model was taken")
+	}
+	s.waitWorkEvents()
+	events, err := database.WorkEventsBetween(ctx, time.Now().Add(-time.Minute), time.Now().Add(time.Minute), []string{sendEvent})
+	mustDo(t, err)
+	if len(events) != 1 || events[0].SessionID != "main-chat" || events[0].Detail["outcome"] != outcomeFailed || events[0].Detail["origin"] != originApp ||
+		events[0].Detail["reason"] != CodeBadRequest {
+		t.Fatalf("refused app message: %+v", events)
+	}
+
+	sc, _ := scopeService(t)
+	setSettings(t, sc, func(v *Settings) { v.Main, v.MachineID = "main-chat", "mac" })
+	addProvider(t, sc, `{"name":"box","base_url":"https://gw.example.com","model":"m1","api_key":"sk-test-box-000000","share":"selected","scope_machines":["server"]}`)
+	if err := sc.call(ctx, "mac", DeviceAssistantSend, map[string]any{"session_id": "main-chat", "launcher": "box", "text": "hi"}, nil); codeOf(err) != proto.CodeLauncherOutOfScope {
+		t.Fatalf("send on mac: %v", err)
+	}
+	sc.waitWorkEvents()
+	var got []db.WorkEvent
+	for _, e := range testEvents(sc) {
+		if e.Kind == sendEvent {
+			got = append(got, e)
+		}
+	}
+	if len(got) != 1 || got[0].Detail["role"] != roleMain || got[0].Detail["outcome"] != outcomeFailed || got[0].Detail["reason"] != proto.CodeLauncherOutOfScope {
+		t.Fatalf("out-of-scope send: %+v", got)
+	}
+}
+
+// A start that failed is kept under the id it asked for: a leader conversation's failed start is not dropped.
+func TestNorthStarKeepsAFailedStartUnderItsNewID(t *testing.T) {
+	ctx := context.Background()
+	s, database, _ := northStarDB(t)
+	s.recordManagerSend("pc", map[string]any{"new_session_id": "dot-chat", "text": "hi", "is_main": false}, nil, &rpc.Error{Code: "timeout", Message: "timed out"})
+	s.waitWorkEvents()
+	events, err := database.WorkEventsBetween(ctx, time.Now().Add(-time.Minute), time.Now().Add(time.Minute), []string{sendEvent})
+	mustDo(t, err)
+	if len(events) != 1 || events[0].SessionID != "dot-chat" || events[0].Detail["op"] != "start" || events[0].Detail["role"] != roleDot ||
+		events[0].Detail["reason"] != "timeout" {
+		t.Fatalf("failed leader start: %+v", events)
+	}
+}
+
+// When the start of recording could not be saved at startup, the first record saves it: the readout never stays
+// "not recorded" while records are kept.
+func TestNorthStarRecordingStartIsSavedByTheFirstRecord(t *testing.T) {
+	ctx := context.Background()
+	s, database, _ := northStarDB(t)
+	s.build = "b9"
+	base := s.store()
+	s.store = func() Store { return failingNorthStarStore{Store: base} }
+	s.northStarStarted(ctx) // the database could not be read at startup
+	s.store = func() Store { return base }
+	before := time.Now()
+	if _, err := s.runTool(ctx, "pc", "dot-chat", "notify_user", json.RawMessage(`{"title":"Done","body":"PR merged"}`)); err != nil {
+		t.Fatal(err)
+	}
+	s.waitWorkEvents()
+	ns, err := s.northStarAt(ctx, before.Add(-time.Second), time.Now(), time.Time{}, time.UTC)
+	mustDo(t, err)
+	if ns.RecordingSince == nil || ns.RecordingSince.Before(before.Add(-time.Second)) || ns.RecordingBuild != "b9" {
+		t.Fatalf("recording start: %v %q", ns.RecordingSince, ns.RecordingBuild)
+	}
+	if n := ns.Interruptions.Categories[nsNotifyUser].Count; n != 1 {
+		t.Fatalf("notify_user: %d", n)
+	}
+	var v northStarSince
+	if ok, err := database.Setting(ctx, northStarSinceKey, &v); err != nil || !ok {
+		t.Fatalf("saved: %v %v", ok, err)
+	}
+}
+
+// Failure reasons are said in the briefing's language; a node's own code without a text is named as it is.
+func TestNorthStarFailureReasonsAreLocalized(t *testing.T) {
+	b := briefNorthStar{todayOK: true, Today: NorthStar{Availability: Availability{Failures: []FailureReason{{"conversation_not_found", 2}, {"claude_missing", 1}}}}}
+	for l, want := range map[i18n.Lang]string{
+		"en":        "Failures by reason: conversation not found 2, other (claude_missing) 1",
+		i18n.ZhHans: "失败原因：找不到对话 2, 其他（claude_missing） 1",
+		"ja":        "失敗の理由：会話が見つかりません 2, その他（claude_missing） 1",
+	} {
+		lines := b.lines(l)
+		if lines[2] != want {
+			t.Errorf("%s: %q, want %q", l, lines[2], want)
+		}
+	}
+}
+
+// The route's 403 is the common "no permission" text, not another feature's.
+func TestNorthStarForbiddenSaysNoPermission(t *testing.T) {
+	s, _, _ := northStarDB(t)
+	w := serveAs(s, "answer", "GET", "/api/v1/assistant/north-star", "")
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("limited role: %d", w.Code)
+	}
+	for _, l := range i18n.Langs {
+		if strings.Contains(w.Body.String(), i18n.T(l, "assistant-standing_authorizations.full_access")) {
+			t.Fatalf("403 borrows the standing authorizations text: %s", w.Body)
+		}
+		if strings.Contains(w.Body.String(), i18n.T(l, "http-status.forbidden")) {
+			return
+		}
+	}
+	t.Fatalf("403 body: %s", w.Body)
+}
+
+// Yesterday's comparable period ends at the same wall-clock time as now, also across a daylight saving change.
+func TestNorthStarYesterdayEndsAtTheSameClockTime(t *testing.T) {
+	ctx := context.Background()
+	s, _, _ := northStarDB(t)
+	ny, err := time.LoadLocation("America/New_York")
+	mustDo(t, err)
+	// 2026-03-08 had 23 hours there (clocks went from 02:00 to 03:00).
+	now := time.Date(2026, 3, 9, 10, 0, 0, 0, ny)
+	b := s.briefNorthStarAt(ctx, now, ny)
+	if want := time.Date(2026, 3, 8, 0, 0, 0, 0, ny); !b.Yesterday.Since.Equal(want) {
+		t.Fatalf("yesterday since %v, want %v", b.Yesterday.Since, want)
+	}
+	if want := time.Date(2026, 3, 8, 10, 0, 0, 0, ny); !b.Yesterday.Until.Equal(want) {
+		t.Fatalf("yesterday until %v, want %v", b.Yesterday.Until.In(ny), want)
+	}
+	// And the day after the clocks went back (2026-11-01 had 25 hours).
+	now = time.Date(2026, 11, 2, 1, 30, 0, 0, ny)
+	b = s.briefNorthStarAt(ctx, now, ny)
+	if want := time.Date(2026, 11, 1, 1, 30, 0, 0, ny); !b.Yesterday.Until.Equal(want) {
+		t.Fatalf("yesterday until %v, want %v", b.Yesterday.Until.In(ny), want)
+	}
 }
 
 func TestGoldenNorthStarRunFacts(t *testing.T) {

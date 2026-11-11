@@ -545,6 +545,7 @@ func (b *BusHub) request(ctx context.Context, method string, params json.RawMess
 		}
 		params, err := s.SendParams(ctx, p)
 		if err != nil {
+			s.appSendRefused(p.MachineID, p.SessionID, err) // the hub sends nothing: no ConversationSent (north_star.go)
 			return nil, err
 		}
 		return map[string]any{"params": params}, nil

@@ -13,5 +13,14 @@
   "interruptions": "今日の割り込み：{value}；{change}",
   "availability": "今日の可用率（メイン会話とリーダー会話）：{value}；{change}",
   "failures": "失敗の理由：{list}",
-  "source": "データ元：Persona 自身の記録。あなたに届いたカードと通知（監督者が引き取ったもの、継続的な承認、テスト用プローブは除く）と、メイン会話とリーダー会話の開始・再開のすべて。"
+  "source": "データ元：Persona 自身の記録。あなたに届いたカードと通知（監督者が引き取ったもの、継続的な承認、テスト用プローブは除く）と、メイン会話とリーダー会話の開始・再開のすべて。",
+  "reason_conversation_not_found": "会話が見つかりません",
+  "reason_timeout": "タイムアウト",
+  "reason_machine_offline": "コンピュータがオフライン",
+  "reason_cancelled": "キャンセル",
+  "reason_internal": "内部エラー",
+  "reason_bad_request": "リクエストが拒否されました",
+  "reason_launcher_out_of_scope": "そのコンピュータでは使えないランチャー",
+  "reason_launcher_own_service": "ランチャーがそのコンピュータ自身のサービスを使用中",
+  "reason_other": "その他（{code}）"
 }

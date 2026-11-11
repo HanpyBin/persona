@@ -71,22 +71,37 @@ type northStarSince struct {
 	Build string    `json:"build,omitempty"`
 }
 
-// northStarStarted notes, once for the database, when this build began recording (northStarSinceKey).
+// northStarStarted notes, once for the database, when this build began recording (northStarSinceKey). A read or write
+// that fails at start is tried again before each record (northStarNoted), so RecordingSince never stays empty while
+// records are being kept.
 func (s *Service) northStarStarted(ctx context.Context) {
 	st := s.store()
 	if st == nil {
 		return
 	}
 	var v northStarSince
-	if ok, err := st.Setting(ctx, northStarSinceKey, &v); err != nil || ok {
-		if err != nil {
-			s.logf("north star: read %s: %v", northStarSinceKey, err)
-		}
+	ok, err := st.Setting(ctx, northStarSinceKey, &v)
+	if err != nil {
+		s.logf("north star: read %s: %v", northStarSinceKey, err)
 		return
 	}
-	if err := st.PutSetting(ctx, northStarSinceKey, northStarSince{At: time.Now().UTC(), Build: s.build}); err != nil {
-		s.logf("north star: save %s: %v", northStarSinceKey, err)
+	if !ok {
+		if err := st.PutSetting(ctx, northStarSinceKey, northStarSince{At: time.Now().UTC(), Build: s.build}); err != nil {
+			s.logf("north star: save %s: %v", northStarSinceKey, err)
+			return
+		}
 	}
+	s.northStarOn.Store(true)
+}
+
+// northStarNoted makes sure recording's start is saved before a record is kept.
+func (s *Service) northStarNoted() {
+	if s.northStarOn.Load() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), historyTimeout)
+	defer cancel()
+	s.northStarStarted(ctx)
 }
 
 // ---- recording ----
@@ -139,6 +154,7 @@ func (s *Service) recordSend(machine, session, op, origin string, main bool, out
 	if role == "" {
 		return
 	}
+	s.northStarNoted()
 	detail := map[string]any{"op": op, "origin": origin, "role": role, "outcome": outcome, "build": s.build}
 	if outcome == outcomeFailed {
 		detail["reason"] = sendReason(code, msg)
@@ -147,32 +163,50 @@ func (s *Service) recordSend(machine, session, op, origin string, main bool, out
 	s.workEvent(machine, session, sendEvent, detail)
 }
 
-// recordManagerSend is call's: the manager's own assistant.send to machine, with params p and the node's answer.
+// recordManagerSend is call's: the manager's own assistant.send to machine, with params p and the node's answer (or
+// the manager's own refusal before it was sent, such as a launcher out of the computer's scope).
 func (s *Service) recordManagerSend(machine string, p map[string]any, res []byte, err error) {
 	id, _ := p["session_id"].(string)
 	op := "resume"
 	if id == "" {
 		op = "start"
-		var out struct {
-			SessionID string `json:"session_id"`
+		// A start names its new conversation up front when it can; a failed one has no answer to read it from.
+		if id, _ = p["new_session_id"].(string); id == "" {
+			var out struct {
+				SessionID string `json:"session_id"`
+			}
+			_ = json.Unmarshal(res, &out)
+			id = out.SessionID
 		}
-		_ = json.Unmarshal(res, &out)
-		id = out.SessionID
 	}
 	main, _ := p["is_main"].(bool)
 	outcome, code, msg := outcomeOK, "", ""
 	if err != nil {
-		outcome, code, msg = outcomeFailed, apierr.NodeCode(err), err.Error()
-		var re *rpc.Error
-		if errors.As(err, &re) && re.Code != "" {
-			code = re.Code
-		}
+		outcome, code, msg = outcomeFailed, errCode(err), err.Error()
 	}
+	s.recordSendAsync(machine, id, op, originManager, main, outcome, code, msg)
+}
+
+// appSendRefused: the manager refused an app's message to one of its conversations before the hub sent it
+// (SendParams), so the hub never tells ConversationSent; it is a failed resume all the same.
+func (s *Service) appSendRefused(machine, session string, err error) {
+	s.recordSendAsync(machine, session, "resume", originApp, false, outcomeFailed, errCode(err), err.Error())
+}
+
+func (s *Service) recordSendAsync(machine, session, op, origin string, main bool, outcome, code, msg string) {
 	s.work.eventWrites.Add(1) // the tests wait for it as for any work event
 	go func() {
 		defer s.work.eventWrites.Done()
-		s.recordSend(machine, id, op, originManager, main, outcome, code, msg)
+		s.recordSend(machine, session, op, origin, main, outcome, code, msg)
 	}()
+}
+
+func errCode(err error) string {
+	var re *rpc.Error
+	if errors.As(err, &re) && re.Code != "" {
+		return re.Code
+	}
+	return apierr.NodeCode(err)
 }
 
 // ConversationSent: how an app's message to one of the assistant's conversations went, as the hub sent it.
@@ -196,6 +230,7 @@ func (s *Service) recordNotify(ctx context.Context, machine, session string) {
 	if c, ok := s.session(ctx, machine, session); ok && probeDir(c.Cwd) {
 		detail["probe"] = true
 	}
+	s.northStarNoted()
 	s.workEvent(machine, session, notifyEvent, detail)
 }
 
@@ -605,7 +640,7 @@ var errNoNorthStar = errors.New("no database to read the north star from")
 func (s *Service) northStarRoutes() {
 	s.handle("GET /api/v1/assistant/north-star", func(w http.ResponseWriter, r *http.Request) {
 		if !fullRole(r) {
-			apierr.Write(w, http.StatusForbidden, i18n.Err("assistant-standing_authorizations.full_access"))
+			apierr.Write(w, http.StatusForbidden, i18n.Err("http-status.forbidden"))
 			return
 		}
 		loc := s.location(r.Context())
@@ -679,13 +714,45 @@ func (s *Service) briefNorthStarAt(ctx context.Context, now time.Time, loc *time
 		return b
 	}
 	b.todayOK = true
-	prev := dayStart(since.Add(-12 * time.Hour))
-	if b.Yesterday, err = s.northStarAt(ctx, prev, prev.Add(now.Sub(since)), time.Time{}, loc); err != nil {
+	prev, prevUntil := yesterdayUntilNow(now, loc)
+	if b.Yesterday, err = s.northStarAt(ctx, prev, prevUntil, time.Time{}, loc); err != nil {
 		s.logf("brief north star (yesterday): %v", err)
 	} else {
 		b.yesterdayOK = true
 	}
 	return b
+}
+
+// yesterdayUntilNow is yesterday in loc from its start to the same wall-clock time as now, the period comparable with
+// today until now. On a day whose clocks moved (daylight saving) that is not the same length as today so far. A time of
+// day yesterday never had (skipped by the clocks) is the first instant after it; the window stays inside yesterday.
+func yesterdayUntilNow(now time.Time, loc *time.Location) (time.Time, time.Time) {
+	n := now.In(loc)
+	prev := dayStart(dayStart(n).Add(-12 * time.Hour))
+	y, m, d := prev.Date()
+	until := time.Date(y, m, d, n.Hour(), n.Minute(), n.Second(), n.Nanosecond(), loc)
+	if end := dayStart(prev.Add(36 * time.Hour)).Add(-time.Nanosecond); until.After(end) {
+		until = end
+	}
+	if until.Before(prev) {
+		until = prev
+	}
+	return prev, until
+}
+
+// comparable: ns was recorded the whole window, the same way every day since recording began. A window recording
+// began in the middle of (partial), or one that has to lean on what was kept before it (the gaps *_before_recording),
+// counts differently from a recorded one: its change against another day is not a number.
+func (ns NorthStar) comparable() bool {
+	if ns.RecordingSince == nil || ns.RecordingSince.After(ns.Since) || ns.Interruptions.Partial {
+		return false
+	}
+	for _, g := range ns.Availability.Gaps {
+		if strings.HasSuffix(g, "_before_recording") {
+			return false
+		}
+	}
+	return true
 }
 
 // lines are the briefing's opening: the two values today, their change against yesterday until the same time, and
@@ -714,17 +781,14 @@ func (b briefNorthStar) lines(l i18n.Lang) []string {
 		}
 		return i18n.T(l, "assistant-north_star.rate", i18n.Args{"rate": percent(*a.Rate), "ok": a.OK, "n": a.Attempts})
 	}
-	change := func(today, before bool, delta string) string {
-		if !b.yesterdayOK || !today || !before {
-			return i18n.T(l, "assistant-north_star.change_unknown")
-		}
-		return delta
+	both := b.yesterdayOK && t.comparable() && y.comparable()
+	interruptChange := i18n.T(l, "assistant-north_star.change_unknown")
+	if both {
+		interruptChange = i18n.T(l, "assistant-north_star.change_count", i18n.Args{"was": y.Interruptions.Total,
+			"delta": signed(t.Interruptions.Total - y.Interruptions.Total)})
 	}
-	known := func(ns NorthStar) bool { return ns.RecordingSince != nil && !ns.RecordingSince.After(ns.Until) }
-	dInt := t.Interruptions.Total - y.Interruptions.Total
-	interruptChange := change(known(t), known(y), i18n.T(l, "assistant-north_star.change_count", i18n.Args{"was": y.Interruptions.Total, "delta": signed(dInt)}))
 	rateChange := i18n.T(l, "assistant-north_star.change_unknown")
-	if b.yesterdayOK && t.Availability.Rate != nil && y.Availability.Rate != nil {
+	if both && t.Availability.Rate != nil && y.Availability.Rate != nil {
 		rateChange = i18n.T(l, "assistant-north_star.change_rate", i18n.Args{"was": percent(*y.Availability.Rate),
 			"delta": signedPoints(*t.Availability.Rate - *y.Availability.Rate)})
 	}
@@ -733,7 +797,7 @@ func (b briefNorthStar) lines(l i18n.Lang) []string {
 		if i == 3 {
 			break
 		}
-		failures = append(failures, f.Reason+" "+strconv.Itoa(f.Count))
+		failures = append(failures, reasonText(l, f.Reason)+" "+strconv.Itoa(f.Count))
 	}
 	out := []string{
 		i18n.T(l, "assistant-north_star.interruptions", i18n.Args{"value": interrupt(t), "change": interruptChange}),
@@ -743,6 +807,14 @@ func (b briefNorthStar) lines(l i18n.Lang) []string {
 		out = append(out, i18n.T(l, "assistant-north_star.failures", i18n.Args{"list": strings.Join(failures, ", ")}))
 	}
 	return append(out, i18n.T(l, "assistant-north_star.source"))
+}
+
+// reasonText is a failure reason as the owner reads it; a node's own error code without a text stays as it is.
+func reasonText(l i18n.Lang, reason string) string {
+	if key := "assistant-north_star.reason_" + reason; i18n.Has(key) {
+		return i18n.T(l, key)
+	}
+	return i18n.T(l, "assistant-north_star.reason_other", i18n.Args{"code": reason})
 }
 
 func percent(r float64) string {
@@ -792,16 +864,22 @@ func (b briefNorthStar) body(lines []string) briefBodyNorthStar {
 	return out
 }
 
-// northStarRunFacts is what a daily task running in the main conversation or a leader conversation (a dot's daily
-// report) opens with when it has no facts of its own: the north star's lines. "" for any other conversation, or
-// without a database.
-func (s *Service) northStarRunFacts(ctx context.Context, session string, now time.Time) string {
-	st, ok := s.store().(northStarStore)
-	if !ok {
-		return ""
+// runFacts are the facts a task's run opens with: a routine with facts on has the briefing's (briefing.go), which open
+// with the north star; a daily report (Task.Report, such as a dot's) has the north star's lines alone; any other task
+// none.
+func (s *Service) runFacts(ctx context.Context, t Task, now time.Time) string {
+	switch {
+	case t.Facts:
+		return s.briefStart(ctx, t, now)
+	case t.Report:
+		return s.northStarRunFacts(ctx, now)
 	}
-	roles, err := rolesNow(ctx, st)
-	if err != nil || roles.of(session) == "" {
+	return ""
+}
+
+// northStarRunFacts is the north star's lines as a daily report's run is given them; "" without a database.
+func (s *Service) northStarRunFacts(ctx context.Context, now time.Time) string {
+	if _, ok := s.store().(northStarStore); !ok {
 		return ""
 	}
 	return prompts.RenderNorthStarFacts(s.briefNorthStarAt(ctx, now, s.location(ctx)).lines(s.botLang(ctx)))

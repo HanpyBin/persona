@@ -46,7 +46,8 @@ These are listed apart and never count as interruptions:
 ### Unknown, never zero
 
 The manager writes `assistant.north_star_since` (`{at, build}`) once, the first time a build with this readout starts.
-It is when recording began:
+If the database cannot be read or written then, the manager tries again before each record it keeps, so the setting is
+never missing while records exist. It is when recording began:
 
 - A card raised before then without a dispatch marker counts as `unknown` in its category, because nobody marked
   whether it reached the owner. The readout does not guess.
@@ -67,10 +68,15 @@ Each attempt is one real start or resume and its outcome. They are recorded as w
   An attempt without a session id is a `start`, and anything else is a `resume`.
 - **An app's message** (`origin: app`): the hub runs the send itself, then tells the manager how it went with
   `session.assistant_sent` (`docs/protocol/protocol.md`). Only a send that ran counts. A retry answered from the
-  hub's record of the same operation does not.
+  hub's record of the same operation does not. A message the manager refuses before the hub sends it (the hub's
+  `assistant.send_params` call fails, for example on a model id that is not one) is a failed resume, recorded by the
+  manager when it refuses.
+- A manager send refused before it reaches the node, such as one whose launcher is out of the computer's scope, is a
+  failed start or resume with that code as its reason.
 
 The outcome is `ok`, `failed` (with a `reason`) or `unknown` (the message may have been typed; the hub could not tell).
-`rate` is `ok / attempts`, so an unknown outcome is not a success. A failure's reason is grouped:
+`rate` is `ok / attempts`, so an unknown outcome is not a success. A failed start keeps the id it asked for
+(`new_session_id`), so a leader conversation's failed start counts too. A failure's reason is grouped:
 `conversation_not_found` (the runtime no longer has the conversation), `timeout`, `machine_offline`, `cancelled`, the
 node's own error code, or `internal`.
 
@@ -95,8 +101,12 @@ Before recording began, only these say how a send went:
 | `app_sends_before_recording` | App messages before recording began (the route; the command reads them from `client_ops`). |
 | `scheduled_runs_truncated` | `assistant.runs` no longer reaches back to the window's start. |
 
-Not covered: the processes the node restarts on its own without a send (compaction, a background task waking the
-conversation), and pushes other than `notify_user` (turn-finished pushes, task notices).
+Not covered:
+
+- An app's message while the manager is not connected to the hub: the hub answers `assistant_offline` and the
+  manager never hears of it, so the attempt is missing rather than failed.
+- The processes the node restarts on its own without a send (compaction, a background task waking the conversation).
+- Pushes other than `notify_user` (turn-finished pushes, task notices).
 
 ## HTTP contract
 
@@ -108,7 +118,8 @@ conversation), and pushes other than `notify_user` (turn-finished pushes, task n
 | `split` | An RFC 3339 time; availability is also given before and from it. |
 | `tz` | A time zone name overriding the assistant's. |
 
-A bad query answers 400, and a database that cannot be read answers 503. The answer (abridged):
+A bad query answers 400 and a role without full access 403 (`http-status.forbidden`). A database that cannot be read
+answers 503. The answer (abridged):
 
 ```json
 {
@@ -153,16 +164,27 @@ Use it for a baseline from a build that never recorded anything.
 
 ## Daily briefing
 
-A routine with `facts` on (the morning and evening briefings, and a leader conversation's daily report) opens with
-the north star. The routine reads today until the run starts, and yesterday until the same time of day as the
-comparable period. Its lines (`assistant-north_star.*` strings):
+Two kinds of task open with the north star:
+
+- A routine with `facts` on (the morning and evening briefings), as the first part of its facts.
+- A daily report (`report` on the task), such as a leader conversation's: its runs get the north star's lines alone.
+  Set it with `schedule_routine`'s `report`, or with `report` in the body of `PUT /api/v1/assistant/tasks/{id}`; a
+  change that leaves it out keeps it. Any other task, such as a daily reminder in the same conversation, gets nothing.
+
+The run reads today until it starts, and yesterday from its start until the same wall-clock time as the comparable
+period (on a day the clocks moved, that is not the same length). Its lines (`assistant-north_star.*` strings):
 
 ```text
 Interruptions today: 1 (0 questions · 0 cards to act on · 1 notifications · 0 authorization cards); yesterday by this time 3, -2
 Availability today (main and leader conversations): 75% (3 of 4 starts and resumes worked); yesterday by this time 50%, +25 pp
-Failures by reason: conversation_not_found 1
+Failures by reason: conversation not found 1
 Source: Persona's own records: cards and notifications that reached you (cards a supervisor took, standing authorizations and test probes excluded), and every start and resume of the main and leader conversations.
 ```
+
+The change against yesterday is a number only when both days were recorded the same way: each day was recorded from its
+start (`partial` is false) and neither leans on what was kept before recording began (a gap ending in
+`_before_recording`). Otherwise the line says "not comparable with yesterday". Failure reasons are said in the report's
+language (`assistant-north_star.reason_*`); a node's own code without a text reads "other (code)".
 
 The same lines appear in three places:
 

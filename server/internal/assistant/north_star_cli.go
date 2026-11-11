@@ -72,9 +72,9 @@ func NorthStarCommand(ctx context.Context, args []string, stdout, stderr io.Writ
 	}
 	if *brief != "" {
 		b := briefNorthStar{Today: ns, todayOK: true}
-		since := ns.Since
-		prev := dayStart(since.Add(-12 * time.Hour))
-		if b.Yesterday, err = northStarCommand(ctx, manager, hub, prev.Format(time.DateOnly), "", ns.TimeZone, prev.Add(ns.Until.Sub(since))); err == nil {
+		loc, _ := time.LoadLocation(ns.TimeZone) // the readout's own zone: it loaded
+		prev, prevUntil := yesterdayUntilNow(ns.Until, loc)
+		if b.Yesterday, err = northStarCommand(ctx, manager, hub, prev.Format(time.DateOnly), "", ns.TimeZone, prevUntil); err == nil {
 			b.yesterdayOK = true
 		}
 		for _, line := range b.lines(i18n.Lang(*brief)) {
