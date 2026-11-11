@@ -1,121 +1,10 @@
-name: External-origin rendering evidence
+name: External-origin native acceptance with UI diagnostics
 on:
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
-  baseline-channel-renders:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: 8a2d168a15769d4296abe91b037ac8a39f47eeb7
-          persist-credentials: false
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-      - uses: android-actions/setup-android@v3
-        with:
-          packages: platform-tools
-      - name: Install Android SDK
-        run: sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0'
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          cache-read-only: true
-      - name: Restore public Robolectric runtime dependencies
-        id: robolectric
-        uses: actions/cache/restore@v4
-        with:
-          # Never cache Maven settings, credentials or unrelated/private artifacts.
-          path: |
-            ~/.m2/repository/org/robolectric/android-all
-            ~/.m2/repository/org/robolectric/android-all-instrumented
-          key: ${{ runner.os }}-robolectric-v1-test-1-${{ hashFiles('android/**/*.gradle.kts', 'android/gradle/libs.versions.toml', 'android/gradle/wrapper/gradle-wrapper.properties') }}
-          # Another lane's entry, or one saved under an old lane name, holds the same public jars: better than a download.
-          restore-keys: |
-            ${{ runner.os }}-robolectric-v1-test-1-
-            ${{ runner.os }}-robolectric-v1-
-      - name: Capture unchanged channel fixtures from the pinned base
-        working-directory: android
-        run: >-
-          ./gradlew :feature:chat:testDebugUnitTest --tests persona.feature.chat.ChannelSourceShotsTest
-          --no-daemon --no-watch-fs --console=plain --max-workers=2
-      - name: Check shard coverage fixtures on the pinned base
-        shell: bash
-        run: python3 scripts/ci/test_android_shards.py 2>&1 | tee baseline-shards.log
-      - name: Check reply-block behavior on the pinned base
-        if: always()
-        shell: bash
-        working-directory: android
-        run: >-
-          ./gradlew :feature:chat:testDebugUnitTest
-          --tests persona.feature.chat.ReplyBlocksShotsTest.copyTakesTheWholeBlockAndALongQuoteFolds
-          --no-daemon --no-watch-fs --console=plain --max-workers=2
-          2>&1 | tee ../baseline-reply-block.log
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: external-origin-baseline-channel-renders
-          if-no-files-found: error
-          retention-days: 7
-          path: |
-            android/feature/chat/build/channel-shots/*.png
-            android/feature/chat/build/test-results/testDebugUnitTest/
-            baseline-shards.log
-            baseline-reply-block.log
-  render-fixtures:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-      - uses: android-actions/setup-android@v3
-        with:
-          packages: platform-tools
-      - name: Install Android SDK
-        run: sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0'
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          cache-read-only: true
-      - name: Restore public Robolectric runtime dependencies
-        id: robolectric
-        uses: actions/cache/restore@v4
-        with:
-          # Never cache Maven settings, credentials or unrelated/private artifacts.
-          path: |
-            ~/.m2/repository/org/robolectric/android-all
-            ~/.m2/repository/org/robolectric/android-all-instrumented
-          key: ${{ runner.os }}-robolectric-v1-test-1-${{ hashFiles('android/**/*.gradle.kts', 'android/gradle/libs.versions.toml', 'android/gradle/wrapper/gradle-wrapper.properties') }}
-          # Another lane's entry, or one saved under an old lane name, holds the same public jars: better than a download.
-          restore-keys: |
-            ${{ runner.os }}-robolectric-v1-test-1-
-            ${{ runner.os }}-robolectric-v1-
-      - name: Capture current source and channel fixtures
-        working-directory: android
-        run: >-
-          ./gradlew :feature:assistant:testDebugUnitTest --tests persona.feature.assistant.AssistantDrawerShotsTest
-          :feature:chat:testDebugUnitTest --tests persona.feature.chat.ChannelSourceShotsTest
-          --no-daemon --no-watch-fs --console=plain --max-workers=2
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: external-origin-current-renders
-          if-no-files-found: error
-          retention-days: 7
-          path: |
-            android/feature/assistant/build/drawer-shots/*.png
-            android/feature/chat/build/channel-shots/*.png
-            android/feature/assistant/build/test-results/testDebugUnitTest/
-            android/feature/chat/build/test-results/testDebugUnitTest/
   emulator-shots:
-    needs: [render-fixtures]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -168,9 +57,10 @@ jobs:
           disable-animations: true
           emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: |
-            SHOTS_STYLE=glass SHOTS_FROZEN=2026-11-02T04:00:00+00:00 bash scripts/app/android.sh shots -s emulator-5554 --out .ci-evidence/external-origin/native/glass
-            SHOTS_STYLE=brief SHOTS_FROZEN=2026-11-02T04:00:00+00:00 bash scripts/app/android.sh shots -s emulator-5554 --out .ci-evidence/external-origin/native/brief
-            SHOTS_STYLE=board SHOTS_FROZEN=2026-11-02T04:00:00+00:00 bash scripts/app/android.sh shots -s emulator-5554 --out .ci-evidence/external-origin/native/board
+            "$ANDROID_HOME/platform-tools/adb" -s emulator-5554 shell am force-stop com.google.android.apps.nexuslauncher
+            SHOTS_STYLE=glass bash scripts/app/android.sh shots -s emulator-5554 --out .ci-evidence/external-origin/native/glass
+            SHOTS_STYLE=brief bash scripts/app/android.sh shots -s emulator-5554 --out .ci-evidence/external-origin/native/brief
+            SHOTS_STYLE=board bash scripts/app/android.sh shots -s emulator-5554 --out .ci-evidence/external-origin/native/board
             python3 scripts/ci/external_origin_screenshots.py --serial emulator-5554 --out .ci-evidence/external-origin/focused
       - uses: actions/upload-artifact@v4
         if: always()

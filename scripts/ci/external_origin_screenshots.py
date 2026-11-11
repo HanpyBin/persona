@@ -66,7 +66,7 @@ for index, (origin, title, request) in enumerate([
     log = (args.out / "mock-hub.log").open("w")
     server = subprocess.Popen([sys.executable, "-u", "-c", profile], stdout=log, stderr=subprocess.STDOUT,
                               env={**os.environ, "PORT": "0", "MOCK_FROZEN": FROZEN,
-                                   "MOCK_ORIGINS": "0", "MOCK_AUTO_CONVERSATIONS": "0"})
+                                   "MOCK_ORIGINS": "0", "MOCK_AUTO_CONVERSATIONS": "0", "MOCK_TASKS": "1"})
     port = None
     evidence = []
 
@@ -78,8 +78,15 @@ for index, (origin, title, request) in enumerate([
         deadline = time.monotonic() + 75
         while time.monotonic() < deadline:
             root = dump()
-            if predicate(root):
+            if any(node.get("package") == "android" and "isn't responding" in node.get("text", "")
+                   for node in root.iter("node")):
+                capture("failure-ui", root)
+                (args.out / "failure-logcat.log").write_text(adb("logcat", "-d", "-t", "500"))
+                raise AssertionError("The owned emulator is showing an Android ANR dialog")
+            if predicate(root) and any(node.get("package") == APP for node in root.iter("node")):
                 return root
+        capture("failure-ui", root)
+        (args.out / "failure-logcat.log").write_text(adb("logcat", "-d", "-t", "500"))
         raise AssertionError("UI did not reach " + description)
 
     def has_text(root, text):
