@@ -30,7 +30,7 @@ import { contextMenuProps } from "../../../ui/context-menu";
 import type { MenuAt, MenuItem } from "../../../ui/menu-model";
 import { Button, copyText, cx, Dialog, IconButton, Loading, type ToastAction } from "../../../ui/atoms";
 import { Icon } from "../../../ui/icons";
-import { displayFileName, displayFilePath, FileName, spokenFileName } from "./FileName";
+import { displayFileName, displayFilePath, FileName, spokenFileName, spokenFilePath } from "./FileName";
 import { FileGlyph } from "./parts";
 
 /** A row the actions are about. */
@@ -596,7 +596,10 @@ function NameDialog({ ask }: { ask: NameAsk | null }) {
         </>
       }
     >
-      <p className="text-[13px] leading-relaxed text-ink-2">{ask && t("files-ops.exists_body", { name: displayFileName(ask.name), dir: displayFilePath(shortPath(ask.dir)) })}</p>
+      <p className="text-[13px] leading-relaxed text-ink-2">{ask && dialogTitle(
+        t("files-ops.exists_body", { name: displayFileName(ask.name), dir: displayFilePath(shortPath(ask.dir)) }),
+        t("files-ops.exists_body", { name: spokenFileName(ask.name), dir: spokenFilePath(shortPath(ask.dir)) }),
+      )}</p>
       {ask && ask.more > 0 && (
         <label className="mt-3 flex items-center gap-2 text-[12.5px] text-ink-2">
           <input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} className="accent-[var(--accent)]" />
@@ -644,11 +647,12 @@ function MoveDialog({
   // not where they all are already, nor into one of the folders moved
   const blocked = targets.some((x) => x.dir && within(x.path, at)) || (sources.size === 1 && sources.has(at));
   const title = targets.length === 1 ? t("files-ops.move_one_title", { name: displayFileName(targets[0].name) }) : t("files-ops.move_title", { count: targets.length });
+  const spokenTitle = targets.length === 1 ? t("files-ops.move_one_title", { name: spokenFileName(targets[0].name) }) : title;
   return (
     <Dialog
       open
       onClose={() => !busy && onClose()}
-      title={title}
+      title={dialogTitle(title, spokenTitle)}
       width={420}
       footer={
         <>
@@ -664,7 +668,7 @@ function MoveDialog({
       <div className="flex items-center gap-1 pb-2">
         <IconButton icon="chevronLeft" label={t("files-ops.up")} onClick={() => setAt(parentOf(at))} disabled={at === "/"} iconSize={16} />
         <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-ink" title={at} aria-live="polite">
-          {displayFilePath(shortPath(at)) || "/"}
+          {dialogTitle(displayFilePath(shortPath(at)) || "/", spokenFilePath(shortPath(at)) || "/")}
         </span>
       </div>
       <div aria-label={t("files-ops.folders")} role="group" className="h-56 overflow-y-auto rounded-[10px] border border-line">
@@ -708,11 +712,13 @@ function MoveDialog({
 /** "Move to trash?": what goes, and that it can be put back. */
 function TrashDialog({ targets, busy, onClose, onTrash }: { targets: OpTarget[] | null; busy: boolean; onClose: () => void; onTrash: () => void }) {
   const one = targets?.length === 1 ? targets[0] : null;
+  const title = one ? t("files-ops.trash_one_title", { name: displayFileName(one.name) }) : t("files-ops.trash_title", { count: targets?.length ?? 0 });
+  const spokenTitle = one ? t("files-ops.trash_one_title", { name: spokenFileName(one.name) }) : title;
   return (
     <Dialog
       open={Boolean(targets)}
       onClose={onClose}
-      title={one ? t("files-ops.trash_one_title", { name: displayFileName(one.name) }) : t("files-ops.trash_title", { count: targets?.length ?? 0 })}
+      title={dialogTitle(title, spokenTitle)}
       width={400}
       footer={
         <>
@@ -738,6 +744,11 @@ function TrashDialog({ targets, busy, onClose, onTrash }: { targets: OpTarget[] 
       )}
     </Dialog>
   );
+}
+
+function dialogTitle(visible: string, spoken: string): React.ReactNode {
+  if (visible === spoken) return visible;
+  return <><span aria-hidden="true">{visible}</span><span className="sr-only">{spoken}</span></>;
 }
 
 /** The bar a selection brings: how many, and what can be done to them all. */

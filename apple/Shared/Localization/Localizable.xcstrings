@@ -1,6 +1,30 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "literal [File Name Whitespace]": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "literal" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "字面" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "文字どおり" } }
+      }
+    },
+    "Name with whitespace [File Name Whitespace]": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Name with whitespace" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "含空白的名称" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "空白を含む名前" } }
+      }
+    },
+    "Literal filename [File Name Whitespace]": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Literal filename" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "字面文件名" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "文字どおりのファイル名" } }
+      }
+    },
     "Whitespace-only name %@": {
       "extractionState": "manual",
       "localizations": {

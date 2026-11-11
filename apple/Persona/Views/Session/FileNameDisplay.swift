@@ -3,6 +3,9 @@ import SwiftUI
 
 // The text shown in file lists and spoken by VoiceOver; the original name remains the operation's identity.
 nonisolated enum FileNameDisplay {
+    private static let markedPrefix = String(localized: "Name with whitespace [File Name Whitespace]") + ": "
+    private static let literalPrefix = String(localized: "Literal filename [File Name Whitespace]") + ": "
+
     struct Parts {
         let leading: String
         let body: String
@@ -29,18 +32,35 @@ nonisolated enum FileNameDisplay {
     }
 
     static func label(_ name: String) -> String {
-        guard let p = parts(name) else { return name }
-        return p.leading + p.body + p.trailing
+        guard let p = parts(name) else {
+            return name.hasPrefix("⟦") ? "⟦" + String(localized: "literal [File Name Whitespace]") + "⟧" + quoted(name) : name
+        }
+        return "⟦" + p.leading + quoted(p.body) + p.trailing + "⟧"
     }
 
     static func spoken(_ name: String) -> String {
-        guard let p = parts(name) else { return name }
-        if p.body.isEmpty { return String(localized: "Whitespace-only name \(p.leading)") }
-        if !p.leading.isEmpty && !p.trailing.isEmpty {
-            return String(localized: "\(p.body), leading whitespace \(p.leading), trailing whitespace \(p.trailing)")
+        guard let p = parts(name) else {
+            return name.hasPrefix("⟦") || name.hasPrefix(markedPrefix) || name.hasPrefix(literalPrefix) ? literalPrefix + quoted(name) : name
         }
-        if !p.leading.isEmpty { return String(localized: "\(p.body), leading whitespace \(p.leading)") }
-        return String(localized: "\(p.body), trailing whitespace \(p.trailing)")
+        if p.body.isEmpty { return markedPrefix + String(localized: "Whitespace-only name \(p.leading)") }
+        let body = quoted(p.body)
+        if !p.leading.isEmpty && !p.trailing.isEmpty {
+            return markedPrefix + String(localized: "\(body), leading whitespace \(p.leading), trailing whitespace \(p.trailing)")
+        }
+        if !p.leading.isEmpty { return markedPrefix + String(localized: "\(body), leading whitespace \(p.leading)") }
+        return markedPrefix + String(localized: "\(body), trailing whitespace \(p.trailing)")
+    }
+
+    static func quoted(_ name: String) -> String {
+        guard let data = try? JSONEncoder().encode(name), let encoded = String(data: data, encoding: .utf8) else {
+            return String(reflecting: name)
+        }
+        return encoded
+    }
+
+    static func hint(_ name: String) -> String {
+        let description = spoken(name)
+        return description == name ? "" : description
     }
 
     private static func markers(_ scalars: ArraySlice<Unicode.Scalar>) -> String {
@@ -74,10 +94,11 @@ struct FileNameView: View {
 
     var body: some View {
         if let p = FileNameDisplay.parts(name) {
-            (Text(verbatim: p.leading).foregroundColor(.secondary) + Text(verbatim: p.body) + Text(verbatim: p.trailing).foregroundColor(.secondary))
+            (Text(verbatim: "⟦") + Text(verbatim: p.leading).foregroundColor(.secondary) + Text(verbatim: FileNameDisplay.quoted(p.body))
+             + Text(verbatim: p.trailing).foregroundColor(.secondary) + Text(verbatim: "⟧"))
                 .accessibilityLabel(Text(verbatim: FileNameDisplay.spoken(name)))
         } else {
-            Text(verbatim: name)
+            Text(verbatim: FileNameDisplay.label(name)).accessibilityLabel(Text(verbatim: FileNameDisplay.spoken(name)))
         }
     }
 }

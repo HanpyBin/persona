@@ -2077,7 +2077,7 @@ The app's file browser (the session's Files pane, the machine page's Files row) 
 
 File paths and destination directories retain their whitespace: `report` and `report ` are distinct where the file system permits them, and an absent selected name is never retried under a trimmed name. An empty listing path still means `cwd`; a whitespace-only path instead names that entry relative to `cwd`. Existing whitespace-only names can be moved to the trash and restored. The rename controls still reject a new name made only of whitespace. Windows paths with a component ending in an ASCII space are refused before lookup because the platform may resolve them as another entry; non-breaking spaces are not stripped. File systems and operating systems can impose further naming restrictions.
 
-The Files lists and move pickers make leading and trailing invisible whitespace visible with localized labels and describe its position to screen readers. The labels do not change the underlying name, the value in the rename field, or the path sent in any action.
+The Files lists, move pickers and confirmations make leading and trailing invisible whitespace visible with localized labels and describe its position to screen readers. The representation escapes literal names that could imitate it; the labels do not change the underlying name, the value in the rename field, or the path sent in any action.
 
 The node announces `exact_file_paths_v1`. An updated hub or manager refuses whitespace-sensitive file requests to a node without that capability with `node_outdated`, while ordinary paths remain usable. Upgrade the hub or manager and the node together: a hub and manager from before this guard cannot protect an older node from its path trimming.
 

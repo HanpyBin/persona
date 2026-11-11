@@ -181,6 +181,7 @@ struct FolderPicker: View {
                     // Moving to where they all are changes nothing.
                     .disabled(Set(moving.map { ($0 as NSString).deletingLastPathComponent }) == [path])
                     .accessibilityIdentifier("files.move.here")
+                    .accessibilityHint(Text(verbatim: FileNameDisplay.hint((path as NSString).lastPathComponent)))
                 }
             }
     }

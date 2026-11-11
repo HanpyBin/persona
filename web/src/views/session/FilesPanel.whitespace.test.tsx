@@ -68,6 +68,9 @@ describe("file-list whitespace identity", () => {
     const toolbar = host.querySelector('[role="toolbar"]')!;
     const trash = toolbar.querySelector<HTMLButtonElement>(`button[aria-label="${t("files-ops.trash")}"]`)!;
     await act(async () => trash.click()); await flush();
+    const heading = document.querySelector<HTMLElement>('[role="dialog"] h2')!;
+    expect(heading.querySelector('[aria-hidden="true"]')?.textContent).toBe(t("files-ops.trash_one_title", { name: displayFileName("report ") }));
+    expect(heading.querySelector(".sr-only")?.textContent).toBe(t("files-ops.trash_one_title", { name: spokenFileName("report ") }));
     const confirm = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((b) => b.textContent?.trim() === t("files-ops.trash"));
     expect(confirm).toBeTruthy();
     await act(async () => confirm!.click()); await flush();
@@ -84,6 +87,7 @@ describe("file-list whitespace identity", () => {
     const move = toolbar.querySelector<HTMLButtonElement>(`button[aria-label="${t("files-ops.move")}"]`)!;
     await act(async () => move.click()); await flush();
     const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(dialog.querySelector("h2 .sr-only")?.textContent).toBe(t("files-ops.move_one_title", { name: spokenFileName("report ") }));
     const destination = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.querySelector(".sr-only")?.textContent === spokenFileName("dest "));
     expect(destination).toBeTruthy();
     await act(async () => destination!.click()); await flush();

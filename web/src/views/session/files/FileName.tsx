@@ -40,30 +40,43 @@ function parts(name: string): { leading: string; body: string; trailing: string 
 /** Display and speak boundary characters while keeping the caller's original name for actions. */
 export function displayFileName(name: string): string {
   const p = parts(name);
-  return p ? p.leading + p.body + p.trailing : name;
+  if (p) return `⟦${p.leading}${JSON.stringify(p.body)}${p.trailing}⟧`;
+  return name.startsWith("⟦") ? `⟦${t("files-name.literal_mark")}⟧${JSON.stringify(name)}` : name;
 }
 
 export function spokenFileName(name: string): string {
   const p = parts(name);
-  if (!p) return name;
-  if (!p.body) return t("files-name.only", { marks: p.leading });
-  if (p.leading && p.trailing) return t("files-name.both", { name: p.body, leading: p.leading, trailing: p.trailing });
-  return p.leading ? t("files-name.leading", { name: p.body, marks: p.leading }) : t("files-name.trailing", { name: p.body, marks: p.trailing });
+  const marked = t("files-name.marked_prefix") + ": ";
+  const literal = t("files-name.literal_prefix") + ": ";
+  if (!p) return name.startsWith("⟦") || name.startsWith(marked) || name.startsWith(literal) ? literal + JSON.stringify(name) : name;
+  if (!p.body) return marked + t("files-name.only", { marks: p.leading });
+  const body = JSON.stringify(p.body);
+  if (p.leading && p.trailing) return marked + t("files-name.both", { name: body, leading: p.leading, trailing: p.trailing });
+  return marked + (p.leading ? t("files-name.leading", { name: body, marks: p.leading }) : t("files-name.trailing", { name: body, marks: p.trailing }));
 }
 
 export function displayFilePath(path: string): string {
   return path.split("/").map(displayFileName).join("/");
 }
 
+export function spokenFilePath(path: string): string {
+  return path.split("/").map(spokenFileName).join("/");
+}
+
 export function FileName({ name, className }: { name: string; className?: string }) {
   const p = parts(name);
-  if (!p) return <span className={className}>{name}</span>;
+  const shown = displayFileName(name);
+  const spoken = spokenFileName(name);
+  if (!p && shown === name && spoken === name) return <span className={className}>{name}</span>;
+  if (!p) return <span className={className}><span aria-hidden="true">{shown}</span><span className="sr-only">{spoken}</span></span>;
   return (
     <span className={`${className ?? ""} inline-flex min-w-0`}>
+      <span aria-hidden="true" className="shrink-0">⟦</span>
       <span aria-hidden="true" className="min-w-0 truncate rounded bg-field">{p.leading}</span>
-      <span aria-hidden="true" className="min-w-0 truncate">{p.body}</span>
+      <span aria-hidden="true" className="min-w-0 truncate">{JSON.stringify(p.body)}</span>
       <span aria-hidden="true" className="min-w-0 truncate rounded bg-field">{p.trailing}</span>
-      <span className="sr-only">{spokenFileName(name)}</span>
+      <span aria-hidden="true" className="shrink-0">⟧</span>
+      <span className="sr-only">{spoken}</span>
     </span>
   );
 }

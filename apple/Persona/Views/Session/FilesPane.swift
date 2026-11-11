@@ -137,7 +137,12 @@ struct FilesPane: View {
             }
             Button("Cancel", role: .cancel) { trashing = [] }
         } message: {
-            Text("It goes to the computer’s Trash. You can undo right after, or put it back from the Trash there.")
+            if trashing.count == 1 && FileNameDisplay.spoken(trashing[0]) != trashing[0] {
+                Text("It goes to the computer’s Trash. You can undo right after, or put it back from the Trash there.")
+                + Text(verbatim: " ") + Text(verbatim: FileNameDisplay.spoken(trashing[0]))
+            } else {
+                Text("It goes to the computer’s Trash. You can undo right after, or put it back from the Trash there.")
+            }
         }
         .alert(String(localized: "“\(FileNameDisplay.label(edits.conflictName))” already exists"),
                isPresented: Binding(get: { edits.conflict != nil }, set: { if !$0 { edits.answer(nil) } })) {
@@ -145,7 +150,12 @@ struct FilesPane: View {
             Button("Keep Both") { edits.answer("keep") }
             Button("Cancel", role: .cancel) { edits.answer(nil) }
         } message: {
-            Text("The folder already has an item with that name. Replace moves the one there to the Trash; Keep Both names this one “name 2”.")
+            if FileNameDisplay.hint(edits.conflictName).isEmpty {
+                Text("The folder already has an item with that name. Replace moves the one there to the Trash; Keep Both names this one “name 2”.")
+            } else {
+                Text("The folder already has an item with that name. Replace moves the one there to the Trash; Keep Both names this one “name 2”.")
+                + Text(verbatim: " ") + Text(verbatim: FileNameDisplay.hint(edits.conflictName))
+            }
         }
         .sheet(isPresented: Binding(get: { !moving.isEmpty }, set: { if !$0 { moving = [] } })) {
             FolderPicker(machineID: machineID, group: group, cwd: cwd, start: stack, moving: moving.map(full)) { dir in
