@@ -44,9 +44,15 @@ struct AssistantView: View {
     @Environment(\.oneSidebar) private var oneSidebar
     @Environment(\.splitDetail) private var splitDetail
     @Environment(\.splitShowList) private var splitShowList
+    /// The system's bars down the side beside the one sidebar (the open iPhone Duo on its side): New Chat is there (#4854).
+    @Environment(\.oneSidebarSideBars) private var oneSidebarSideBars
     #else
     private let oneSidebar = false
+    private let oneSidebarSideBars = false
     #endif
+    /// New Chat in the system's side column, as ChatGPT has it on the open Duo on its side (#4854): the system places it
+    /// under the clock and the camera, and moves it when the Dynamic Island grows; the page's top bar leaves its own out.
+    private var newInSideBar: Bool { oneSidebar && oneSidebarSideBars }
     /// The iPhone's new conversation (`ShellHome`): the shell, and the open iPhone Duo's one sidebar (#3680).
     private var phoneHome: Bool {
         #if os(iOS)
@@ -245,8 +251,25 @@ struct AssistantView: View {
                     .onAppear { NewChatCheck.shared.homeAppeared() }
                 }
             }
-            // No system bar: the top bar floats over the conversation with a fog under it (it scrolls beneath).
-            .toolbarVisibility(.hidden, for: .navigationBar)
+            // No system bar: the top bar floats over the conversation with a fog under it (it scrolls beneath). Under side
+            // bars beside the one sidebar the system's holds New Chat in its column (#4854), its title left out (the page's
+            // face names it).
+            .toolbarVisibility(newInSideBar ? .visible : .hidden, for: .navigationBar)
+            .pageToolbar {
+                if newInSideBar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            Haptics.tap()
+                            newConversationAction()
+                        } label: {
+                            Label("New Chat [Quick Actions ea4b29]", systemImage: Theme.Icon.compose)
+                        }
+                        .disabled(pending != nil || current == nil)
+                        .accessibilityIdentifier("assistant-new")
+                    }
+                }
+            }
+            .toolbar(removing: newInSideBar ? .title : nil)
             #if os(iOS) || os(visionOS)
             .background { RootBarHidden(atRoot: atRoot) }
             #endif
@@ -254,10 +277,9 @@ struct AssistantView: View {
                 AssistantTopBar(key: pending == nil ? current : nil,
                                 sidebarIsColumn: widthClass == .regular,
                                 sidebarShown: sidebarOut,
+                                newInSideBar: newInSideBar,
                                 openSidebar: toggleSidebar,
-                                // In a health conversation New opens Health's new conversation page, whose list has the
-                                // space's past ones (#4329); elsewhere the assistant's.
-                                newConversation: currentIsHealth ? { backToRoot(); showHealth = true } : newConversation,
+                                newConversation: newConversationAction,
                                 openKnowledge: { showKnowledge = true },
                                 openProfile: { showProfile = true })
                 #if os(macOS)
@@ -412,6 +434,17 @@ struct AssistantView: View {
     }
 
     /// The open conversation is the health space's.
+    /// New Chat: in a health conversation Health's new conversation page, whose list has the space's past ones (#4329);
+    /// elsewhere the assistant's.
+    private func newConversationAction() {
+        if currentIsHealth {
+            backToRoot()
+            showHealth = true
+        } else {
+            newConversation()
+        }
+    }
+
     private var currentIsHealth: Bool { HealthModel.newOpensHealth(current.flatMap { model.session($0) }) }
 
     /// Health from the sidebar or the shell (#4329): back in the latest health conversation, as Codex does; the Health

@@ -1,17 +1,18 @@
 import XCTest
 
-/// One sidebar at regular width (#4206): iPad and the open iPhone Duo, in both postures, show Persona's places, Recent and
-/// the Agents list in one column, with Persona's page or the agent's chat beside it, and no Assistant | Agents switch.
+/// One sidebar at regular width (#4206): iPad and the open iPhone Duo, in both postures, show Persona's places, Pinned
+/// and All Chats (as every client lists Persona's chats, #4610) and the Agents list in one column, with Persona's page or
+/// the agent's chat beside it, and no Assistant | Agents switch.
 ///
 /// - the column's header (Persona's mark and name, the fold) and foot (New Chat; search and Settings);
 /// - More opens inline to Messages (when on), Meeting Recording, Health and Machines;
+/// - Pinned: the directions under their names with their work; All Chats over the window;
 /// - the grouping's segments under the Agents heading, one tap each, the same choice as the ⋯ menu's;
 /// - an agent opened from the list beside Persona's page, its row the selected one; a Persona row closes it;
-/// - Recent starts folded on an open Duo held on its side;
-/// - upright on the open Duo the column is over the page, and a pick that changes the page slides it away (#4852); ‹ on
-///   an agent opened from it goes back to Persona's page (#3641).
+/// - upright on the open Duo the column is over the page, and a pick that changes the page slides it away while the
+///   filters and groupings leave it (#4852); ‹ on an agent opened from it goes back to Persona's page (#3641).
 ///
-/// Against scripts/mock/mock_hub.py (PERSONA_MOCK_HUB). On the iPad simulator, or the Duo simulator opened in Xcode's
+/// Against scripts/mock/mock_hub.py started with MOCK_LEADERS=1 (PERSONA_MOCK_HUB). On the iPad simulator, or the Duo simulator opened in Xcode's
 /// Device Hub, on its side (TEST_RUNNER_PERSONA_ORIENTATION=landscape) or upright; the closed Duo and other iPhones skip.
 /// Taps and long presses only (upright, synthetic drags miss on the open Duo). TEST_RUNNER_PERSONA_HOLD=<seconds> holds
 /// each state, named in an activity `one-sidebar <name>`, for `simctl io screenshot` (`--display=3` on the Duo).
@@ -27,9 +28,8 @@ final class OneSidebarTests: XCTestCase {
         self.hub = hub
         XCUIDevice.shared.orientation = ProcessInfo.processInfo.environment["PERSONA_ORIENTATION"] == "landscape" ? .landscapeLeft : .portrait
         app = XCUIApplication()
-        // Recent as a new install leaves it: folded on an open Duo on its side, open otherwise.
         app.launchArguments = ["-pairURL", pair, "-tab", "assistant", "-app.tab", "assistant", "-dev.openChat", "",
-                               "-oneSidebar.recentFolded", "", "-dev.grouping", "repo"]
+                               "-dev.grouping", "repo", "-agents.list.closed", "NO"]
     }
 
     override func tearDown() {
@@ -42,16 +42,43 @@ final class OneSidebarTests: XCTestCase {
     }
 
     /// Launches and waits for the column; skips where the layout is not the one sidebar (a phone at compact width).
+    /// Upright on the open Duo the column may start away over the page: brought out from the page's button.
     @MainActor private func launch(_ extra: [String] = []) throws {
         app.launchArguments += extra
         app.launchPinned()
-        XCTAssertTrue(element("sidebar-main").waitForExistence(timeout: 20), "no main row:\n\(app.debugDescription)")
+        let main = element("sidebar-main"), back = element("assistant-sidebar-button")
+        XCTAssertTrue(main.waitForExistence(timeout: 20) || back.waitForExistence(timeout: 5), "no main row:\n\(app.debugDescription)")
         guard app.windows.firstMatch.frame.width > 600 else { throw XCTSkip("regular width only (iPad, iPhone Duo open)") }
+        bringColumnOut()
+    }
+
+    /// The column out, from the page's button if it is away.
+    @MainActor private func bringColumnOut() {
+        let main = element("sidebar-main")
+        if main.waitForHittable(timeout: 2) { return }
+        // Persona's page and Messages have their own button; a page pushed in Persona's stack (the Inbox) the system's.
+        let back = app.buttons.matching(NSPredicate(format: "identifier IN %@ OR label IN %@", ["assistant-sidebar-button", "feishu-sidebar-button"],
+                                                    ["显示边栏", "Show Sidebar"])).firstMatch
+        XCTAssertTrue(back.waitForExistence(timeout: 5) && back.isHittable, "neither the column nor its button:\n\(app.debugDescription)")
+        back.tap()
+        XCTAssertTrue(main.waitForHittable(timeout: 5), "the column did not come out:\n\(app.debugDescription)")
+    }
+
+    /// The column slid away over the page (upright): its rows out of reach, the page's button back.
+    @MainActor private func assertColumnAway(_ after: String, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertTrue(element("sidebar-main").waitForNotHittable(timeout: 5), "the column stayed after \(after):\n\(app.debugDescription)",
+                      file: file, line: line)
+    }
+
+    /// The column still out a moment after a tap that changes no page.
+    @MainActor private func assertColumnStays(_ after: String, file: StaticString = #filePath, line: UInt = #line) {
+        sleep(1) // longer than the slide (`Theme.Motion.layout`)
+        XCTAssertTrue(element("sidebar-main").isHittable, "the column went after \(after)", file: file, line: line)
     }
 
     @MainActor private func element(_ id: String) -> XCUIElement { app.descendants(matching: .any)[id].firstMatch }
 
-    /// The open Duo held on its side: Recent starts folded there.
+    /// The open Duo held on its side: the system's bars down the side.
     @MainActor private var duoOnItsSide: Bool {
         let w = app.windows.firstMatch.frame
         return UIDevice.current.userInterfaceIdiom == .phone && w.width > w.height
@@ -69,24 +96,34 @@ final class OneSidebarTests: XCTestCase {
         }
     }
 
-    /// The column top to bottom (header, the places, More, Recent, the Agents heading and its segments, the list) and the
-    /// foot; no switch and no tab bar anywhere; Recent folded on the Duo's side and open elsewhere.
-    @MainActor func testTheColumnHasThePlacesRecentAndAgents() throws {
+    /// The column top to bottom (header, the places, More, Pinned and All Chats, the Agents heading and its segments, the
+    /// list) and the foot; no switch and no tab bar anywhere; no Recent (#4610).
+    @MainActor func testTheColumnHasThePlacesPinnedAndAgents() throws {
         try launch()
         let window = app.windows.firstMatch.frame
         XCTAssertEqual(app.tabBars.count, 0, "a tab bar is still there:\n\(app.debugDescription)")
         XCTAssertFalse(element("shell-assistant").exists || element("page-tab-switch").exists, "the Assistant | Agents switch is still there")
         let collapse = element("assistant-sidebar-collapse"), main = element("sidebar-main"), inbox = element("sidebar-inbox")
-        let more = element("sidebar-more"), recent = element("sidebar-recent-fold"), heading = element("sidebar-agents-heading")
-        for (name, e) in [("fold", collapse), ("Inbox", inbox), ("More", more), ("Recent", recent), ("Agents heading", heading)] {
+        let more = element("sidebar-more"), pinned = element("sidebar-pinned-heading"), all = element("sidebar-all-chats")
+        let heading = element("sidebar-agents-heading")
+        for (name, e) in [("fold", collapse), ("Inbox", inbox), ("More", more), ("Pinned", pinned), ("All Chats", all), ("Agents heading", heading)] {
             XCTAssertTrue(e.exists, "no \(name) in the column:\n\(app.debugDescription)")
         }
         XCTAssertLessThan(collapse.frame.maxY, main.frame.minY + 1, "the fold is not over the places")
         XCTAssertLessThan(main.frame.minY, inbox.frame.minY, "Main Chat is not first")
         XCTAssertLessThan(inbox.frame.minY, more.frame.minY)
-        XCTAssertLessThan(more.frame.minY, recent.frame.minY, "Recent is not under the places")
+        XCTAssertLessThan(more.frame.minY, pinned.frame.minY, "Pinned is not under the places")
+        XCTAssertLessThan(pinned.frame.minY, all.frame.minY, "All Chats is not under Pinned")
+        XCTAssertLessThan(all.frame.minY, heading.frame.minY, "the Agents are not under All Chats")
+        XCTAssertFalse(element("sidebar-recent-fold").exists, "Recent is still there (#4610)")
+        // The directions under their names, with their work (the direction tree's counts).
+        let leads = app.buttons.matching(identifier: "sidebar-pinned")
+        XCTAssertEqual(leads.count, 4, "not the mock hub's four directions (MOCK_LEADERS=1):\n\(app.debugDescription)")
+        XCTAssertTrue(leads.element(boundBy: 0).label.hasPrefix("Persona 产品"), "a direction not under its name: \(leads.element(boundBy: 0).label)")
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier == %@ AND label CONTAINS %@", "sidebar-pinned", "等你")).firstMatch.exists,
+                      "no direction shows its work")
         XCTAssertLessThan(main.frame.maxX, window.midX + 100, "the column is not on the left")
-        // Beside the page on the iPad and the open Duo on its side, the fold and the page's New Chat on one line (2026-11-11,
+        // Beside the page on the iPad and the open Duo on its side, the fold and the page's top on one line (2026-11-11,
         // the owner). Upright on the open Duo the column is over the page instead (#4852): the page keeps its full width.
         let pageNew = element("assistant-new")
         XCTAssertTrue(pageNew.exists, "no New Chat on the page")
@@ -96,7 +133,16 @@ final class OneSidebarTests: XCTestCase {
             let face = app.buttons.matching(NSPredicate(format: "identifier IN %@", ["assistant-menu", "persona-avatar"])).firstMatch
             XCTAssertTrue(face.exists, "no face on the page:\n\(app.debugDescription)")
             XCTAssertGreaterThan(face.frame.midX, collapse.frame.maxX + 100, "the page is under the column, not beside it")
-            XCTAssertEqual(pageNew.frame.midY, collapse.frame.midY, accuracy: 2, "the fold and the page's New Chat are not on one line")
+            XCTAssertEqual(face.frame.minY, collapse.frame.minY, accuracy: 2, "the fold and the page's face do not start on one line")
+            if duoOnItsSide {
+                // #4853: nothing above the columns under side bars, so a margin keeps the mark clear of the rounded corner.
+                XCTAssertGreaterThanOrEqual(collapse.frame.minY, window.minY + 16, "the column's header is at the display's edge: \(collapse.frame)")
+                // #4854: New Chat in the system's side column at the window's trailing edge, under its status items.
+                XCTAssertGreaterThan(pageNew.frame.minX, face.frame.maxX + 100, "New Chat is not at the trailing edge: \(pageNew.frame) in \(window)")
+                XCTAssertGreaterThan(pageNew.frame.minY, collapse.frame.maxY, "New Chat is not under the side column's status items: \(pageNew.frame)")
+            } else {
+                XCTAssertEqual(pageNew.frame.midY, collapse.frame.midY, accuracy: 2, "the fold and the page's New Chat are not on one line")
+            }
         }
         // The rarer places wait under More.
         XCTAssertFalse(element("sidebar-machines").exists, "Machines shows before More is opened")
@@ -106,14 +152,6 @@ final class OneSidebarTests: XCTestCase {
         XCTAssertEqual(new.frame.midY, settings.frame.midY, accuracy: 4, "New Chat and Settings not in one row")
         XCTAssertLessThan(new.frame.maxX, search.frame.minX)
         XCTAssertGreaterThan(new.frame.minY, window.maxY - 160, "the foot is not at the column's foot")
-        // Recent: folded on the open Duo's side, open elsewhere (no stored choice).
-        let recentRows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND identifier != %@ AND identifier != %@",
-                                                          "sidebar-recent-", "sidebar-recent-fold", "sidebar-recent-all"))
-        if duoOnItsSide {
-            XCTAssertEqual(recentRows.count, 0, "Recent is open on the Duo's side")
-        } else {
-            XCTAssertGreaterThan(recentRows.count, 0, "Recent is folded:\n\(app.debugDescription)")
-        }
         shot("home")
         // Folding the column and bringing it back from the page's own button.
         collapse.tap()
@@ -133,20 +171,24 @@ final class OneSidebarTests: XCTestCase {
         XCTAssertTrue(machines.waitForExistence(timeout: 5) && health.exists && recordings.exists, "More did not open:\n\(app.debugDescription)")
         XCTAssertGreaterThan(recordings.frame.minY, more.frame.minY, "More's places are not under it")
         shot("more")
+        more.tap()
+        XCTAssertTrue(machines.waitForNonExistence(timeout: 5), "More did not fold")
         let inbox = element("sidebar-inbox")
         inbox.tap()
         let page = element("inbox.more")
         XCTAssertTrue(page.waitForExistence(timeout: 10), "the Inbox did not open:\n\(app.debugDescription)")
-        XCTAssertGreaterThan(page.frame.minX, inbox.frame.maxX - 1, "the Inbox is not beside the column")
-        XCTAssertTrue(inbox.isHittable, "the column went with the Inbox")
-        more.tap()
-        XCTAssertTrue(machines.waitForNonExistence(timeout: 5), "More did not fold")
+        if duoUpright {
+            assertColumnAway("the Inbox") // over the page, it slides away (#4852)
+        } else {
+            XCTAssertGreaterThan(page.frame.minX, inbox.frame.maxX - 1, "the Inbox is not beside the column")
+            XCTAssertTrue(inbox.isHittable, "the column went with the Inbox")
+        }
     }
 
     /// The segments under the Agents heading pick the grouping, as the ⋯ menu does (`dev.grouping`): By Repository is
     /// the one lit at launch, and Machine lights when tapped.
     @MainActor func testTheSegmentsPickTheGrouping() throws {
-        try launch(["-oneSidebar.recentFolded", "1"])
+        try launch()
         let segments = element("agents.grouping.segments")
         XCTAssertTrue(segments.waitForExistence(timeout: 10), "no grouping segments:\n\(app.debugDescription)")
         XCTAssertGreaterThan(segments.frame.minY, element("sidebar-agents-heading").frame.minY, "the segments are not under the heading")
@@ -164,6 +206,8 @@ final class OneSidebarTests: XCTestCase {
     /// and is the selected row again.
     @MainActor func testAnOpenedAgentIsSelectedAndPersonaClosesIt() throws {
         try launch(["-openSession", "macbook/a1f3c2d4-0000-4000-8000-000000000002"])
+        // Upright the column is over the page and goes with a pick: `testUprightBackFromAnAgentGoesToPersonasPage`.
+        guard !duoUpright else { throw XCTSkip("the column beside the page only (iPad, the open Duo on its side)") }
         // The open header's title, or the slim one it folds to (a chat that opens scrolled to its end).
         let title = app.descendants(matching: .any).matching(NSPredicate(format: "identifier IN %@", ["chat.title", "chat.compactTitle"])).firstMatch
         XCTAssertTrue(title.waitForExistence(timeout: 20), "the agent did not open:\n\(app.debugDescription)")
@@ -186,6 +230,79 @@ final class OneSidebarTests: XCTestCase {
         XCTAssertEqual(selected.count, 0, "an agent row stays selected:\n\(app.debugDescription)")
     }
 
+    /// Upright on the open Duo (#4852): the column lies over the page. Needs You / All and the grouping's segments only
+    /// change the list, so it stays; a pick that changes the page slides it away: a direction, a place, Main Chat, a
+    /// conversation from All Chats.
+    @MainActor func testUprightAPickSlidesTheColumnAwayAndFiltersDoNot() throws {
+        try launch()
+        guard duoUpright else { throw XCTSkip("the open Duo upright only (the column beside the page elsewhere)") }
+        let needsYou = element("agents.filter.needsYou"), all = element("agents.filter.all")
+        XCTAssertTrue(needsYou.waitForExistence(timeout: 10), "no Needs You filter:\n\(app.debugDescription)")
+        needsYou.tap()
+        assertColumnStays("Needs You")
+        all.tap()
+        assertColumnStays("All")
+        let segments = element("agents.grouping.segments")
+        segments.buttons["机器"].firstMatch.tap()
+        assertColumnStays("a grouping segment")
+        segments.buttons["仓库"].firstMatch.tap()
+        assertColumnStays("a grouping segment")
+        shot("upright-filters")
+
+        // A direction: its conversation on the page, the column away.
+        app.buttons.matching(identifier: "sidebar-pinned").firstMatch.tap()
+        assertColumnAway("a direction")
+        shot("upright-direction")
+        // A place.
+        bringColumnOut()
+        element("sidebar-inbox").tap()
+        assertColumnAway("the Inbox")
+        XCTAssertTrue(element("inbox.more").waitForExistence(timeout: 10), "the Inbox did not open:\n\(app.debugDescription)")
+        // Main Chat.
+        bringColumnOut()
+        element("sidebar-main").tap()
+        assertColumnAway("Main Chat")
+        // A conversation from All Chats: the list over the window, the conversation on the page, the column away.
+        bringColumnOut()
+        element("sidebar-all-chats").tap()
+        let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "auto-conversation")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 10), "All Chats lists nothing:\n\(app.debugDescription)")
+        row.tap()
+        XCTAssertTrue(row.waitForNonExistence(timeout: 5), "a conversation did not close All Chats")
+        assertColumnAway("a conversation from All Chats")
+    }
+
+    /// Upright on the open Duo: an agent picked in the column slides it away (#4852), and ‹ on that agent goes back to
+    /// Persona's page, not the column out again (#3641).
+    @MainActor func testUprightBackFromAnAgentGoesToPersonasPage() throws {
+        try launch()
+        guard duoUpright else { throw XCTSkip("the open Duo upright only") }
+        // The agents are under the first screen upright, and synthetic drags miss there: the first Needs You card's
+        // place, at the column's foot, is tapped (a tap scrolls it in), which opens its agent as its row would.
+        let card = app.staticTexts.matching(identifier: "agents.interaction").firstMatch
+        if !card.waitForExistence(timeout: 3) {
+            // Not built yet: the column's Needs You heading (its lowest, under the filter chips) tapped scrolls the cards in.
+            let edge = element("sidebar-main").frame.maxX
+            let heading = app.staticTexts.matching(NSPredicate(format: "label == %@", "需要你")).allElementsBoundByIndex
+                .filter { $0.frame.maxX < edge }.max { $0.frame.minY < $1.frame.minY }
+            heading?.tap()
+        }
+        XCTAssertTrue(card.waitForExistence(timeout: 10), "no Needs You card in the column:\n\(app.debugDescription)")
+        XCTAssertLessThan(card.frame.maxX, element("sidebar-main").frame.maxX + 1, "the card is not the column's")
+        card.tap()
+        let title = app.descendants(matching: .any).matching(NSPredicate(format: "identifier IN %@", ["chat.title", "chat.compactTitle"])).firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: 20), "the agent did not open:\n\(app.debugDescription)")
+        assertColumnAway("an agent")
+        shot("upright-agent")
+        let back = app.buttons.matching(NSPredicate(format: "label IN %@", ["返回", "Back"])).firstMatch
+        XCTAssertTrue(back.waitForExistence(timeout: 5) && back.isHittable, "no ‹ on the agent:\n\(app.debugDescription)")
+        back.tap()
+        XCTAssertTrue(title.waitForNonExistence(timeout: 10), "‹ did not leave the agent:\n\(app.debugDescription)")
+        XCTAssertTrue(element("assistant-new").waitForHittable(timeout: 5), "Persona's page is not back:\n\(app.debugDescription)")
+        XCTAssertFalse(element("sidebar-main").isHittable, "‹ slid the column out instead of going back")
+        shot("upright-back")
+    }
+
     /// Messages is under More while it is switched on and the hub has Feishu chats; it opens beside the column, its row
     /// selected, and a Persona row takes the column back.
     @MainActor func testMessagesIsUnderMore() throws {
@@ -196,6 +313,17 @@ final class OneSidebarTests: XCTestCase {
         messages.tap()
         let list = element("feishu-conversations")
         XCTAssertTrue(list.waitForExistence(timeout: 10), "Messages did not open:\n\(app.debugDescription)")
+        if duoUpright {
+            // Over the page the column slides away (#4852); out again, Messages is the row picked.
+            assertColumnAway("Messages")
+            shot("messages-away")
+            bringColumnOut()
+            XCTAssertTrue(messages.waitForSelected(), "the Messages row is not selected")
+            shot("messages")
+            element("sidebar-main").tap()
+            XCTAssertTrue(list.waitForNonExistence(timeout: 10), "Main Chat did not take the column back from Messages")
+            return
+        }
         // The list scrolls under the floating column (its frame starts at the window's edge): its rows' text is beside it.
         let text = list.staticTexts.firstMatch
         XCTAssertTrue(text.waitForExistence(timeout: 10), "Messages shows no chat:\n\(list.debugDescription)")
@@ -230,11 +358,27 @@ final class OneSidebarTests: XCTestCase {
         XCTAssertGreaterThan(rows.count, 0, "no conversations in the search:\n\(app.debugDescription)")
         rows.firstMatch.tap()
         XCTAssertTrue(field.waitForNonExistence(timeout: 5), "a row did not close the search")
-        XCTAssertTrue(element("sidebar-main").isHittable, "the column is not back")
+        if duoUpright {
+            assertColumnAway("a conversation from the search") // over the page, it slides away (#4852)
+        } else {
+            XCTAssertTrue(element("sidebar-main").waitForHittable(timeout: 5), "the column is not back")
+        }
     }
 }
 
 private extension XCUIElement {
+    /// Waits until it can be tapped where it is (on screen, nothing over it).
+    func waitForHittable(timeout: TimeInterval = 5) -> Bool {
+        XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND isHittable == true"), object: self)],
+                       timeout: timeout) == .completed
+    }
+
+    /// Waits until it is gone or out of reach (slid off screen).
+    func waitForNotHittable(timeout: TimeInterval = 5) -> Bool {
+        XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false OR isHittable == false"), object: self)],
+                       timeout: timeout) == .completed
+    }
+
     /// Waits for VoiceOver's selected trait (the row the detail column shows).
     func waitForSelected(timeout: TimeInterval = 5) -> Bool {
         XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "isSelected == true"), object: self)],

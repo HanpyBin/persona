@@ -18,6 +18,8 @@ struct AssistantTopBar: View {
     /// The column is out. Beside the one sidebar (iPad, iPhone Duo open; #4206) its header's button folds it, so this one
     /// is only there to bring it back (#2623).
     var sidebarShown = false
+    /// New Chat is in the system's side column (the open iPhone Duo on its side beside the one sidebar, #4854): not here.
+    var newInSideBar = false
     #if os(iOS)
     @Environment(\.oneSidebar) private var oneSidebar
     #else
@@ -240,12 +242,17 @@ struct AssistantTopBar: View {
             Spacer(minLength: 8)
             face
             Spacer(minLength: 8)
-            GlassEffectContainer {
-                Self.circle(Theme.Icon.compose, label: String(localized: "New Chat [Quick Actions ea4b29]"), id: "assistant-new") {
-                    Haptics.tap()
-                    newConversation()
+            if newInSideBar {
+                // The face stays in the middle: an empty spot as wide as the sidebar button's side.
+                Color.clear.dynamicTypeSize(...DynamicTypeSize.xxLarge).scaledFrame(width: Theme.Size.tapTarget, height: Theme.Size.tapTarget)
+            } else {
+                GlassEffectContainer {
+                    Self.circle(Theme.Icon.compose, label: String(localized: "New Chat [Quick Actions ea4b29]"), id: "assistant-new") {
+                        Haptics.tap()
+                        newConversation()
+                    }
+                    .disabled(key == nil)
                 }
-                .disabled(key == nil)
             }
         }
         .padding(.horizontal, Theme.Space.l)

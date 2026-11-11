@@ -25,9 +25,35 @@ final class DuoOpenChromeTests: XCTestCase {
         XCUIDevice.shared.orientation = ProcessInfo.processInfo.environment["PERSONA_ORIENTATION"] == "landscape" ? .landscapeLeft : .portrait
         app = XCUIApplication()
         let pair = "persona://pair?url=" + hub.addingPercentEncoding(withAllowedCharacters: .alphanumerics)! + "&token=mock"
-        app.launchArguments = ["-pairURL", pair, "-tab", "assistant", "-app.tab", "assistant"]
+        app.launchArguments = ["-pairURL", pair, "-tab", "assistant", "-app.tab", "assistant", "-agents.list.closed", "NO"]
         app.launchPinned()
         guard app.windows.firstMatch.frame.width > 600 else { throw XCTSkip("regular width only (iPhone Duo open)") }
+        // Upright the column lies over the page and may start away (#4852).
+        let main = app.descendants(matching: .any)["sidebar-main"].firstMatch
+        let back = app.descendants(matching: .any)["assistant-sidebar-button"].firstMatch
+        _ = main.waitForExistence(timeout: 20)
+        if !main.isHittable, back.waitForExistence(timeout: 5), back.isHittable {
+            back.tap()
+            XCTAssertTrue(main.waitForExistence(timeout: 5), "the column did not come out")
+            sleep(1) // the slide
+        }
+    }
+
+    /// The column out, from the page's button if it is away (upright, after a pick).
+    @MainActor private func columnOut() {
+        let main = element("sidebar-main"), back = element("assistant-sidebar-button")
+        if main.exists && main.isHittable { return }
+        if back.waitForExistence(timeout: 5), back.isHittable {
+            back.tap()
+            XCTAssertTrue(main.waitForExistence(timeout: 5), "the column did not come out")
+            sleep(1) // the slide
+        }
+    }
+
+    /// Upright: the column lies over the page (#4852) instead of beside it.
+    @MainActor private var upright: Bool {
+        let w = app.windows.firstMatch.frame
+        return w.height > w.width
     }
 
     override func tearDown() {
@@ -58,7 +84,7 @@ final class DuoOpenChromeTests: XCTestCase {
         XCTAssertTrue(face.exists, "no face at the top of the page:\n\(app.debugDescription)")
         let window = app.windows.firstMatch.frame
         XCTAssertLessThan(face.frame.minY, window.minY + 100, "the face is not at the top")
-        XCTAssertGreaterThan(face.frame.minX, main.frame.maxX - 1, "the face is not on the page beside the column")
+        if !upright { XCTAssertGreaterThan(face.frame.minX, main.frame.maxX - 1, "the face is not on the page beside the column") }
         XCTAssertLessThan(collapse.frame.maxY, main.frame.minY + 1, "the fold is not at the column's top")
         let back = element("assistant-sidebar-button")
         XCTAssertFalse(back.exists && back.isHittable, "the page's Chat History shows beside the column")
@@ -99,6 +125,7 @@ final class DuoOpenChromeTests: XCTestCase {
         XCTAssertTrue(field.waitForNonExistence(timeout: 5), "a row did not close the search")
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "韩梅梅")).firstMatch.waitForExistence(timeout: 10),
                       "the row did not open its conversation:\n\(app.debugDescription)")
+        columnOut() // upright the pick slid it away (#4852)
         search.tap()
         XCTAssertTrue(close.waitForExistence(timeout: 5), "Search did not open again")
         close.tap()
@@ -115,7 +142,16 @@ final class DuoOpenChromeTests: XCTestCase {
             XCTAssertTrue(app.buttons[label].firstMatch.waitForExistence(timeout: 5), "no \(label) in the main row's menu:\n\(app.debugDescription)")
         }
         shot("main-menu")
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.5)).tap() // the menu away
+        // The menu away: a tap on the far side of the window from it (upright the menu reaches the window's middle).
+        let item = app.buttons["拷贝诊断"].firstMatch, window = app.windows.firstMatch.frame
+        app.coordinate(withNormalizedOffset: CGVector(dx: item.frame.midX < window.midX ? 0.95 : 0.05, dy: 0.97)).tap()
+        XCTAssertTrue(item.waitForNonExistence(timeout: 5), "the main row's menu did not close")
+        // Upright the column lies over the face (#4852): folded first, if that tap did not send it away already.
+        let collapse = element("assistant-sidebar-collapse")
+        if upright, collapse.exists, collapse.isHittable {
+            collapse.tap()
+            sleep(1) // the slide, before the face takes a tap
+        }
         let face = self.face
         XCTAssertTrue(face.waitForExistence(timeout: 5) && face.isHittable, "no face at the top:\n\(app.debugDescription)")
         face.tap()
@@ -126,7 +162,7 @@ final class DuoOpenChromeTests: XCTestCase {
     }
 
     /// A new conversation is the iPhone's (#3680): what needs the user over the composer (Agents waiting, the Inbox's
-    /// Needs You), as `ShellHome` shows it on every iPhone.
+    /// Needs You), as `ShellHome` shows it on every iPhone; upright as well, where New Chat slides the column away (#3641).
     @MainActor func testTheNewConversationShowsWhatNeedsYou() {
         let new = app.drawerNewChatButton
         XCTAssertTrue(new.waitForExistence(timeout: 20), "no New Chat in the sidebar:\n\(app.debugDescription)")
@@ -148,7 +184,9 @@ final class DuoOpenChromeTests: XCTestCase {
         let window = app.windows.firstMatch.frame, list = element("settings-list")
         XCTAssertTrue(list.exists, "no settings list:\n\(app.debugDescription)")
         XCTAssertGreaterThan(list.frame.width, window.width * 0.8, "Settings does not cover the window: \(list.frame) in \(window)")
-        XCTAssertGreaterThan(close.frame.midX, window.width * 0.85, "the × is not at the window's right: \(close.frame) in \(window)")
+        // On its side in the system's side column at the window's edge; upright in the top bar's trailing items, which keep
+        // clear of the display's top right corner.
+        XCTAssertGreaterThan(close.frame.midX, window.width * (upright ? 0.6 : 0.85), "the × is not at the window's right: \(close.frame) in \(window)")
         // In the system's side column under the clock where it has one, as ChatGPT's account page has its ×.
         XCTAssertLessThan(close.frame.minY, window.minY + window.height / 4, "the × is not at the top: \(close.frame) in \(window)")
         close.tap()

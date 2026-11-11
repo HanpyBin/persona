@@ -1,7 +1,7 @@
 #if os(iOS)
 import SwiftUI
 
-// One sidebar at regular width (#4206): iPad and the open iPhone Duo show Persona's pages, its recent chats and the Agents
+// One sidebar at regular width (#4206): iPad and the open iPhone Duo show Persona's pages, its Pinned chats and the Agents
 // list in one column, as ChatGPT's open layout and the web's sidebar do, with the page or the agent's chat beside it. No
 // Assistant | Agents switch: the Agents page (`ChatsView`) holds the split, Persona's home is its detail column's first
 // page, and these are the column's first rows (`AgentsList`), its header and its foot.
@@ -14,9 +14,16 @@ extension EnvironmentValues {
     /// Slides the list column away if it is laid over the page (the open iPhone Duo upright, #4852), after a pick that
     /// changes the page; beside the page it stays. Nil outside a split.
     @Entry var splitHideOverlay: SplitShowList? = nil
-    /// The window is wider than tall (an open iPhone Duo on its side): Recent starts folded there, for the Agents to be in
-    /// sight on the first screen.
-    @Entry var sidebarOnItsSide = false
+    /// The system puts its bars down the side of the window (the open iPhone Duo on its side, `toolbarVerticalEdge`): Persona's
+    /// page hands New Chat to the system's side column there (#4854), as the agent's chat hands its actions (#3680).
+    @Entry var oneSidebarSideBars = false
+}
+
+enum OneSidebarMetrics {
+    /// What the window gives up at its top under side bars (#4853): no status bar above the columns there, so the header
+    /// and the page's top bar sat at the display's edge, the column's mark under its rounded corner. As ChatGPT's open Duo,
+    /// a margin; both columns get it, so the fold and the page's top stay on one line.
+    static func topMargin(sideBars: Bool) -> CGFloat { sideBars ? Theme.Space.l : 0 }
 }
 
 extension EnvironmentValues {
@@ -36,10 +43,24 @@ struct OneSidebarLead {
 /// row (under More) is the one picked, Persona's page otherwise. Each has a stack of its own.
 struct OneSidebarHome: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.splitDetail) private var split
+    @Environment(\.splitShowList) private var showList
 
     var body: some View {
         if model.selectedTab == .feishu, LarkHomePreference.shared.shows {
             LarkConversationsView()
+                // Its own stack has no system button for the column: with the column away (folded, or slid off after the
+                // pick upright, #4852) the page's top corner brings it back, where Persona's page has its own.
+                .overlay(alignment: .topLeading) {
+                    if split?.listHidden == true, let showList {
+                        AssistantTopBar.circle(Theme.Icon.sidebar, label: String(localized: "Show Sidebar"), id: "feishu-sidebar-button") {
+                            Haptics.tap()
+                            showList.show()
+                        }
+                        .padding(.leading, Theme.Space.l)
+                        .padding(.top, AssistantTopBar.topInset)
+                    }
+                }
         } else {
             AssistantView()
         }
@@ -64,12 +85,12 @@ struct OneSidebarChrome: ViewModifier {
 }
 
 /// Persona's part of the one sidebar: the main conversation and the places (the rarer ones, and Messages, under More),
-/// Recent, and the Agents heading with the list's ⋯ and New Session, the grouping's segments under it. Rows of the Agents
-/// list's own `List`, above its filters.
+/// Pinned (the directions' conversations) and All Chats, as every client lists Persona's chats (#4610), and the Agents
+/// heading with the list's ⋯ and New Session, the grouping's segments under it. Rows of the Agents list's own `List`,
+/// above its filters.
 struct OneSidebarSections: View {
     @Environment(AppModel.self) private var model
     @Environment(\.padRouter) private var padRouter
-    @Environment(\.sidebarOnItsSide) private var onItsSide
     /// A pick that changes the page slides an overlaid column away (#4852); folds, More and the groupings don't.
     @Environment(\.splitHideOverlay) private var hideOverlay
     /// Closes the agent open beside the column, for a Persona page to show there.
@@ -79,14 +100,11 @@ struct OneSidebarSections: View {
     var menuActions: AgentsListMenu.Actions
     @Binding var showNew: Bool
     @State private var moreOpen = false
-    @State private var showAll = false
+    /// All Chats, over the window as from the drawer (`AutoConversationsView`).
+    @State private var allChats: AutoConversationsRoute?
     /// The main conversation asked to end from its long press (`MainChatRowMenu`).
     @State private var ending: Session?
-    /// Recent folded or not, as the user left it ("" until then: folded on its side, open otherwise).
-    @StoredValue("oneSidebar.recentFolded") private var recentFoldedChoice = ""
 
-    private static let recentCount = 3
-    private var recentFolded: Bool { recentFoldedChoice.isEmpty ? onItsSide : recentFoldedChoice == "1" }
     /// Messages is in the detail column (`OneSidebarHome`): its row is the selected one, none of Persona's.
     private var messagesOpen: Bool { !agentOpen && model.selectedTab == .feishu && LarkHomePreference.shared.shows }
     /// A Persona row is the one in the detail column: no agent and not Messages there.
@@ -111,7 +129,8 @@ struct OneSidebarSections: View {
             place(String(localized: "Machines"), Theme.Icon.machines, id: "sidebar-machines", indent: true) { show(.machines) }
         }
         VStack { Divider() }.padding(.horizontal, Theme.Space.m).padding(.vertical, Theme.Space.s).sidebarRow() // a row lays a bare Divider out upright
-        recent
+        pinned
+        allChatsRow
         agentsHeading
         AgentsGroupingSegments()
             .padding(.horizontal, Theme.Space.m)
@@ -190,36 +209,54 @@ struct OneSidebarSections: View {
         hideOverlay?.show()
     }
 
-    // MARK: Recent
+    // MARK: Pinned and All Chats
 
-    @ViewBuilder private var recent: some View {
-        let main = model.assistantMain
-        let rest = AssistantSidebarGroups.newestFirst(model.assistantConversations.filter { $0.key != main && !$0.isHealth })
-        row(id: "sidebar-recent-fold", action: {
-            withAnimation(Theme.Motion.standard) { recentFoldedChoice = recentFolded ? "0" : "1" }
-        }) {
-            Text("Recent").font(Theme.Font.secondaryMedium).foregroundStyle(.secondary).lineLimit(1)
-            FoldChevron(folded: recentFolded)
-            Spacer(minLength: 0)
+    /// Pinned: the directions' conversations in the hub's order under their names, with their work ("N working · N need
+    /// you"), as the drawer and the web list them (#4610; `AssistantSidebarGroups.directions`, the direction tree's counts).
+    @ViewBuilder private var pinned: some View {
+        let leads = AssistantSidebarGroups.directions(model.assistantConversations, leaders: model.assistantLeaders, main: model.assistantMain)
+        if !leads.isEmpty {
+            Text("Directions").font(Theme.Font.secondaryMedium).foregroundStyle(.secondary).lineLimit(1)
+                .accessibilityAddTraits(.isHeader)
+                .padding(.horizontal, Theme.Space.m)
+                .padding(.vertical, Theme.Sidebar.rowPadding)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .scaledFrame(minHeight: Theme.Sidebar.row)
+                .sidebarRow()
+                .accessibilityIdentifier("sidebar-pinned-heading")
+            ForEach(leads) { s in pinnedRow(s) }
         }
-        if !recentFolded {
-            ForEach(showAll ? rest : Array(rest.prefix(Self.recentCount))) { s in
-                let selected = personaOpen && model.assistantCurrent == s.key
-                row(id: "sidebar-recent-\(s.sessionID)", selected: selected, action: { open(s.key) }) {
-                    Text(s.title.isEmpty || s.title == "Claude Code" ? String(localized: "New Chat [Quick Actions ea4b29]") : s.title)
-                        .font(Theme.Font.body).foregroundStyle(Color.primary).lineLimit(1)
-                    Spacer(minLength: 0)
-                    if let at = s.updatedAt {
-                        Text(Fmt.relative(at)).font(Theme.Font.caption).foregroundStyle(.secondary).lineLimit(1)
-                    }
-                }
+    }
+
+    private func pinnedRow(_ s: Session) -> some View {
+        let selected = personaOpen && model.assistantCurrent == s.key
+        let title = model.directionNames[s.sessionID]
+            ?? (s.title.isEmpty || s.title == "Claude Code" ? String(localized: "New Chat [Quick Actions ea4b29]") : s.title)
+        let counts = model.directionCounts[s.sessionID].flatMap { DirectionCountsText.label(working: $0.working, needsYou: $0.needsYou) }
+        return row(id: "sidebar-pinned", selected: selected, action: { open(s.key) }) {
+            Text(title).font(Theme.Font.body).foregroundStyle(Color.primary).lineLimit(1)
+            Spacer(minLength: Theme.Space.xs)
+            if let counts { Text(counts).font(Theme.Font.label).foregroundStyle(.secondary).lineLimit(1) }
+        }
+        .accessibilityLabel([title, counts].compactMap { $0 }.joined(separator: String(localized: ", ", comment: "Separator between parts of an accessibility label")))
+        .contextMenu {
+            Button { Task { await model.setDirectionLead(s.sessionID, false) } } label: {
+                Label("Unpin [Assistant Sidebar b7c40e]", systemImage: Theme.Icon.unpin)
             }
-            if rest.count > Self.recentCount {
-                row(id: "sidebar-recent-all", action: { withAnimation(Theme.Motion.standard) { showAll.toggle() } }) {
-                    Text(showAll ? String(localized: "Collapse") : String(localized: "All Chats"))
-                        .font(Theme.Font.secondary).foregroundStyle(.secondary).lineLimit(1)
-                    Spacer(minLength: 0)
-                }
+        }
+    }
+
+    /// All Chats (#4610): every other conversation, over the window as from the drawer; one picked opens beside the column.
+    private var allChatsRow: some View {
+        row(id: "sidebar-all-chats", action: { allChats = AutoConversationsRoute(source: nil) }) {
+            Text("All Chats").font(Theme.Font.body).foregroundStyle(Color.primary).lineLimit(1)
+            Spacer(minLength: Theme.Space.xs)
+            ThemedIcon(Theme.Icon.disclosure).font(Theme.Font.labelStrong).foregroundStyle(.tertiary)
+        }
+        .sheet(item: $allChats) { route in
+            AutoConversationsView(source: route.source) { key in
+                allChats = nil
+                open(key)
             }
         }
     }

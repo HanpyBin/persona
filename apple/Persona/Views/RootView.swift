@@ -249,8 +249,8 @@ struct RootView: View {
     @Environment(AppModel.self) private var model
     #if os(iOS)
     @State private var pad = PadRouter()
-    /// An open iPhone Duo held on its side (`sidebarOnItsSide`).
-    @State private var onItsSide = false
+    /// Where the system puts its bars down the side (the open iPhone Duo on its side); nil across the top.
+    @State private var barEdge: HorizontalEdge?
     #endif
 
     var body: some View {
@@ -262,10 +262,11 @@ struct RootView: View {
         // iPad and the open iPhone Duo (RootTabs is iOS's regular width): one sidebar, no tabs (#4206).
         ChatsView()
             .environment(\.oneSidebar, true)
-            .environment(\.sidebarOnItsSide, onItsSide)
-            .onGeometryChange(for: Bool.self) { g in
-                UIDevice.current.userInterfaceIdiom == .phone && g.size.width > g.size.height
-            } action: { onItsSide = $0 }
+            .environment(\.oneSidebarSideBars, barEdge != nil)
+            // Under side bars nothing is above the columns: a margin at their top (#4853). Read at the root, as the shell
+            // reads it, so it never follows the padding it gives.
+            .safeAreaPadding(.top, OneSidebarMetrics.topMargin(sideBars: barEdge != nil))
+            .readsVerticalBarEdge($barEdge)
             .modifier(PadRoutes(router: pad))
         #else
         TabView(selection: $model.selectedTab) {

@@ -617,8 +617,7 @@ Apps built with older Xcode do not extend under the status bar and camera on Duo
   (ordinary iPhone, inner portrait) are unchanged. The rail measures the column as the page's width with the side's safe area less its width without: a `GeometryReader` that
   ignores the safe area reports no inset of its own on that edge.
 - **The inner screen** (#2623, then #4206): on a phone at regular width (iPhone Duo open, either way up; the iPhone app is upright only) `RootTabs` shows the one
-  sidebar, as the iPad does ("One sidebar" below), with no tab bar and no Assistant | Agents switch. On its side (wider than tall, `sidebarOnItsSide`) Recent starts
-  folded, for the Agents to be in sight on the first screen. The page beside it is the iPhone's: a new conversation on Persona's page is `ShellHome` (what needs the user
+  sidebar, as the iPad does ("One sidebar" below), with no tab bar and no Assistant | Agents switch. The page beside it is the iPhone's: a new conversation on Persona's page is `ShellHome` (what needs the user
   over the composer; `AssistantHome` stays the iPad's, #3680). The Agents list beside an opened chat stays in sight and keeps following the hub: whether a page covers it
   goes by the page's layout (`ownsTop`), as the split's sidebar column reads compact on a phone (#1971, #3680). `hidesTabBarWhenShown` puts back only what it found.
   Settings covers the window there, one column across with its × at the top right, as ChatGPT shows its account page, not a sheet over half of it (#3701, `PadRoutes`'
@@ -647,24 +646,29 @@ sidebar. Code in `Persona/Views/OneSidebar.swift`; the column is the Agents list
 - **The column**, top to bottom: the header (Persona's mark and name, or the assistant switcher on a hub with several; the button that folds the column at its
   trailing corner, `assistant-sidebar-collapse`); the main conversation and the places (Inbox, To-dos, Scheduled Tasks, Knowledge); More, which opens inline and holds
   the rarer ones (Messages when Feishu is on, Meeting Recording, Health, Machines; it reads Collapse while open and opens by itself while one of them is shown); a line;
-  Recent, Persona's other conversations, folded by its heading and remembered (`oneSidebar.recentFolded`); the Agents heading with the list's ⋯ and New Session, the
+  Pinned, the directions' conversations under their names with their work ("N working · N need you"), and All Chats, which lists every other
+  conversation over the window (`AutoConversationsView`), as every client lists Persona's chats (#4610: no Recent; the rows and counts are the drawer's,
+  `AssistantSidebarGroups.directions` and the direction tree's `directionCounts`; a long press unpins); the Agents heading with the list's ⋯ and New Session, the
   grouping as segments under it (To-do, Machine, Repo, Project, Status: `AgentsGroupingSegments`, the same `dev.grouping` as the ⋯ menu, which still offers
   Recently Used and By App, no segment lit then), then the Agents list. The foot holds New Chat and a capsule with Search (over the whole window, `AssistantFullSearch`, #3705) and Settings.
 - **Beside it** the detail column shows the agent's chat while one is open, and otherwise its home (`SplitNavigation.home`, `OneSidebarHome`): Persona's page, or
   Messages while its row is the one picked (`selectedTab == .feishu`). Each has its own `NavigationStack`: the home is not a page of the column's stack, since
   stacks cannot nest. A Persona row closes the agent and shows its page there; opening an agent sets `selectedTab` to `.chats`, closing it back to `.assistant`.
   On the open Duo held upright (669 pt wide) the system lays the column over the page, which keeps its full width (#4852, the owner: a column pushing the page
-  aside squeezed both). There a pick that changes the page (the main row, a place, a Recent conversation, Messages, an agent) slides the column away
+  aside squeezed both). There a pick that changes the page (the main row, a place, a Pinned row, a conversation from All Chats or Search, Messages, an agent) slides the column away
   (`\.splitHideOverlay`, and any change of the detail path); filters and groupings (Needs You, All, the segments) leave it open. The handle on its edge is
-  centered on the window's height. On its side and on the iPad the column sits beside the page.
-- **Selection**: one row at a time looks chosen: the main row, a place or a Recent conversation while Persona's page is shown, Messages while it is, the open agent's
+  centered on the window's height. With the column away, Persona's page brings it back from its own top-left button, a page pushed there from the system's,
+  and Messages, whose stack has no system button for it, from Show Sidebar in its top corner (`feishu-sidebar-button`). On its side and on the iPad the column sits beside the page.
+- **Selection**: one row at a time looks chosen: the main row, a place or a Pinned row while Persona's page is shown, Messages while it is, the open agent's
   row while an agent is (`Theme.Tree.selected` on cards, `RepoTreeSelected` on tree rows; `.isSelected` for VoiceOver), in every grouping.
 - **Menus**: the main row's long press holds the main conversation's menu, Copy Session ID, Copy Diagnostics and End… (`MainChatRowMenu`, shared with the iPhone's
   drawer); the page's face keeps its own (Knowledge, Details, Copy Directory, Copy Info). Agent rows keep theirs.
 - **Routes**: `PadRouter` takes Inbox and Settings (see "iPad"). Persona's page is built again each time an agent closes, so the last request it showed is kept
   on the router (`handled`), not on the page, or the page would show it again.
-- Tests: `OneSidebarTests` (the rows, More, the segments, the open agent's highlight, Messages under More, Settings, Search; iPad, or the open Duo, skipped below
-  600pt), `IPadSidebarTests`, `DuoOpenChromeTests`.
+- Tests: `OneSidebarTests` (the rows, Pinned and All Chats, More, the segments, the open agent's highlight, Messages under More, Settings, Search; upright on the
+  open Duo, the picks that slide the column away and the filters that don't, and ‹ from an agent back to Persona's page, #3641; iPad, or the open Duo, skipped below
+  600pt; the mock hub with `MOCK_LEADERS=1`), `IPadSidebarTests`, `DuoOpenChromeTests` (upright too: the new conversation's Needs You, #3641). Upright on the open
+  Duo synthetic drags miss: the tests reach rows under the first screen by tapping (a tap scrolls its element in).
 
 ## iPad (2026-10-31)
 
@@ -674,7 +678,7 @@ One App for iPhone and iPad (`TARGETED_DEVICE_FAMILY` 1,2). Previously only 1, g
 - iPad's left column uses `Theme.Size.sidebar` (340…480, ideal 400; system default is too narrow and wraps all Agents-card titles); Persona's chat list does too, preventing width jumps when switching tabs.
   iPhone Duo sets no width (the system splits at the crease).
 - iPad supports all four orientations (required by split screen and Stage Manager); iPhone remains portrait only.
-- The sidebar is the one sidebar (#4206, "One sidebar" below): Persona's places, Recent and the Agents in one column, no tabs. Inbox and Settings are not tabs:
+- The sidebar is the one sidebar (#4206, "One sidebar" below): Persona's places, Pinned and All Chats, and the Agents in one column, no tabs. Inbox and Settings are not tabs:
   routing still writes `AppModel.selectedTab`, and `PadRouter` (`RootView.swift`) maps `.mail` to "Inbox on Persona's page" and `.settings` to "open Settings"
   (a sheet with its × at the top right; on the open iPhone Duo it covers the window, #3701). Mac and Vision keep their shared root tabs.
   `IPadSidebarTests` guards this (portrait and landscape: ordering, the foot's buttons, no tab bar, Inbox opens on the right, Settings can close).
