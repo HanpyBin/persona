@@ -1,13 +1,13 @@
 {
   "sourceLanguage": "en",
   "strings": {
-    "Doing [State Names]": {
+    "Task Working [State Names]": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Doing"
+            "value": "Working"
           }
         },
         "ja": {
@@ -36,13 +36,59 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "あなた待ち"
+            "value": "対応待ち"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
             "value": "等你"
+          }
+        }
+      }
+    },
+    "Agents of %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agents of %1$@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@のエージェント"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ 的 Agent"
+          }
+        }
+      }
+    },
+    "Subagents of %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Subagents of %1$@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@のサブエージェント"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ 的子 Agent"
           }
         }
       }

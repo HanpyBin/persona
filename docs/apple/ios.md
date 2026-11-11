@@ -24,15 +24,16 @@ conversation (a direction, shown to the owner as Pinned / 常驻 / 常駐) with 
 state (`needs_you` / `review` / `stuck` / `working`), its Agents and their sub-Agents; the secretary group (书记官, the main
 conversation's id) last. The app neither groups to-dos by supervisor nor works out their state: it draws the tree.
 
-- **Reading it**: `AppModel.refreshDirectionTree` into `AppModel.directionTree`, read in `refreshAssistant`, on every
-  hello of the hub and on the `{"type":"directions"}` event (`ServerEvent.directions`); an answer older than the last
+- **Reading it**: `AppModel.refreshDirectionTree` into `AppModel.directionTree`, read on every hello of the hub and on the `{"type":"directions"}` event (`ServerEvent.directions`); an answer older than the last
   one taken is dropped (a newer read that fails does not count, so it never throws away a good answer); a 404 leaves it
-  nil, another failure keeps what was read. Only the default manager's page reads it (the tree is the default
+  nil, another failure keeps what was read. `refreshAssistant` reads it only while none is held, in its own task after
+  the settings land (it runs on every page's appear; Couldn't Load Settings does not wait for the tree). Only the default manager's page reads it (the tree is the default
   manager's); cleared when another hub group or manager is picked, and a read already under way is dropped. An answer
   also updates `directionNames` and the leader order, and a direction the conversations do not list yet reads the
   assistant again (not when read from `refreshAssistant` itself, `followLeaders: false`).
-- **Words** (`StateName`, `[State Names]` keys): 在做 / 等你 / 卡住 / 待验收 (en Doing / Needs you / Stuck / Awaiting
-  review, ja 作業中 / あなた待ち / 停滞中 / 検収待ち; 待验收 reuses the supervision badge's key). A direction's counts are
+- **Words** (`StateName`, `[State Names]` keys): 在做 / 等你 / 卡住 / 待验收 (en Working / Needs you / Stuck / Awaiting
+  review, ja 作業中 / 対応待ち / 停滞中 / 検収待ち, the same words as #4331's counts beside them; 待验收 reuses the
+  supervision badge's key). A direction's counts are
   #4331's words everywhere, "N working · N need you" with only the non-zero parts (`DirectionCountsText.label`,
   `DirectionTree.Counts.label`; `DirectionCountsLine` in section headers). Tones: Needs You's text for 等你, Working's
   for 在做, `Theme.cautionText` for 卡住 and 待验收 (`DirectionTaskStateWord`). Agents keep their own state names.
@@ -40,14 +41,14 @@ conversation's id) last. The app neither groups to-dos by supervisor nor works o
 - **To-dos page** (iOS and the Mac's `MacTodosPage`): in List, a Group By menu right of List | Calendar (`TodosModeBar`, `TodosGrouping`, stored in
   `todos.grouping`): Status (the default, the sections as before) or Pinned (`Directions`). Only a hub with the tree
   offers it. Pinned: a section per direction with a to-do, in the tree's order, headed by its name (书记官 for the
-  secretary group) and its counts; its to-dos are the page's own rows (`todoRow`, swipe and checkbox included) in the
+  secretary group; `AppModel.directionTitle`, the lead row's title when the hub gave no name) and its counts; its to-dos are the page's own rows (`todoRow`, swipe and checkbox included) in the
   tree's order (`DirectionTodoSections`; on the Mac its own rows, selection included); a search narrows them; Done stays
   folded at the end as by status. A stored Pinned shows Status from a hub without the tree (`TodosGrouping.resolved`).
 - **Agents page**: Group By › By Pinned (`DevGrouping.direction`, not the default; offered and kept only while the hub has
   the tree, else a stored choice shows By To-do, or By Project without to-dos). A section per direction (fold id
   `direction:<id>` in `dev.folded`, open by default) headed by its name and counts; in it each to-do's row (its icon,
   title and state word; a tap opens its card), its Agents a level in as the list's own rows (`slotRow`, live state), their
-  sub-Agents further in; a sub-Agent the list does not have is drawn from the tree (state dot, title, Needs You in words)
+  sub-Agents further in; a sub-Agent the list does not have is drawn from the tree (state dot, title, its state in words)
   and opens its session. The listed Agents the tree does not have end in By To-do's Started Manually and Unassigned
   (Unassigned folded unless one of them needs you), so no Agent disappears. Under a quick filter or a search a to-do
   without a matching Agent is left out. No Sort in this grouping (the tree's order). `DirectionAgentSections` builds it,

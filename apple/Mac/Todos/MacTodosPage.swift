@@ -296,7 +296,7 @@ struct MacTodosPage: View {
                 ForEach(d.todos) { todo in row(todo, section: triage[todo.id]?.section) }
             } header: {
                 HStack(spacing: Theme.Space.s) {
-                    Text(d.direction.title(fallback: model.directionNames[d.direction.id]))
+                    Text(model.directionTitle(d.direction))
                         .font(Theme.Font.sectionHeader)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)

@@ -17,6 +17,14 @@ enum TodosGrouping: String, CaseIterable {
         }
     }
 
+    /// The Group By menu's mark for it, as the Agents page's groupings have one each.
+    var symbol: String {
+        switch self {
+        case .status: Theme.Icon.byState
+        case .direction: Theme.Icon.pin
+        }
+    }
+
     /// The grouping the list shows: the stored choice, but by status from a hub without the tree (an older hub, or
     /// before it is read), whatever was chosen against another hub.
     static func resolved(_ stored: TodosGrouping, hasTree: Bool) -> TodosGrouping { hasTree ? stored : .status }
@@ -48,7 +56,7 @@ struct TodosModeBar<ListControls: View>: View {
                     }
                 } label: {
                     HStack(spacing: Theme.Space.xs) {
-                        ThemedIcon(Theme.Icon.byState)
+                        ThemedIcon(grouping.wrappedValue.symbol)
                         Text(grouping.wrappedValue.title).lineLimit(1)
                     }
                 }

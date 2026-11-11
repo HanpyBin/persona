@@ -62,7 +62,7 @@ nonisolated struct DirectionTree: Codable, Hashable, Sendable {
             case .needsYou: StateName.taskNeedsYou
             case .review: StateName.taskToVerify
             case .stuck: StateName.taskStuck
-            case .working: StateName.taskDoing
+            case .working: StateName.taskWorking
             }
         }
     }

@@ -95,8 +95,10 @@ Pinned group at all.
   direction's own row, not the to-do's: accepting or closing the to-do drops it from the tree, and folding the direction
   hides it, without closing the card. A to-do with Agents has its
   own chevron (folded by default, not remembered) that lists them a level in: the live state dot (the tree's state for
-  a sub-Agent the app does not list), the title, the word Needs You while one waits (not the dot's color alone); a tap
+  a sub-Agent the app does not list), the title, the state's name in its tone (not the dot's color alone); a tap
   closes the drawer and opens the session (`openTodoAgentChat`). An Agent with sub-Agents has its own chevron too.
+  These chevrons say what they fold ("Agents of <to-do>", "Subagents of <Agent>"), not the bare title the row's own
+  button says, with Expanded / Collapsed.
 - **Secretary** (书记官): no row in the sidebar (the main conversation's row stands for it, #4331); its to-dos are in the
   To-dos and Agents pages' Pinned grouping.
 - **Code**: `AssistantSidebarDirections.swift` (`AssistantSidebarDirection`);

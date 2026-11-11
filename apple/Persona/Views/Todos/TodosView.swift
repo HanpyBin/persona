@@ -226,7 +226,7 @@ struct TodosView: View {
                 ForEach(d.todos) { todo in todoRow(todo, triage: triage[todo.id]) }
             } header: {
                 HStack(spacing: Theme.Space.s) {
-                    Text(d.direction.title(fallback: model.directionNames[d.direction.id]))
+                    Text(model.directionTitle(d.direction))
                         .font(Theme.Font.sectionHeader)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)

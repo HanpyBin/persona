@@ -992,12 +992,13 @@ final class AppModel {
             guard showsPage(of: api) else { return }
             await refreshDirectionInfo(api, leaders: st.leaders ?? [])
             guard showsPage(of: api) else { return }
-            await refreshDirectionTree(api, followLeaders: false)
-            guard showsPage(of: api) else { return }
             // A hub that names no launcher gets the same retry state as a failed read (#4200): current hubs always
             // resolve one (their default), so an empty answer means an old hub — show Couldn't Load Settings instead of an
             // endless Reading or a made-up name.
             assistantConfigLoadFailed = (assistantConfig?.launcher ?? "").isEmpty
+            // The tree is read on every hello and `directions` event; here only when none is held (a manager or hub
+            // group was just picked, which clears it), off this read's path so the page does not wait for it.
+            if directionTree == nil { Task { await refreshDirectionTree(api, followLeaders: false) } }
         } catch {
             // Settings that already name a launcher stay usable; with none held the page shows Couldn't Load Settings (#4200).
             if showsPage(of: api), (assistantConfig?.launcher ?? "").isEmpty { assistantConfigLoadFailed = true }
@@ -1014,6 +1015,14 @@ final class AppModel {
         guard let list = try? await api.leaders(), showsPage(of: api) else { return }
         let names = APIClient.directionNames(list)
         if names != directionNames { directionNames = names }
+    }
+
+    /// What the To-dos and Agents pages' headers call direction `d`: its name, Secretary for the secretary group, else
+    /// its leader conversation's title as the sidebar's lead row says it (New Chat when that has none either).
+    func directionTitle(_ d: DirectionTree.Direction) -> String {
+        if let name = directionNames[d.id], !name.isEmpty { return d.title(fallback: name) }
+        let t = assistantConfig?.conversations.first { $0.sessionID == d.id }?.title ?? ""
+        return d.title(fallback: t.isEmpty || t == "Claude Code" ? String(localized: "New Chat [Quick Actions ea4b29]") : t)
     }
 
     /// The assistant's leader conversations (the sidebar's Directions), never the main one, in the hub's order.

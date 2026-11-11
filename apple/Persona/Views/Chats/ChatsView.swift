@@ -2370,7 +2370,7 @@ private struct AgentsList: View {
             let mixedHosts = Set(live.compactMap(\.hostKind)).count > 1
             ForEach(layout.entries) { e in
                 let folded = isFolded(e.key)
-                let title = e.direction.title(fallback: model.directionNames[e.direction.id])
+                let title = model.directionTitle(e.direction)
                 listSection {
                     if !folded {
                         ForEach(e.tasks) { t in
@@ -2442,9 +2442,8 @@ private struct AgentsList: View {
                 StatusDot(state: state)
                 Text(title).font(compact ? CompactList.title : Theme.Font.secondary).foregroundStyle(Color.primary).lineLimit(1)
                 Spacer(minLength: Theme.Space.xs)
-                if state == .needsYou {
-                    Text(state.label).font(Theme.Font.caption).foregroundStyle(state.tone.text).lineLimit(1)
-                }
+                // Not the dot's color alone (HIG-040): every state says itself in words too.
+                Text(state.label).font(Theme.Font.caption).foregroundStyle(state.tone.text).lineLimit(1)
             }
             .padding(.leading, nested(l.depth + 1))
             .scaledFrame(minHeight: Theme.Size.tapTarget)

@@ -99,6 +99,7 @@ struct AssistantSidebarDirection<Head: View>: View {
             ThemedIcon(open ? Theme.Icon.collapse : Theme.Icon.expand)
                 .font(Theme.Font.labelStrong).foregroundStyle(.tertiary)
                 .padding(.trailing, Theme.Space.s)
+                .padding(.vertical, Theme.Sidebar.rowPadding)
                 .scaledFrame(minWidth: Theme.Size.tapTarget, minHeight: Theme.Sidebar.row)
                 .contentShape(.rect)
         }
@@ -137,7 +138,7 @@ struct AssistantSidebarDirection<Head: View>: View {
             if task.agents.isEmpty {
                 Color.clear.scaledFrame(width: Theme.Size.tapTarget, height: Theme.Size.dot).accessibilityHidden(true)
             } else {
-                foldButton(unfolded, label: title, id: "sidebar-direction-task-toggle") {
+                foldButton(unfolded, label: String(localized: "Agents of \(title)"), id: "sidebar-direction-task-toggle") {
                     openTasks.formSymmetricDifference([task.id])
                 }
             }
@@ -163,10 +164,8 @@ struct AssistantSidebarDirection<Head: View>: View {
                     StatusDot(state: state)
                     Text(title).font(Theme.Font.secondary).foregroundStyle(Color.primary).lineLimit(1)
                     Spacer(minLength: Theme.Space.xs)
-                    // Not the dot's color alone (HIG-040): the one state that wants the owner says so.
-                    if state == .needsYou {
-                        Text(state.label).font(Theme.Font.caption).foregroundStyle(state.tone.text).lineLimit(1)
-                    }
+                    // Not the dot's color alone (HIG-040): every state says itself in words too.
+                    Text(state.label).font(Theme.Font.caption).foregroundStyle(state.tone.text).lineLimit(1)
                 }
                 .padding(.leading, taskInset + Theme.Space.l * CGFloat(line.depth + 1))
                 .padding(.vertical, Theme.Sidebar.rowPadding)
@@ -180,7 +179,7 @@ struct AssistantSidebarDirection<Head: View>: View {
             .accessibilityAddTraits(.isButton)
             .accessibilityIdentifier("sidebar-direction-agent")
             if line.hasChildren {
-                foldButton(unfolded, label: title, id: "sidebar-direction-agent-toggle") {
+                foldButton(unfolded, label: String(localized: "Subagents of \(title)"), id: "sidebar-direction-agent-toggle") {
                     openAgents.formSymmetricDifference([line.id])
                 }
             } else {
@@ -191,7 +190,8 @@ struct AssistantSidebarDirection<Head: View>: View {
         .macHoverShade(in: RoundedRectangle(cornerRadius: Theme.Sidebar.radius, style: .continuous))
     }
 
-    /// A chevron that folds what is under a row, with a 44 pt target, spoken with the row's name and expanded / collapsed.
+    /// A chevron that folds what is under a row, with a 44 pt target, spoken as what it folds (a to-do's Agents, an
+    /// Agent's subagents: not the row's bare title, which its open button already says) and expanded / collapsed.
     private func foldButton(_ unfolded: Bool, label: String, id: String, toggle: @escaping () -> Void) -> some View {
         Button {
             withAnimation(Theme.Motion.state) { toggle() }
