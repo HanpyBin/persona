@@ -292,7 +292,7 @@ struct OneSidebarHeader: View {
 
     var body: some View {
         HStack(spacing: Theme.Space.s) {
-            if model.showsAssistantIdentity, let current = model.currentAssistant {
+            if model.managerRoster?.isMulti == true, let current = model.currentAssistant {
                 AssistantSwitcherHeader(manager: current, nameFont: Theme.Font.title, openSettings: { model.showSettings() })
             } else {
                 AppGlyph(size: Theme.Sidebar.glyphColumn, scaled: true)
