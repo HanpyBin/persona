@@ -149,6 +149,9 @@ func (n *Node) resolveWorkspace(asked string) (proto.Workspace, error) {
 	if path == "" {
 		return proto.Workspace{}, fmt.Errorf("workspace path must be an absolute directory or ~/ path")
 	}
+	if err := checkNativePath(path); err != nil {
+		return proto.Workspace{}, err
+	}
 	if inICloud(path) {
 		return proto.Workspace{}, fmt.Errorf("iCloud Drive files are not readable remotely")
 	}

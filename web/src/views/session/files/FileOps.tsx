@@ -274,11 +274,12 @@ export function useFileOps({ mid, cwd, onChanged }: { mid: string; cwd: string; 
             onSelect: () => {},
             rename: {
               value: x.name,
+              preserveWhitespace: true,
               commit: async (name) => {
                 const problem = nameProblem(name);
                 if (problem) throw new Error(problem);
                 try {
-                  await renameEntry(mid, x.path, cwd, name.trim());
+                  await renameEntry(mid, x.path, cwd, name);
                 } catch (e) {
                   throw new Error(opErrorText(e));
                 }

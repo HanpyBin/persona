@@ -42,6 +42,23 @@ struct FolderEditsTests {
         #expect(move["conflict"] == nil)
     }
 
+    @Test func renamePreservesTheSelectedAndEnteredNames() async throws {
+        let hub = FakeHub()
+        let route = "/api/v1/machines/m1/files/rename"
+        hub.on("POST", route, json: #"{"path":"~/proj/new "}"#)
+        let folder = FileManager.default.temporaryDirectory.appending(path: "folder-edits-\(UUID().uuidString)")
+        let model = AppModel(stateFolder: folder)
+        model.apiForTests = hub.client
+        let edits = FolderEdits()
+        edits.rename("~/proj/old ", to: "old ", cwd: "/project", machine: MachineRef(id: "m1"), model: model) {}
+        #expect(!edits.busy && hub.sent("POST", route).isEmpty)
+        edits.rename("~/proj/old ", to: "new ", cwd: "/project", machine: MachineRef(id: "m1"), model: model) {}
+        try await waitForRefreshTest { !edits.busy }
+        let request = try body(try #require(hub.sent("POST", route).first))
+        #expect(request["path"] as? String == "~/proj/old ")
+        #expect(request["name"] as? String == "new ")
+    }
+
     @Test func namesAreCheckedBeforeAsking() {
         #expect(FolderEdits.nameProblem("notes.txt") == nil)
         #expect(FolderEdits.nameProblem(".env") == nil)

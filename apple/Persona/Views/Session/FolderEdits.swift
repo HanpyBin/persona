@@ -34,7 +34,6 @@ final class FolderEdits {
     }
 
     func rename(_ path: String, to name: String, cwd: String, machine: MachineRef, model: AppModel, done: @escaping () -> Void) {
-        let name = name.trimmingCharacters(in: .whitespaces)
         if let problem = Self.nameProblem(name) {
             model.toast = Toast(problem, style: .error)
             return
