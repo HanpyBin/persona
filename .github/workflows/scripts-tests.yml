@@ -52,3 +52,34 @@ jobs:
         run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
       - name: Scripts and docs checks
         run: scripts/ci/scripts.sh
+  assistant-synchronization:
+    name: Existing late-answer tests with both guard repairs
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GOMAXPROCS: '2'
+      GOMEMLIMIT: 1536MiB
+      GOFLAGS: -p=2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: |
+            server/go.sum
+            sdk/go/go.sum
+      - name: Run existing late-answer tests repeatedly with the race detector
+        working-directory: server
+        shell: bash
+        run: |
+          mkdir -p ../.ci-evidence
+          go test -race ./internal/assistant -run '^(TestFailedAnswerRestoresOnlyAPendingCard|TestLatePressOutcomeIsSaidInTheChat|TestEndedCardSaysWhy)$' -count=20 -cpu=1,2 -timeout=180s -json | tee ../.ci-evidence/assistant-synchronization.jsonl
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: assistant-synchronization-results
+          if-no-files-found: error
+          retention-days: 7
+          path: .ci-evidence/assistant-synchronization.jsonl
