@@ -195,7 +195,7 @@ export function strayRecord(project) {
   return project.projectName === basename(c.worktreeRoot ?? c.cwd ?? '')
 }
 
-/** The name of an agent's slot: its Paseo workspace's title, else the branch, else the folder. */
+/** The name of the Paseo workspace an agent is in (its row's slot_name): its title, else the branch, else the folder. */
 export function slotNameOf(project, cwd) {
   const title = typeof project?.workspaceName === 'string' ? project.workspaceName.trim() : ''
   const branch = project?.checkout?.currentBranch
@@ -281,11 +281,11 @@ export function agentRow(agent, o = {}) {
     agent: appAgent(root),
     launcher: agent.provider,
   }
-  // Its Paseo workspace (a worktree, or one of the tasks in a folder) is its slot in the project.
-  if (space && typeof agent.workspaceId === 'string' && agent.workspaceId) {
-    row.slot_id = agent.workspaceId
-    row.slot_name = slotNameOf(p, cwd)
-  }
+  // Its Paseo workspace (a worktree, or one of the tasks in a folder) names where in the project it is. It is no slot:
+  // a slot is one tab, and the apps draw the agents sharing one as that tab's panes (one row for them all, each named
+  // by its agent; one that stopped running "replaced" by another there). A workspace's agents are conversations of
+  // their own, as in Paseo's own tabs (#4493).
+  if (space && typeof agent.workspaceId === 'string' && agent.workspaceId) row.slot_name = slotNameOf(p, cwd)
   // Its repository, for "By repo" (#2840): Paseo keeps its worktrees under its own folder, where the path names none.
   // By its physical directory (#4492), as the node names the working tree: a repository whose sessions write its path
   // two ways (a home behind a symbolic link) is two projects in the apps.

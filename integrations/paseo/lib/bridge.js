@@ -612,7 +612,7 @@ export function createPaseoBridge(deps = {}, options = {}) {
   }
 
   /**
-   * Where a session still being created is listed: its workspace's project and slot; a new workspace, the project of
+   * Where a session still being created is listed: its workspace's project and name; a new workspace, the project of
    * an agent at the same directory; else the folder's own space.
    */
   function placeOf(workspaceId, cwd) {
@@ -623,7 +623,7 @@ export function createPaseoBridge(deps = {}, options = {}) {
     const space = s.idOf(a?.project)
     if (!space) return { space_id: cwd, space_name: basename(cwd) }
     const place = { space_id: space, space_name: s.names.get(space) ?? a.project.projectName }
-    return workspaceId ? { ...place, slot_id: workspaceId, slot_name: slotNameOf(a.project, cwd) } : place
+    return workspaceId ? { ...place, slot_name: slotNameOf(a.project, cwd) } : place
   }
 
   /**
