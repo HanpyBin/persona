@@ -1,24 +1,12 @@
-name: Android CI
+name: Machines large-text evidence
 on:
-  workflow_call:
   workflow_dispatch:
 permissions:
   contents: read
-concurrency:
-  group: android-${{ github.repository }}-${{ github.ref_name }}-android
-  cancel-in-progress: true
 jobs:
-  android:
-    name: Android ${{ matrix.lane }}
+  screenshots:
     runs-on: ubuntu-latest
-    # Retain headroom until hosted cold/warm timings establish a safe lower bound.
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      max-parallel: 2
-      matrix:
-        # Two lanes balanced by task time; each runs its share in one Gradle invocation (scripts/ci/android-shards.py).
-        lane: [lint-build-test-0, test-1]
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -29,47 +17,22 @@ jobs:
           java-version: '21'
       - uses: android-actions/setup-android@v3
         with:
-          # The default also installs the legacy `tools` package, which the SDK repository no longer has.
           packages: platform-tools
       - name: Install Android SDK
         run: sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0'
       - uses: gradle/actions/setup-gradle@v4
         with:
-          # Only a manual main run may populate caches; PRs and other refs only restore.
-          cache-read-only: ${{ github.event_name != 'workflow_dispatch' || github.ref != 'refs/heads/main' }}
-      - name: Restore public Robolectric runtime dependencies
-        id: robolectric
-        uses: actions/cache/restore@v4
-        with:
-          # Never cache Maven settings, credentials or unrelated/private artifacts.
-          path: |
-            ~/.m2/repository/org/robolectric/android-all
-            ~/.m2/repository/org/robolectric/android-all-instrumented
-          key: ${{ runner.os }}-robolectric-v1-${{ matrix.lane }}-${{ hashFiles('android/**/*.gradle.kts', 'android/gradle/libs.versions.toml', 'android/gradle/wrapper/gradle-wrapper.properties') }}
-          # Another lane's entry, or one saved under an old lane name, holds the same public jars: better than a download.
-          restore-keys: |
-            ${{ runner.os }}-robolectric-v1-${{ matrix.lane }}-
-            ${{ runner.os }}-robolectric-v1-
-      - name: Android checks
-        run: scripts/ci/android.sh --lane '${{ matrix.lane }}' --profile
-      - name: Save public Robolectric runtime dependencies
-        if: success() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && steps.robolectric.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.m2/repository/org/robolectric/android-all
-            ~/.m2/repository/org/robolectric/android-all-instrumented
-          key: ${{ steps.robolectric.outputs.cache-primary-key }}
-      - name: Upload Android reports
+          cache-read-only: true
+      - name: Capture existing Machines cases at 200 percent font scale
+        working-directory: android
+        run: ./gradlew :feature:machines:testDebugUnitTest --tests persona.feature.machines.MachinesManagersShotsTest --no-daemon --max-workers=2
+      - name: Upload large-text evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: android-reports-${{ matrix.lane }}
+          name: machines-android-large-text
           retention-days: 7
-          if-no-files-found: ignore
+          if-no-files-found: error
           path: |
-            android/build/reports/profile/
-            android/**/build/reports/lint-results*
-            android/**/build/reports/tests/
-            android/**/build/test-results/
             android/feature/machines/build/managers-shots/*.png
+            android/feature/machines/build/test-results/testDebugUnitTest/
