@@ -68,7 +68,7 @@ describe("useFileOps", () => {
     const item = ops.rowItems({ path: "/home/me/x/old ", name: "old ", dir: false }, () => {}).find((row) => row.key === "rename")!;
     expect(item.rename?.preserveWhitespace).toBe(true);
     await act(async () => { await item.rename!.commit("new\u00a0"); });
-    expect(renameEntry).toHaveBeenCalledWith("m", "/home/me/x/old ", "/home/me/x", "new\u00a0");
+    expect(renameEntry).toHaveBeenCalledWith("m", "/home/me/x/old ", "/home/me/x", "new\u00a0", expect.objectContaining({ owner: expect.any(String), token: "example-file-ops-credential" }));
   });
   it("asks before a delete, then offers 撤销, which puts it back", async () => {
     vi.mocked(trashEntries).mockResolvedValue([{ path: "/home/me/x/a.txt", trash_id: "t1" }]);
@@ -77,7 +77,7 @@ describe("useFileOps", () => {
     expect(dialog()?.textContent).toContain("a.txt");
     expect(trashEntries).not.toHaveBeenCalled(); // asked first
     await click("移到废纸篓");
-    expect(trashEntries).toHaveBeenCalledWith("m", ["/home/me/x/a.txt"], "/home/me/x");
+    expect(trashEntries).toHaveBeenCalledWith("m", ["/home/me/x/a.txt"], "/home/me/x", expect.objectContaining({ owner: expect.any(String), token: "example-file-ops-credential" }));
     expect(changed).toHaveBeenCalledWith(["/home/me/x"]);
     // said in the panel, not in the page's toasts over the chat box
     const status = host.querySelector<HTMLElement>('[role="status"]')!;
@@ -85,7 +85,7 @@ describe("useFileOps", () => {
     const undo = [...status.querySelectorAll("button")].find((b) => b.textContent?.trim() === "撤销");
     await act(async () => undo!.click());
     await flush();
-    expect(restoreEntries).toHaveBeenCalledWith("m", ["t1"]);
+    expect(restoreEntries).toHaveBeenCalledWith("m", ["t1"], expect.objectContaining({ owner: expect.any(String), token: "example-file-ops-credential" }));
     expect(status.textContent).toContain("放回原处");
   });
 
