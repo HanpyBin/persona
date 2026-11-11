@@ -466,7 +466,7 @@ export function ErrorBox({ text, onRetry }: { text: string; onRetry?: () => void
     <div className="flex items-center gap-2 rounded-card bg-red-tint px-3 py-2.5 text-[12.5px] text-red">
       <span className="min-w-0 flex-1">{text}</span>
       {onRetry && (
-        <button type="button" onClick={onRetry} className="shrink-0 whitespace-nowrap rounded-[6px] px-2 py-1 font-medium hover:bg-surface">
+        <button type="button" onClick={onRetry} className="touch-hit shrink-0 whitespace-nowrap rounded-[6px] px-2 py-1 font-medium hover:bg-surface">
           {t("knowledge-kblist.retry")}
         </button>
       )}
