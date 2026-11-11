@@ -180,7 +180,7 @@ for index, (origin, title, request) in enumerate([
                                          "sourceLineCount": int(source is not None)})
                     launch(style, theme, 0)
                     wait_for(lambda tree: has_text(tree, CASES[0][2]), "Lark conversation before opening sidebar")
-                    click(lambda node: node.get("content-desc") == "Sidebar", "Sidebar")
+                    click(lambda node: node.get("content-desc", "").split(",", 1)[0] == "Sidebar", "Sidebar")
                     click(lambda node: node.get("text", "").startswith("Automatic"), "Automatic chats")
                     for chip, title, source in (("Lark /agent", CASES[0][1], CASES[0][3]),
                                                 ("Extensions", CASES[1][1], CASES[1][3])):
