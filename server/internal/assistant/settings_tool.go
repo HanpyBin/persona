@@ -155,16 +155,16 @@ func (s *Service) ownSettings() []ownSetting {
 			Value: "true or false"},
 			get: func(ctx context.Context) (string, error) { return fmt.Sprint(s.agentTasks(ctx)), nil },
 			set: s.setAgentTasks},
-		{Setting: Setting{Key: "assistant.inbox_signals", Title: "Tell a task's supervisor about new Inbox messages on it", Actions: getSet,
-			About: "off (the default): an Inbox message the AI twin's judge links to a task only reaches the twin's handling chat " +
-				"(and a message card once it drafts a reply). on: new messages from other people linked to a supervised task also " +
-				"reach the task's supervisor (its leader conversation, else the main conversation) as an inbox entry of the next " +
-				"supervision message, several collapsed into one per task with their count. Needs the Inbox AI twin, which makes the " +
-				"link; Persona's own sends, bot chats and tasks waiting for the user's decision never raise one. Costs supervisor " +
-				"turns. Applies from the next new message",
+		{Setting: Setting{Key: "inbox.forward_to_tasks", Title: "Forward related messages to their task", Actions: getSet,
+			About: "off (the default): an Inbox message the AI twin's judge links to a running task only reaches the twin's handling " +
+				"chat (and a message card once it drafts a reply). on: new messages from other people linked to a supervised task also " +
+				"reach the task's owner, the conversation supervising it (its leader conversation, else the main conversation), as an " +
+				"inbox entry of its next supervision message, several collapsed into one per task with their count. Needs the Inbox AI " +
+				"twin, which makes the link; Persona's own sends, bot chats and tasks waiting for the user's decision never raise one. " +
+				"Spends the owner's model turns. Inbox › ⋯ › Inbox handling in the apps; applies from the next new message",
 			Value: "true or false"},
-			get: func(ctx context.Context) (string, error) { return fmt.Sprint(s.inboxSignalsOn(ctx)), nil },
-			set: s.setInboxSignals},
+			get: s.getInboxForward,
+			set: s.setInboxForward},
 		{Setting: Setting{Key: "assistant.launcher", Title: "Persona 的启动器", Actions: getSet,
 			About: "which launcher (model) new Persona conversations start with by default",
 			Value: "a launcher name from this setting's get"},
@@ -294,7 +294,7 @@ var settingTitles = map[string]string{standingAuthorizationsKey: "title_standing
 	"assistant.start_requested_tasks":     "title_start_requested_tasks", "assistant.launcher": "title_launcher",
 	"assistant.recording_days": "title_recording_days", "assistant.done_needs_delivery": "title_done_needs_delivery",
 	"assistant.review_sample_percent": "title_review_sample_percent", "assistant.leaders": "title_leaders",
-	"assistant.interject_background": "title_interject_background", "assistant.agent_tasks": "title_agent_tasks", "assistant.inbox_signals": "title_inbox_signals", "model_profiles.tiers": "title_model_tiers",
+	"assistant.interject_background": "title_interject_background", "assistant.agent_tasks": "title_agent_tasks", "inbox.forward_to_tasks": "title_forward_to_tasks", "model_profiles.tiers": "title_model_tiers",
 	"assistant.meeting_attendance_default": "title_meeting_attendance_default", "assistant.minutes_days": "title_minutes_days",
 	"assistant.kb_topics": "title_kb_topics", "assistant.main_background_folded": "title_main_background_folded"}
 
@@ -556,11 +556,40 @@ func (s *Service) setAgentTasks(ctx context.Context, v json.RawMessage) (*ownCha
 		"assistant.agent_tasks is %v from the next start, turn end and report on (to-dos made before keep what they have).")
 }
 
-func (s *Service) setInboxSignals(ctx context.Context, v json.RawMessage) (*ownChange, error) {
-	return s.setBoolSetting(ctx, v, s.inboxSignalsOn, "assistant.inbox_signals is unchanged", func(l i18n.Lang, before, after string) string {
-		return i18n.T(l, "assistant-settings_tool.change_inbox_signals", i18n.Args{"before": before, "after": after})
-	}, func(v *Settings) **bool { return &v.InboxSignals },
-		"assistant.inbox_signals is %v from the next new Inbox message on (signals already waiting go out only while it is on).")
+func (s *Service) getInboxForward(ctx context.Context) (string, error) {
+	if err := s.inboxReady(ctx); err != nil {
+		return "", err
+	}
+	return fmt.Sprint(s.inboxForwardOn()), nil
+}
+
+// setInboxForward changes inbox.forward_to_tasks, kept with the Inbox's own settings (inbox_settings.go), once the user
+// approves.
+func (s *Service) setInboxForward(ctx context.Context, v json.RawMessage) (*ownChange, error) {
+	var on bool
+	if err := json.Unmarshal(v, &on); err != nil {
+		return nil, errors.New("value must be true or false")
+	}
+	if err := s.inboxReady(ctx); err != nil {
+		return nil, err
+	}
+	before := s.inboxForwardOn()
+	if on == before {
+		return &ownChange{summary: "inbox.forward_to_tasks is unchanged"}, nil
+	}
+	if s.store() == nil {
+		return nil, errors.New("no database on this hub")
+	}
+	word := map[bool]string{true: "assistant-settings_tool.on", false: "assistant-settings_tool.off"}
+	return &ownChange{cardText: func(l i18n.Lang) string {
+		return i18n.T(l, "assistant-settings_tool.change_forward_to_tasks", i18n.Args{"before": i18n.T(l, word[before]), "after": i18n.T(l, word[on])})
+	},
+		apply: func(ctx context.Context) (string, error) {
+			if _, err := s.setInboxSettings(ctx, InboxSettingsChange{ForwardToTasks: &on}); err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("inbox.forward_to_tasks is %v from the next new Inbox message on (signals already waiting go out only while it is on).", on), nil
+		}}, nil
 }
 
 // launchers are the launchers of the assistant's machine, as the apps list them.

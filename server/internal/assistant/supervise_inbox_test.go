@@ -13,10 +13,18 @@ import (
 
 // New Inbox messages about a supervised task reach its supervisor (#4293, supervise_inbox.go).
 
-// turnInboxSignalsOn turns assistant.inbox_signals on.
+// turnInboxSignalsOn turns inbox.forward_to_tasks on.
 func turnInboxSignalsOn(t *testing.T, s *Service) {
 	t.Helper()
-	setSettings(t, s, func(v *Settings) { on := true; v.InboxSignals = &on })
+	setForward(t, s, true)
+}
+
+// setForward sets inbox.forward_to_tasks.
+func setForward(t *testing.T, s *Service, on bool) {
+	t.Helper()
+	if _, err := s.setInboxSettings(context.Background(), InboxSettingsChange{ForwardToTasks: &on}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // supervisedTodo is a task of the main conversation conv1 under its supervision.
@@ -130,9 +138,7 @@ func TestInboxSignalsLeftOut(t *testing.T) {
 		name string
 		set  func(t *testing.T, s *Service, todo *Todo, it *InboxItem)
 	}{
-		{"switch off", func(t *testing.T, s *Service, _ *Todo, _ *InboxItem) {
-			setSettings(t, s, func(v *Settings) { v.InboxSignals = nil })
-		}},
+		{"switch off", func(t *testing.T, s *Service, _ *Todo, _ *InboxItem) { setForward(t, s, false) }},
 		{"unsupervised task", func(t *testing.T, s *Service, todo *Todo, it *InboxItem) {
 			plain, err := s.createTodo(ctx, "写周报", "写周报", "conv1", "")
 			if err != nil {
@@ -183,7 +189,7 @@ func TestInboxSignalDroppedMeanwhile(t *testing.T) {
 	if e, ok := s.digestEntry(ctx, g, ""); !ok || e.Inbox == nil || e.Inbox.Item != it.ID {
 		t.Fatalf("entry while on: %+v %v", e.Inbox, ok)
 	}
-	setSettings(t, s, func(v *Settings) { off := false; v.InboxSignals = &off })
+	setForward(t, s, false)
 	if _, ok := s.digestEntry(ctx, g, ""); ok {
 		t.Fatal("told after the switch went off")
 	}
@@ -246,23 +252,73 @@ func TestInboxSignalFromTheTwinsPass(t *testing.T) {
 	}
 }
 
-// The setting is off until changed, and the apps read and change it with the other assistant settings.
-func TestInboxSignalsSetting(t *testing.T) {
+// The setting is the Inbox's (inbox_settings.go): off until changed, read whole and changed field by field, and no
+// longer among the assistant's settings.
+func TestInboxForwardSetting(t *testing.T) {
 	s, _ := newQuietService(t)
-	if code, out := inboxCall(t, s, "GET", "/api/v1/assistant", ""); code != http.StatusOK || out["inbox_signals"] != false {
-		t.Fatalf("GET: %d %v", code, out["inbox_signals"])
+	if code, out := inboxCall(t, s, "GET", "/api/v1/inbox/settings", ""); code != http.StatusOK || out["forward_to_tasks"] != false {
+		t.Fatalf("GET: %d %v", code, out)
 	}
-	if code, out := inboxCall(t, s, "PUT", "/api/v1/assistant", `{"inbox_signals":true}`); code != http.StatusOK || out["inbox_signals"] != true {
-		t.Fatalf("PUT on: %d %v", code, out["inbox_signals"])
+	if code, out := inboxCall(t, s, "PUT", "/api/v1/inbox/settings", `{"forward_to_tasks":true}`); code != http.StatusOK || out["forward_to_tasks"] != true {
+		t.Fatalf("PUT on: %d %v", code, out)
 	}
-	if !s.inboxSignalsOn(context.Background()) {
+	if !s.inboxForwardOn() {
 		t.Fatal("not on after the PUT")
 	}
-	if code, out := inboxCall(t, s, "PUT", "/api/v1/assistant", `{"agent_tasks":true}`); code != http.StatusOK || out["inbox_signals"] != true {
-		t.Fatalf("another field's PUT changed it: %d %v", code, out["inbox_signals"])
+	if code, out := inboxCall(t, s, "PUT", "/api/v1/inbox/settings", `{}`); code != http.StatusOK || out["forward_to_tasks"] != true {
+		t.Fatalf("a PUT naming nothing changed it: %d %v", code, out)
 	}
-	if code, out := inboxCall(t, s, "PUT", "/api/v1/assistant", `{"inbox_signals":false}`); code != http.StatusOK || out["inbox_signals"] != false {
-		t.Fatalf("PUT off: %d %v", code, out["inbox_signals"])
+	if code, out := inboxCall(t, s, "PUT", "/api/v1/inbox/settings", `{"forward_to_tasks":"yes"}`); code != http.StatusBadRequest || !s.inboxForwardOn() {
+		t.Fatalf("a bad value: %d %v", code, out)
+	}
+	if code, out := inboxCall(t, s, "PUT", "/api/v1/inbox/settings", `{"forward_to_tasks":false}`); code != http.StatusOK || out["forward_to_tasks"] != false {
+		t.Fatalf("PUT off: %d %v", code, out)
+	}
+	// The assistant's settings neither show nor take it any more.
+	if code, out := inboxCall(t, s, "PUT", "/api/v1/assistant", `{"inbox_signals":true}`); code != http.StatusOK || out["inbox_signals"] != nil || s.inboxForwardOn() {
+		t.Fatalf("the old field: %d %v, on %v", code, out["inbox_signals"], s.inboxForwardOn())
+	}
+}
+
+// It moved from the assistant's settings (inbox_signals, #4381): while it was never saved in its new place, an "on" kept
+// in the old one carries over once and is saved there; an "off", or a value saved in the new place, is left as it is.
+func TestInboxForwardCarriesTheOldSwitchOver(t *testing.T) {
+	ctx := context.Background()
+	for _, c := range []struct {
+		name      string
+		old       *bool
+		saved     *InboxSettings
+		want      bool
+		wantSaved bool
+	}{
+		{"old on", ptr(true), nil, true, true},
+		{"old off", ptr(false), nil, false, false},
+		{"never set", nil, nil, false, false},
+		{"saved off wins", ptr(true), &InboxSettings{}, false, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h := newInboxHub(t)
+			if c.saved != nil {
+				if err := h.st.PutSetting(ctx, inboxSettingsKey, *c.saved); err != nil {
+					t.Fatal(err)
+				}
+			}
+			setSettings(t, h.Service, func(v *Settings) { v.InboxSignals = c.old }) // as a hub from before kept it
+			if err := h.inboxReady(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if got := h.inboxForwardOn(); got != c.want {
+				t.Fatalf("forward_to_tasks = %v, want %v", got, c.want)
+			}
+			var kept InboxSettings
+			found, err := h.st.Setting(ctx, inboxSettingsKey, &kept)
+			if err != nil || found != c.wantSaved || found && kept.ForwardToTasks != c.want {
+				t.Fatalf("kept %+v (found %v, %v), want found %v", kept, found, err, c.wantSaved)
+			}
+			if code, out := inboxCall(t, h.Service, "GET", "/api/v1/assistant", ""); code != http.StatusOK || out["inbox_signals"] != nil {
+				t.Fatalf("the assistant still shows the old field: %d %v", code, out["inbox_signals"])
+			}
+		})
 	}
 }
 

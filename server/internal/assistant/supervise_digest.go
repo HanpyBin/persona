@@ -378,7 +378,7 @@ func (s *Service) digestEntry(ctx context.Context, g superviseSignal, web string
 			return prompts.SuperviseEntry{}, false // answered, or asked again, meanwhile
 		}
 	case sigInbox:
-		if g.Inbox == nil || !s.inboxSignalHolds(t) || !s.inboxSignalsOn(ctx) {
+		if g.Inbox == nil || !s.inboxSignalHolds(t) || !s.inboxForwardOn() {
 			return prompts.SuperviseEntry{}, false // waits for the owner's decision, or the switch went off, meanwhile
 		}
 	}

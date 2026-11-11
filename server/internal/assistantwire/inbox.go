@@ -32,6 +32,8 @@ var InboxRoutes = []string{
 	"PUT /api/v1/inbox/{id}/folder",
 	"GET /api/v1/inbox/folders",
 	"PUT /api/v1/inbox/folders",
+	"GET /api/v1/inbox/settings",
+	"PUT /api/v1/inbox/settings",
 	"GET /api/v1/inbox/tree/{kind}/{id...}",
 	"POST /api/v1/inbox/refresh",
 	"POST /api/v1/inbox/done",

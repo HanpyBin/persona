@@ -37,6 +37,8 @@ var RouteScopes = map[string]string{
 	"PUT /api/v1/inbox/{id}/folder":                      ScopeInboxWrite,
 	"GET /api/v1/inbox/folders":                          ScopeInboxRead,
 	"PUT /api/v1/inbox/folders":                          ScopeInboxWrite,
+	"GET /api/v1/inbox/settings":                         ScopeInboxRead, // as the folders: the Inbox's own settings (#4524)
+	"PUT /api/v1/inbox/settings":                         ScopeInboxWrite,
 	"GET /api/v1/inbox/tree/{kind}/{id...}":              ScopeInboxRead,
 	"POST /api/v1/inbox/mutes":                           ScopeInboxWrite,
 	"DELETE /api/v1/inbox/mutes/{id}":                    ScopeInboxWrite,

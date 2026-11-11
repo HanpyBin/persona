@@ -361,8 +361,13 @@ func TestBoolSettingsSet(t *testing.T) {
 	for _, c := range []struct {
 		name string
 		def  bool
-	}{{"main_tasks_quiet", true}, {"start_requested_tasks", true}, {"done_needs_delivery", false}, {"interject_background", false}, {"agent_tasks", false}, {"main_background_folded", true}, {"inbox_signals", false}} {
-		key := "assistant." + c.name
+	}{{"main_tasks_quiet", true}, {"start_requested_tasks", true}, {"done_needs_delivery", false}, {"interject_background", false}, {"agent_tasks", false}, {"main_background_folded", true},
+		{"inbox.forward_to_tasks", false}} { // the Inbox's own (inbox_settings.go), kept apart from the assistant's
+		key := c.name
+		if !strings.Contains(key, ".") {
+			key = "assistant." + c.name
+		}
+		card := i18n.T(i18n.Default, "assistant-settings_tool.change_"+key[strings.Index(key, ".")+1:], i18n.Args{"before": word[c.def], "after": word[!c.def]})
 		get := func() string { out, _ := tool(`{"action":"get","key":"` + key + `"}`); return out }
 		set := func(value string) (string, bool) {
 			return tool(`{"action":"set","key":"` + key + `","value":` + value + `}`)
@@ -376,7 +381,6 @@ func TestBoolSettingsSet(t *testing.T) {
 		if out, isErr := set(`"yes"`); !isErr || !strings.Contains(out, "true or false") {
 			t.Fatalf("%s set to a string: %s", key, out)
 		}
-		card := i18n.T(i18n.Default, "assistant-settings_tool.change_"+c.name, i18n.Args{"before": word[c.def], "after": word[!c.def]})
 		go answer(false, card)
 		if out, _ := set(fmt.Sprint(!c.def)); !strings.Contains(out, "declined") || get() != fmt.Sprint(c.def) {
 			t.Fatalf("%s declined: %s", key, out)

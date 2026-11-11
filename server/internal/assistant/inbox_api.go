@@ -31,6 +31,7 @@ func (s *Service) inboxRoutes() {
 	s.inboxMuteRoutes()
 	s.inboxPolicyRoutes()
 	s.inboxFolderRoutes()
+	s.inboxSettingsRoutes()
 	s.inboxParentRoutes()
 	s.inboxBulkRoutes()
 	s.inboxSuggestionRoutes()

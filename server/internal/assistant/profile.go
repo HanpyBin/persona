@@ -86,8 +86,9 @@ type Settings struct {
 	// AgentTasks: every agent Persona starts is on a quiet, supervised todo (#3617, agent_tasks.go). nil is off (the
 	// default).
 	AgentTasks *bool `json:"agent_tasks,omitempty"`
-	// InboxSignals: new Inbox messages the judge links to a supervised task reach its supervisor as the signal inbox
-	// (#4293, supervise_inbox.go). nil is off (the default): each one is a supervisor turn.
+	// InboxSignals is where inbox.forward_to_tasks was kept before it moved to the Inbox's own settings (#4524): read
+	// only as that setting's initial value while it was never saved (loadInboxSettings), never written. Goes after a
+	// release (#2656).
 	InboxSignals *bool `json:"inbox_signals,omitempty"`
 	// IdleCloseHours: an agent Persona started that has been idle this many hours with nothing going on is closed
 	// (tasks_idle.go); 0 turns it off, nil is 12 (the default).
@@ -460,8 +461,6 @@ type assistantView struct {
 	InterjectBackground bool `json:"interject_background"`
 	// AgentTasks is in effect, like DoneNeedsDelivery.
 	AgentTasks bool `json:"agent_tasks"`
-	// InboxSignals is in effect, like DoneNeedsDelivery.
-	InboxSignals bool `json:"inbox_signals"`
 }
 
 // view is GET /api/v1/assistant; withArchived lists archived conversations too (flagged `archived`). It lists the
@@ -474,6 +473,7 @@ func (s *Service) view(ctx context.Context, withArchived bool, space ...string) 
 	}
 	v := s.settings(ctx)
 	v.Launcher = s.launcherNow(ctx)
+	v.InboxSignals = nil // retired: the Inbox's own settings have it (inbox_settings.go)
 	out := assistantView{Settings: v, Manager: s.managerIdentity(), PermissionDefaults: s.permissionDefaults(), Conversations: []proto.Session{}, NotesEffective: s.notes(ctx), MainTasksQuiet: quietOn(v.MainTasksQuiet),
 		StartRequestedTasks: quietOn(v.StartRequestedTasks), RecordingDays: recordingDaysOf(v), MinutesDays: kb.MinutesDaysFor(minutesDaysSetting(v), recordingDaysOf(v)),
 		MeetingAttendanceDefault: meetingAttendanceOf(v), KBTopics: quietOn(v.KBTopics),
@@ -483,8 +483,7 @@ func (s *Service) view(ctx context.Context, withArchived bool, space ...string) 
 		ArchiveClosedDays:   int(s.archiveClosedAfter(ctx) / (24 * time.Hour)),
 		ReviewSamplePercent: s.reviewSamplePercent(ctx),
 		InterjectBackground: v.InterjectBackground != nil && *v.InterjectBackground,
-		AgentTasks:          v.AgentTasks != nil && *v.AgentTasks,
-		InboxSignals:        v.InboxSignals != nil && *v.InboxSignals}
+		AgentTasks:          v.AgentTasks != nil && *v.AgentTasks}
 	if d, ok := s.device(ctx, v.MachineID); ok {
 		out.Cwd = s.spaceCwd(d, sp)
 		var list []proto.Session

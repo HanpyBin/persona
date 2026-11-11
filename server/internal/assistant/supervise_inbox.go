@@ -13,8 +13,8 @@ import (
 // an item, and the judge links the item to one of the user's tasks (linkTaskFor). When that task is supervised, its
 // supervisor gets the signal inbox through the usual digest: routed to the task's leader conversation or the main one,
 // gathered, deduplicated and spaced like any other signal, and several messages about one task before the message goes
-// out are one entry, the newest item's, with how many came. Off unless assistant.inbox_signals is on: each one is a
-// supervisor turn the user pays for.
+// out are one entry, the newest item's, with how many came. Off unless the Inbox's inbox.forward_to_tasks is on
+// (inbox_settings.go): each one is a supervisor turn the user pays for.
 //
 // Nothing Persona says itself raises one, so a supervisor's turn cannot feed the next: not the reply Persona sent for a
 // confirmed suggestion (SentOf), not a bot chat (where Persona's own bot posts its pushes and cards), and not the twin's
@@ -25,17 +25,11 @@ import (
 // sigInbox: new Inbox messages from other people about the task.
 const sigInbox = "inbox"
 
-// inboxSignalsOn: assistant.inbox_signals is on (off by default).
-func (s *Service) inboxSignalsOn(ctx context.Context) bool {
-	v := s.settings(ctx).InboxSignals
-	return v != nil && *v
-}
-
 // superviseInbox raises the inbox signal for those of items (the twin's pass just took new content into them) that are
-// linked to a supervised task, while assistant.inbox_signals is on. linked are the items the judge linked in this pass:
+// linked to a supervised task, while inbox.forward_to_tasks is on. linked are the items the judge linked in this pass:
 // all they hold is new to the supervisor.
 func (s *Service) superviseInbox(ctx context.Context, items []*InboxItem, linked map[*InboxItem]bool) {
-	if len(items) == 0 || !s.inboxSignalsOn(ctx) {
+	if len(items) == 0 || !s.inboxForwardOn() {
 		return
 	}
 	b := &s.inbox
