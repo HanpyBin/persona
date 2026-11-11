@@ -284,7 +284,7 @@ func watchSignals(t Todo, agents []proto.Session, now time.Time) []superviseSign
 		return nil
 	}
 	switch v.state(t) {
-	case reviewQueued:
+	case reviewQueued, reviewClosing, reviewStarting:
 		return nil
 	case reviewTimedOut:
 		return []superviseSignal{{Todo: t.ID, Kind: sigTimedOut, Key: reviewKey(v)}}
@@ -361,6 +361,10 @@ func (s *Service) superviseWatch(ctx context.Context, now time.Time) {
 			continue
 		}
 		s.remedyWatch(ctx, t, now) // a failed start's kept tab expired (start_remedy.go)
+		s.reconcileTaskAdmission(ctx, t, now)
+		if current, ok := s.todoNow(t.ID); ok {
+			t = current
+		}
 		s.closeStalledTask(ctx, t, now)
 		if current, ok := s.todoNow(t.ID); ok {
 			t = current

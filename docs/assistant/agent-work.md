@@ -196,8 +196,7 @@ The manager admits task leaders and their workers through a persistent FIFO queu
 the leader limit applies across the manager's tasks, including different supervising conversations and computers.
 The eight-task limit on a single `task_plan` call remains a batch limit.
 
-A queued task already has a to-do, with `supervision.state: "queued"`, but no Agent is started. Its saved plan task
-has `queued_at`, the FIFO ticket. `task_plan` identifies queued tasks in its response. Task cards and the task snapshot
+A queued task already has a to-do, with `supervision.state: "queued"`, but no Agent is started. The supervision ledger's `updated_at` is its FIFO ticket; no separate queue record is written. `task_plan` identifies queued tasks in its response. Task cards and the task snapshot
 expose the state; clients may use the supervision field without a new session or placeholder Agent.
 Acceptance, cancellation, a confirmed terminal-session retirement, and start failure release capacity. The supervision
 pass admits waiting tasks within 30 seconds, in FIFO order within each pool. A full pool does not block unrelated
@@ -213,12 +212,14 @@ If the task remains unattended until `max(60 minutes, expect_minutes × 3)`, the
 clock. Tasks waiting for review, the user, or a parked prerequisite are excluded.
 
 Closure applies only to Persona-started herdr sessions. Paseo, other runtimes, unknown hosts, and assistant conversations
-receive the existing reminders and are never stopped by this mechanism. A close error leaves the task open for retry
-and does not claim a successful timeout. The to-do remains open, retains its Agent links and transcript, and sends its
+receive the existing reminders and are never stopped by this mechanism. The manager saves `timeout_closing` before the node call, then records `timed_out` after it succeeds.
+A close error retains the intent for reconciliation; it does not claim a successful timeout. A restart or failed final
+ledger write completes the intent after observing the original session closed. The to-do remains open, retains its Agent links and transcript, and sends its
 supervisor one timeout notice per closure. Automatic triage continuations, wakeups, completion judgments, and orphan
 reminders stay held until continuation.
 
-Use the task's **Continue** action to resume the original session. A limited task re-enters the FIFO queue before
+Send `POST /api/v1/todos/{id}/retry` to continue the original session. Clients that expose Continue for this state can
+use the same endpoint; older clients may need a display update. A limited task re-enters the FIFO queue before
 continuing; it does not start another Agent. The node resumes from its retained launch state and directory. No archive
 or workspace deletion is requested.
 

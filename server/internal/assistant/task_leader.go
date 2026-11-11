@@ -159,7 +159,7 @@ func (s *Service) leaderSupervisor(t Todo) (lead TodoAgent, supervised, ok bool)
 	}
 	s.todos.mu.RLock()
 	defer s.todos.mu.RUnlock()
-	open := func(l *Todo) bool { return l != nil && l.DoneAt == nil && !l.Cancelled() }
+	open := func(l *Todo) bool { return l != nil && l.DoneAt == nil && !l.Cancelled() && !taskAdmissionHeld(*l) }
 	machine, supSession, _ := parseLeaderRef(t.Supervision.Supervisor)
 	machine = s.canonical(machine)
 	// anyMachine: the fallback by the leader task's link takes its current agent wherever it runs now (a flexible leader
@@ -436,6 +436,9 @@ func (e leaderUnreachable) Unwrap() error { return e.err }
 // (escalateLeaderMessage). A session its computer does not list, or a failed send, is a leaderUnreachable for the
 // caller, which puts the signals back for the next digest.
 func (s *Service) sendToLeader(ctx context.Context, lead TodoAgent, text string, kept []superviseSignal) error {
+	if task, ok := s.openTodoOfAgent(lead.MachineID, lead.SessionID); ok && taskAdmissionHeld(task) {
+		return leaderUnreachable{errors.New("the leader is queued or timed out; Continue must admit it first")}
+	}
 	c, ok := s.session(ctx, lead.MachineID, lead.SessionID)
 	if !ok {
 		return leaderUnreachable{errors.New("the leader's session is not listed")}
@@ -460,6 +463,9 @@ func (s *Service) sendToLeader(ctx context.Context, lead TodoAgent, text string,
 // sendToLeaderNow is one attempt to put text into the leader's session, resuming it if closed; it waits up to
 // leaderResumeTime. Each attempt has its own time, so it can be called from a goroutine that outlives any request.
 func (s *Service) sendToLeaderNow(ctx context.Context, lead TodoAgent, text string) error {
+	if task, ok := s.openTodoOfAgent(lead.MachineID, lead.SessionID); ok && taskAdmissionHeld(task) {
+		return leaderUnreachable{errors.New("the leader is queued or timed out; Continue must admit it first")}
+	}
 	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.leaderResumeTime())
 	defer cancel()
 	return s.call(sctx, lead.MachineID, DeviceSessionSend, sendParams(lead.SessionID, text, false), nil)

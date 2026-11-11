@@ -116,6 +116,9 @@ func (s *Service) toolTaskReview(ctx context.Context, self string, args json.Raw
 	if t.DoneAt != nil && (a.Verdict == reviewRework || a.Verdict == reviewNeedsUser || a.Verdict == reviewParked) {
 		return "", fmt.Errorf("task %s is done already (%s): hand out a new task for what is left", t.ID, cmp.Or(t.DoneReason, "closed"))
 	}
+	if a.Verdict == reviewRework && taskAdmissionHeld(t) {
+		return "", fmt.Errorf("task %s is queued or timed out: Continue the existing task through its retry endpoint before rework; do not start a replacement", t.ID)
+	}
 	if err := restated(t, a.Verdict, decision); err != nil {
 		return "", err
 	}

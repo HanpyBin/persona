@@ -355,7 +355,7 @@ func (s *Service) ciClosedTodo(ctx context.Context, machine, sid, existingProof 
 	s.todos.mu.RLock()
 	if id, open := s.todos.activeBySession[key]; open {
 		t := s.todos.todos[id]
-		held := t != nil && (t.Supervision.state(*t) == reviewTimedOut || t.Supervision.state(*t) == reviewQueued)
+		held := t != nil && (t.Supervision.state(*t) == reviewTimedOut || t.Supervision.state(*t) == reviewQueued || t.Supervision.state(*t) == reviewClosing)
 		s.todos.mu.RUnlock()
 		return held, "", nil
 	}

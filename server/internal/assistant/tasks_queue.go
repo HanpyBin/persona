@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
-	"fmt"
 	"slices"
 	"time"
 
@@ -77,6 +76,9 @@ func (s *Service) taskOccupiesSlot(ctx context.Context, t Todo) bool {
 	if t.DoneAt != nil || t.Supervision.state(t) == reviewTimedOut {
 		return false
 	}
+	if t.Supervision.state(t) == reviewStarting || t.Supervision.state(t) == reviewClosing {
+		return true
+	}
 	linked := false
 	for _, a := range t.Agents {
 		if !a.active() {
@@ -121,7 +123,7 @@ func (s *Service) drainTaskQueueLocked(ctx context.Context) {
 	var queue []queuedTask
 	for _, entry := range entries {
 		pt := entry.plan.Tasks[entry.index]
-		if pt.QueuedAt != nil {
+		if entry.todo.Supervision.state(entry.todo) == reviewQueued {
 			queue = append(queue, entry)
 			continue
 		}
@@ -135,7 +137,7 @@ func (s *Service) drainTaskQueueLocked(ctx context.Context) {
 		}
 	}
 	slices.SortFunc(queue, func(a, b queuedTask) int {
-		if n := a.plan.Tasks[a.index].QueuedAt.Compare(*b.plan.Tasks[b.index].QueuedAt); n != 0 {
+		if n := a.todo.Supervision.UpdatedAt.Compare(b.todo.Supervision.UpdatedAt); n != 0 {
 			return n
 		}
 		if n := cmp.Compare(a.plan.ID, b.plan.ID); n != 0 {
@@ -151,7 +153,7 @@ func (s *Service) drainTaskQueueLocked(ctx context.Context) {
 			}
 		} else {
 			parent, ok := s.todoNow(pt.Parent)
-			if !ok || parent.DoneAt != nil || parent.Supervision.state(parent) == reviewTimedOut || parent.Supervision.state(parent) == reviewQueued {
+			if !ok || parent.DoneAt != nil || taskAdmissionHeld(parent) {
 				continue
 			}
 			if workers[pt.Parent] >= limits.WorkersPerTask {
@@ -160,42 +162,46 @@ func (s *Service) drainTaskQueueLocked(ctx context.Context) {
 		}
 		// Recheck closure after the plan snapshot. Cancellation while queued must not create an agent.
 		t, ok := s.todoNow(entry.todo.ID)
-		if !ok || t.DoneAt != nil {
+		if !ok || t.DoneAt != nil || t.Supervision.state(t) != reviewQueued {
 			continue
 		}
-		if _, _, err := s.updateSupervision(ctx, t.ID, func(v *Supervision) bool {
+		if _, changed, err := s.updateSupervision(ctx, t.ID, func(v *Supervision) bool {
 			if v.State != reviewQueued {
 				return false
 			}
-			v.State = ""
+			v.State = reviewStarting
 			return true
-		}); err != nil {
+		}); err != nil || !changed {
 			s.logf("task queue %s: %v", t.ID, err)
 			continue
 		}
-		if err := s.patchPlanTask(ctx, entry.plan.ID, entry.index, func(t *PlanTask) { t.QueuedAt = nil }); err != nil {
-			s.logf("task queue %s: reserve: %v", t.ID, err)
-			return
-		}
-		pt.QueuedAt = nil
 		if pt.Role == roleLeader {
 			leaders++
 		} else {
 			workers[pt.Parent]++
 		}
-		s.startPlanTaskAsync(entry.plan.ID, entry.plan.Conversation, entry.index, pt, false, func() { s.releaseTakenTodo(pt.ReuseTodo) })
+		if taskHasSession(t) {
+			s.taskStarting.Add(1)
+			go func(task Todo) {
+				defer s.taskStarting.Add(-1)
+				cctx, cancel := context.WithTimeout(context.Background(), taskStartTimeout)
+				defer cancel()
+				if err := s.resumeTimedOutTask(cctx, task); err != nil {
+					s.logf("task %s: continue: %v", task.ID, err)
+					_, _, _ = s.updateSupervision(cctx, task.ID, func(v *Supervision) bool { v.State = reviewTimedOut; return true })
+				}
+			}(t)
+		} else {
+			s.startPlanTaskAsync(entry.plan.ID, entry.plan.Conversation, entry.index, pt, false, func() { s.releaseTakenTodo(pt.ReuseTodo) })
+		}
 	}
 }
 
-func (s *Service) queueRetry(ctx context.Context, planID string, i int, t PlanTask) error {
+func (s *Service) queueRetry(ctx context.Context, t PlanTask) error {
 	s.tasks.admissionMu.Lock()
 	defer s.tasks.admissionMu.Unlock()
-	at := time.Now().UTC()
-	if err := s.patchPlanTask(ctx, planID, i, func(pt *PlanTask) { pt.QueuedAt = &at }); err != nil {
-		return err
-	}
 	if _, _, err := s.updateSupervision(ctx, t.TodoID, func(v *Supervision) bool { v.State = reviewQueued; return true }); err != nil {
-		return fmt.Errorf("queue retry: %w", err)
+		return err
 	}
 	s.releaseTakenTodo(t.ReuseTodo)
 	s.drainTaskQueueLocked(ctx)
@@ -217,10 +223,6 @@ func (s *Service) continueTimedOut(ctx context.Context, task Todo) (json.RawMess
 	for _, e := range entries {
 		if e.todo.ID != task.ID {
 			continue
-		}
-		at := time.Now().UTC()
-		if err := s.patchPlanTask(ctx, e.plan.ID, e.index, func(pt *PlanTask) { pt.QueuedAt = &at; pt.Resume = true }); err != nil {
-			return nil, err
 		}
 		if _, _, err := s.updateSupervision(ctx, task.ID, func(v *Supervision) bool { v.State = reviewQueued; return true }); err != nil {
 			return nil, err
@@ -246,4 +248,63 @@ func (s *Service) resumeTimedOutTask(ctx context.Context, task Todo) error {
 	}
 	_, _, err := s.updateSupervision(ctx, task.ID, func(v *Supervision) bool { v.State = ""; return true })
 	return err
+}
+
+func taskHasSession(t Todo) bool {
+	for _, a := range t.Agents {
+		if a.active() && a.SessionID != "" && a.StartError == "" {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Service) taskQueued(id string) bool {
+	t, ok := s.todoNow(id)
+	return ok && t.Supervision.state(t) == reviewQueued
+}
+
+func taskAdmissionHeld(t Todo) bool {
+	switch t.Supervision.state(t) {
+	case reviewQueued, reviewClosing, reviewTimedOut:
+		return true
+	}
+	return false
+}
+
+// reconcileTaskAdmission resolves a continuation whose response or final ledger write was lost.
+// It never sends another message: uncertain sessions keep their reservation until observed.
+func (s *Service) reconcileTaskAdmission(ctx context.Context, t Todo, now time.Time) {
+	if t.Supervision.state(t) != reviewStarting || !taskHasSession(t) {
+		return
+	}
+	agents := s.taskAgents(ctx, t)
+	n := 0
+	for _, a := range t.Agents {
+		if a.active() {
+			n++
+		}
+	}
+	if len(agents) != n {
+		return
+	}
+	state := ""
+	for _, c := range agents {
+		if c.Status == proto.StatusOffline && c.PaneID == "" {
+			if now.Sub(t.Supervision.UpdatedAt) < taskStartTimeout {
+				return
+			}
+			state = reviewTimedOut
+		}
+	}
+	_, _, err := s.updateSupervision(ctx, t.ID, func(v *Supervision) bool {
+		if v.State != reviewStarting {
+			return false
+		}
+		v.State = state
+		return true
+	})
+	if err != nil {
+		s.logf("task %s: admission recovery: %v", t.ID, err)
+	}
 }

@@ -35,12 +35,9 @@ type PlanReroute struct {
 
 // PlanTask is one task of a plan, as the assistant proposed it and the user may have edited it.
 type PlanTask struct {
-	// QueuedAt is the FIFO ticket. A queued task has a todo but no agent start.
-	QueuedAt *time.Time `json:"queued_at,omitempty"`
-	Resume   bool       `json:"resume,omitempty"`
-	Title    string     `json:"title"`
-	Prompt   string     `json:"prompt"`
-	Machine  string     `json:"machine"`
+	Title   string `json:"title"`
+	Prompt  string `json:"prompt"`
+	Machine string `json:"machine"`
 	// MachinePolicy defaults to fixed; only explicit flexible tasks may move to another machine.
 	MachinePolicy     string                 `json:"machine_policy,omitempty"`
 	Cwd               string                 `json:"cwd"`

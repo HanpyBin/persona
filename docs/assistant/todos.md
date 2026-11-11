@@ -267,8 +267,9 @@ Under herdr, to-do associations map to pane markers (shown in the sidebar):
 
 `supervision.state` also exposes `queued` for tasks waiting for a concurrency slot and `timed_out` for unattended
 stalled terminal tasks whose Agents were closed. Both keep the to-do open. A queued task has no new Agent until admitted;
-a timed-out task retains its Agent links for **Continue** in the original session. Saved plan tasks carry `queued_at`
-for FIFO order and `resume` for a queued continuation. These are manager-owned fields, ignored in tool-call input.
+a timed-out task retains its Agent links for **Continue** in the original session. The supervision ledger's `updated_at` supplies FIFO order; `starting` reserves a slot before dispatch. A queued task
+with an existing Agent continues that session. `timeout_closing` is the durable close intent recovered after a failed
+response or restart.
 See [agent-work.md](agent-work.md), "Task concurrency and queueing" and "Stalled tasks close without automatic continuation".
 
 ## State calculation rules

@@ -27,6 +27,8 @@ import (
 
 const (
 	reviewQueued    = "queued"
+	reviewStarting  = "starting"
+	reviewClosing   = "timeout_closing"
 	reviewTimedOut  = "timed_out"
 	reviewPending   = "pending_review"
 	reviewAccepted  = "accepted"
@@ -318,7 +320,7 @@ func taskHealth(t Todo, agents []proto.Session, now time.Time) (string, int) {
 		return "", 5
 	}
 	switch v.state(t) {
-	case reviewQueued:
+	case reviewQueued, reviewStarting:
 		return "Queued", 6
 	case reviewTimedOut:
 		return "Timed out; continue to resume", 6

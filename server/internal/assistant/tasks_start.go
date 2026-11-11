@@ -66,12 +66,6 @@ func (s *Service) startPlan(ctx context.Context, id string, edits []PlanTask, re
 			return nil, planInvalid{err}
 		}
 	}
-	for i := range p.Tasks {
-		if limitedTask(p.Tasks[i]) {
-			at := time.Now().UTC()
-			p.Tasks[i].QueuedAt = &at
-		}
-	}
 	p.State = planStarted
 	ok, err := s.movePlan(ctx, p, planOpen)
 	if err != nil {
@@ -123,13 +117,19 @@ func (s *Service) startPlan(ctx context.Context, id string, edits []PlanTask, re
 			}
 			s.superviseTodo(ctx, todo.ID, sup, t.DoneWhen, t.ExpectMinutes)
 		}
-		if t.QueuedAt != nil {
+		if t.Parent != "" {
+			s.superviseTodo(ctx, todo.ID, p.Conversation, t.DoneWhen, t.ExpectMinutes)
+		}
+		if limitedTask(*t) {
+			// Persist the execution binding before queueing. Recovery can identify a partially admitted task.
+			if _, err := s.movePlan(ctx, p, planStarted); err != nil {
+				return nil, err
+			}
 			if _, _, err := s.updateSupervision(ctx, todo.ID, func(v *Supervision) bool { v.State = reviewQueued; return true }); err != nil {
 				return nil, err
 			}
 		}
-		if t.Parent != "" { // a task leader's worker: supervised by its leader's agent, with no conversation to show a card in
-			s.superviseTodo(ctx, todo.ID, p.Conversation, t.DoneWhen, t.ExpectMinutes)
+		if t.Parent != "" {
 			continue
 		}
 		if t.ReuseTodo != "" {
@@ -147,7 +147,7 @@ func (s *Service) startPlan(ctx context.Context, id string, edits []PlanTask, re
 	}
 	s.event(ctx, map[string]any{"type": "task_plan", "plan": p})
 	for i := range p.Tasks {
-		if task := p.Tasks[i]; task.TodoID != "" && task.QueuedAt == nil {
+		if task := p.Tasks[i]; task.TodoID != "" && !limitedTask(task) {
 			s.startPlanTaskAsync(p.ID, p.Conversation, i, task, false, func() {
 				s.releaseTakenTodo(task.ReuseTodo) // linked or failed: the todo is no longer in the gap
 			})
@@ -279,17 +279,6 @@ func (s *Service) runPlanTaskStart(planID, conversation string, i int, t PlanTas
 	defer s.releaseTaskWorkspace(t.TodoID)
 	ctx, cancel := context.WithTimeout(context.Background(), taskStartTimeout)
 	defer cancel()
-	if t.Resume {
-		task, ok := s.todoNow(t.TodoID)
-		if !ok || task.DoneAt != nil {
-			return
-		}
-		if err := s.resumeTimedOutTask(ctx, task); err != nil {
-			s.logf("task %s: continue timed-out session: %v", task.ID, err)
-			_, _, _ = s.updateSupervision(ctx, task.ID, func(v *Supervision) bool { v.State = reviewTimedOut; return true })
-		}
-		return
-	}
 	placed, placedWhy := t.Machine, t.Why
 	if t.Role == roleLeader { // its tools are listed once it is linked: a list asked for meanwhile waits (task_leader.go)
 		s.leaderStarts.Add(1)
@@ -336,6 +325,17 @@ func (s *Service) runPlanTaskStart(planID, conversation string, i int, t PlanTas
 		}
 	}
 	if err == nil {
+		if limitedTask(t) {
+			if _, _, uerr := s.updateSupervision(ctx, t.TodoID, func(v *Supervision) bool {
+				if v.State != reviewStarting {
+					return false
+				}
+				v.State = ""
+				return true
+			}); uerr != nil {
+				s.logf("task %s: start state: %v", t.TodoID, uerr)
+			}
+		}
 		s.remedyStarted(context.WithoutCancel(ctx), planID, conversation, i, t) // after an assistant's retry (start_remedy.go)
 		return
 	}
@@ -422,6 +422,9 @@ func (s *Service) retryTask(ctx context.Context, todoID string) (json.RawMessage
 	if !ok {
 		return nil, db.ErrTodoNotFound
 	}
+	if cur.DoneAt == nil && cur.Supervision.state(cur) == reviewTimedOut {
+		return s.continueTimedOut(ctx, cur)
+	}
 	if cur.PlanID == "" || cur.Origin == "" {
 		return nil, errTaskNotRetryable
 	}
@@ -491,11 +494,11 @@ func (s *Service) retryTask(ctx context.Context, todoID string) (json.RawMessage
 		*pt = t
 		pt.Error, pt.ErrorCode, pt.ErrorArgs = "", "", nil
 	}); err != nil {
-		s.logf("plan %s: %v", p.ID, err)
+		return nil, err
 	}
 	s.logf("task %s: retrying its start on %s", todoID, m.ID)
 	if limitedTask(t) {
-		if err := s.queueRetry(ctx, p.ID, i, t); err != nil {
+		if err := s.queueRetry(ctx, t); err != nil {
 			return nil, err
 		}
 		return s.todoView(ctx, todoID)

@@ -686,7 +686,7 @@ func (s *Service) completedTodo(ctx context.Context, mid, sid string) (bool, err
 	defer s.todos.mu.RUnlock()
 	if id, open := s.todos.activeBySession[[2]string{mid, sid}]; open {
 		t := s.todos.todos[id]
-		return t != nil && (t.Supervision.state(*t) == reviewTimedOut || t.Supervision.state(*t) == reviewQueued), nil
+		return t != nil && (t.Supervision.state(*t) == reviewTimedOut || t.Supervision.state(*t) == reviewQueued || t.Supervision.state(*t) == reviewClosing), nil
 	}
 	for _, t := range s.todos.todos {
 		if t.DoneAt == nil {
