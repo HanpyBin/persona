@@ -130,6 +130,8 @@ type Service struct {
 	placeBook      placeBook      // places.go
 	accept         acceptBook     // acceptance.go
 	deploy         deployProbe    // deploy_check.go: is the work in the running hub
+
+	reviewDismissals taskReviewDismissalBook // task_review_dismissals.go
 	// ownerVerifiesAll: every deployed task asks the owner to verify, not only the big ones (ownerVerifies; tests).
 	ownerVerifiesAll bool
 	later            laterBook    // later.go: questions that can wait for a briefing
@@ -247,6 +249,7 @@ func New(o Options) *Service {
 	s.modelProfileRoutes()
 	s.launcherRoutes()
 	s.machineLauncherRoutes()
+	s.workSessionStartRoutes()
 	s.launcherQuotaRoutes()
 	s.providerProbeRoutes()
 	s.launcherImportRoutes()

@@ -155,6 +155,21 @@ may legitimately repeat an earlier answer, so retirement follows the landed stre
   The apps take only block lines starting with `/` or `~` as photos; reading `path:` lines as photos would show each picture twice next to the transcript's image item.
   The `path:` lines and the block's tags make a message with words more than the two line breaks Claude shows inline (2.1.316 folds a paste with more into `[Pasted text #n +k lines]`, or one over 800 characters),
   so its box shows `[Image #1][Pasted text #2 +3 lines]`: the stuck-prompt check (`ensureSubmitted`) takes that placeholder after image chips as the message (`pastePlaceholder`, `longPaste`).
+- Startup submission needs the same placeholder recognition as ordinary sends (#4794, Claude Code 2.1.322):
+  `stillPrompted` removes `[Image #n]` and `[Pasted text #n +k lines]`; a chip-only draft has no visible words left,
+  so using it alone both skips recovery Enter and reports the owned draft as someone else's. Use `pendingPrompt`
+  under the startup typing lock, pin the placeholder IDs before recovery (the lock cannot stop a person editing
+  the terminal), and retry only Enter with a grace between attempts. Fresh sessions expect the text chip after
+  their image chips; changed IDs or appended words are not the owned paste. Once recovery Enter was attempted,
+  an empty box without a transcript receipt is ambiguous,
+  not permission to paste again. A later follow-up's timestamp can show it was queued after work began; do not
+  attribute the original submission to that follow-up without a terminal-key receipt.
+- Never confirm a first image prompt from quick metadata alone (#4794): its head stops at 256 KB and tail at
+  384 KB, so a multi-megabyte user row can be absent from both. A real disposable Agent's normal start recorded
+  the same image prompt three times while confirmation believed it had been dropped. Capture a full incremental
+  `promptWatch` before typing; attach lazily with a timestamp filter when the file appears late, and recheck it
+  after readiness waits before re-pasting. The normal and swallowed-Enter real tests must both record exactly
+  one image prompt.
 - An image message once remained unsent in Claude's input box (2026-10-31, Claude Code 2.1.206: `[Image #1]` and text in the box, Agent `done`, Enter on the computer sent it).
   Forty-two later attempts in a separate herdr session (small PNG, 1.8 MB JPEG, saturated CPU) didn't reproduce it; cause unknown. On 11-01 a phone photo did it again. node fallback (`ensureSubmitted`): 2 seconds after sending,
   read the input box once; if it's still the just-sent text (strip `[Image #n]` / `[Pasted text #n]`, compare the first few words), press Enter once more. If empty or different, press nothing.
@@ -235,6 +250,13 @@ may legitimately repeat an earlier answer, so retirement follows the landed stre
   (`~/.config/herdr/herdr.sock`) can't see each other. If "sessions opened locally through App remote aren't found", check herdr-core `terminal.list` first, not only the classic socket.
   When using both on a computer, select engine `herdr-both`: node refreshes both hosts in parallel, isolates events per host (`watcherSignals`), and always creates / resumes sessions through classic herdr
   (`docs/integrations/engines.md` ("Host sets"), `docs/plans/plan-orca-support.md` ("Combined engine")). Don't return to "refresh asks every host sequentially": a 2-second herdr-core delay slows herdr too.
+
+## Claude Code writes into its transcript as it exits: delete it after the process (2026-11-11, #4665)
+
+Deleting a meeting room stopped its `claude -p` and removed the transcript at once; a moment later the file was back
+with three lines Claude Code appends on exit (`last-prompt` with the last prompt's text, `atis-latch`, `cost-state`).
+Wait for the process to exit (`stopAndWait`) before removing a conversation's files, and remove its
+`<config dir>/session-env/<session id>` folder with them.
 
 ## A new private profile and `--setting-sources project` both drop the login (2026-11-11, #3862)
 
@@ -476,7 +498,7 @@ Recorded screens: `server/internal/screen/testdata/claude-2.1.318-rewind-*`; par
 - Enter opens confirmation: `│ ` quotes the full message (wrapped at 109 columns, final row `(47s ago)`), then options. **Options depend on whether code changed after this message**: yes → `Restore code and conversation` / `Restore conversation` / `Restore code` /
   `Summarize from here` / `Summarize up to here` (fifth offscreen, preceded by `↓`); no → `Restore conversation` / both Summarize options / `Never mind`. Numeric selection gets it wrong; select by name.
   The explanation below (`The code will be restored +1 -1 in notes.txt.` / `The code will be unchanged.`) follows the cursor. 2.1.304 wording differs (`The conversation will be forked`); recognize only by title and option names.
-- Esc: confirmation → list (cursor retained) → closed; Enter on `(current)` also closes silently. After confirmation, the panel closes immediately, the input box contains that message (including multiline), and files are restored as selected.
+- Esc: confirmation → list (cursor retained) → closed; Enter on `(current)` also closes silently. After confirmation, the panel can close **before Claude puts the restored prompt into the input box** (#4609): panel closure and the restored draft are not one atomic screen. An app-driven rewind therefore cannot answer on the first empty box, or an immediate send is typed into the prompt when it arrives later. It waits until the matching draft has been cleared; if nothing is restored, the box must stay empty for one ordinary key-effect grace. Files are restored as selected.
 - **Chat history isn't deleted**: the file is a tree; the next message after rewind has `parentUuid` equal to the uuid before the target, and abandoned turns remain. node transcript reading removes them using "two user-authored messages under the same parent abandon the earlier message's whole subtree"
   (`transcript/branch.go`, `docs/protocol/protocol.md` ("Rewinding to a message")). **Don't walk parentUuid backward from the final line**: parallel tool results and attachments are legitimate branches (7681 in a real corpus of 122 files); a compaction `compact_boundary`
   has null `parentUuid`, so walking a chain loses the entire pre-compaction chat. Real corpus (122 local jsonl files, comparing only counts / ids): 3 had such user-message branches; old → new reading removed only abandoned items, every other file matched item-for-item,
@@ -505,8 +527,8 @@ Recorded screens: `server/internal/screen/testdata/claude-2.1.318-rewind-*`; par
   A resend of the same prompt hangs from the prompt's parent, not under it, so it keeps the root. Live (disposable herdr tab, `go test -tags herdrlive -run TestLiveTerminalRewind`, `PERSONA_LIVE_PANE` / `PERSONA_LIVE_SESSION` / `PERSONA_LIVE_TRANSCRIPT`): seen 0.7 s after the panel closed, by `/rewind` and by Esc Esc, with the transcript unchanged.
   Not covered: the marks are not persisted (after a node restart the detector fires again only while the prompt is still in the box), placeholder (paste/image) drafts, a rewind to an earlier prompt than the last, and hosts with plain-only reads.
 - Clear input: single-line uses `ctrl+k ctrl+u` (no notice); multiline needs one `ctrl+c`, which shows `Press Ctrl-C again to exit` below. Press once only, and only after confirming the box holds that message.
-- Tests: `claudeSim` in `node/rewind_sim_test.go` renders the recorded screens, and `TestClaudeSimMatchesRecordedScreens` compares each row, so flow tests use actual screen appearances;
-  live testing ran only in a disposable session (`go test -tags herdrlive -run TestLiveRewind`, `PERSONA_LIVE_PANE` / `PERSONA_LIVE_PROMPT`).
+- Tests: `claudeSim` in `node/rewind_sim_test.go` renders the recorded screens, and `TestClaudeSimMatchesRecordedScreens` compares each row, so flow tests use actual screen appearances. Its restore gate can hold the prompt back after the panel closes, making the late-restore race deterministic instead of relying on a sleep.
+  Live testing runs only in a disposable session (`go test -tags herdrlive -run TestLiveRewind`, `PERSONA_LIVE_PANE` / `PERSONA_LIVE_PROMPT`), with an isolated herdr server and a fresh directory, never the agent's working herdr or a real conversation.
 
 ## herdr reports terminal-blocking Claude notices as done (2026-11-05, #2553)
 
@@ -574,7 +596,7 @@ Claude Code launches hook commands with `detached: true` on Linux / macOS, so `p
 Don't assume "hook disconnected = Agent no longer waiting": while waiting, node checks every 2 seconds whether claude still exists using hook-supplied `agent_pid` / `agent_start` (`watchAgent`); withdraw only after two consecutive missing checks. A killed but unreaped claude is a zombie: `/proc/<pid>/stat` and its unchanged start time remain; inspect state `Z` to detect that it is gone (`procGone`).
 - "Closed its finished agent" with the tab still there (2026-11-06): herdr's own log (`~/.config/herdr/herdr-server.log`, UTC) showed every `tab.close` from `session.retire` succeeding on the tab the Agent ran in then. The leftover tabs were others:
   the assistant had sent `/exit` with `agent_send`, which exits claude and leaves the shell, and once even to an Agent already closed, which resumed it in a new tab only to quit (that tab stayed).
-  Before blaming a close, match the pane ids in herdr's log (`pane child spawned … pane_id=<n>`, `tab renamed … tab_id=…`) against the tabs that are left. `/exit` and `/quit` now close the Agent like **Close**, and Persona tabs left with a bare shell are swept (`docs/assistant/todos.md` ("Close Agents for completed tasks")).
+  Before blaming a close, match the pane ids in herdr's log (`pane child spawned … pane_id=<n>`, `tab renamed … tab_id=…`) against the tabs that are left. `/exit` and `/quit` stop the Agent and keep its tab, and since #4754 nothing closes a Persona tab left with a bare shell (`docs/assistant/todos.md` ("Stop Agents of completed tasks")).
 
 ## Closing a question is a runtime operation (#5700)
 
