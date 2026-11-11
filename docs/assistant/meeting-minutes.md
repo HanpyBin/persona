@@ -682,7 +682,7 @@ Hub → phone:
 - Once the recording is complete, the hub waits until no gap is left, or 30 minutes after the `complete: true` upload, then runs the final pass over the audio it holds ("The built-in adapter"). Gaps left keep the phone's text.
 - `transcription` on `GET …/live` and in `detail.meta`: `{"mode": "hub", "state": "live", "gaps": [[600.0, 642.5]]}`, `state` `live`, `finishing`, `final` or `failed` (the hub made nothing usable; the phone's text is the transcript). `meeting_live` adds `transcription`, and `GET …/live` adds `interim` while the meeting records.
 - **Where the hub keeps it.** The audio goes in `recordings/<id>/attachments/audio/` (PCM chunks and the index of the spans held), where knowledge-base backups ([knowledge.md](./knowledge.md) "Backups") and search never look, so no backup taken during a meeting outlives the deletion below; a test checks that a backup taken while hub audio exists holds none of it. The hub's own transcript is `hub_segments.json` beside `meta.json`, which search skips as it skips `segments.json` (`transcript.md`, written from the transcript of record, is the searched text).
-- The hub deletes its audio once the final pass stored its text (or failed), at the trim (with `hub_segments.json`) and with the recording, whichever comes first. The phone keeps its own audio as today, until `days` or the owner's delete, and the hub's `state` never extends that: a hub that never reaches `final` cannot make the phone keep audio longer. Within `days` the phone keeps a hub-mode recording's audio at least until `state` is `final` or `failed`, for gap uploads; gaps still open at `days` keep the phone's text.
+- The hub keeps no meeting audio (owner decision, "Decided" 5): it deletes it once the minutes made from the final transcript are written. A recording whose minutes end `failed`, or that is not a meeting, loses it once the final pass stored its text (or failed). The trim and the recording's delete remove it too, whichever comes first, so it never outlives `recording_days`. A regenerate later needs only the transcript. The phone keeps its own audio as today, until `days` or the owner's delete, and the hub's `state` never extends that: a hub that never reaches `final` cannot make the phone keep audio longer. Within `days` the phone keeps a hub-mode recording's audio at least until `state` is `final` or `failed`, for gap uploads; gaps still open at `days` keep the phone's text.
 
 #### The transcript of record
 
@@ -868,12 +868,12 @@ Where things are kept, and for how long:
 | The follow-up conversation | The assistant's computer | Like any conversation (archiving keeps it): it holds a copy of the transcript and the room thread |
 | Just me | The main chat; a receipt (digest and response, no text) in `client_ops` | Like the main chat; the receipt 30 days |
 | Audio on the iPhone | The iPhone | Until `days` or the owner's delete, as today, whatever the hub's state |
-| Audio on the hub | `recordings/<id>/attachments/audio/`, never in knowledge-base backups | Until the final pass stored its text; at most `recording_days` |
+| Audio on the hub | `recordings/<id>/attachments/audio/`, never in knowledge-base backups | Until the minutes from the final transcript are written; at most `recording_days` |
 | What the services received | The transcription and voice services | Under their own terms |
 
 **What may be said aloud** or shown on the Lock Screen is only what the room may know: this meeting's header, its lines said while Persona attended, its photos and their notes, its topics, its earlier questions and answers, and earlier meetings' minutes with their projects' status and their action items' to-do states, only of meetings marked not private ("The private mark"). Never Just me, the follow-up, the main chat, memory, About Me, the owner's own Claude Code instructions, or anything the room's tools do not return.
 
-**Wording.** Privacy mode says: "Audio stays on this iPhone, except while you hold Talk: what is said then goes to the voice service." Hub mode says that this meeting's audio, Talk included, goes through your hub to the speech service it is set up with (named when the owner chose another extension), and that the hub deletes it once the transcript is final. Both texts change in every language in the PR that ships phase 4, before Talk sends audio.
+**Wording.** Privacy mode says: "Audio stays on this iPhone, except while you hold Talk: what is said then goes to the voice service." Hub mode says that this meeting's audio, Talk included, goes through your hub to the speech service it is set up with (named when the owner chose another extension), and that the hub deletes it once the meeting's minutes are written; the transcript and the minutes stay as long as the retention settings say. Both texts change in every language in the PR that ships phase 4, before Talk sends audio.
 
 ### Decided
 
@@ -883,7 +883,7 @@ The owner answered the questions this contract first left open (#3862):
 2. **Talk in privacy mode** sends the Talk spans' audio to the realtime voice service, as in hub mode ("Phase 4"); the privacy texts change first.
 3. **Agents attending.** New phones offer no attending session: the room attends, and an Agent gets the meeting through the follow-up. #3746 phones keep choosing one.
 4. **Hub mode on cellular data** is allowed (about 115 MB an hour up: PCM16 at 16 kHz, no compressed codec yet). The iPhone's setting **Hub transcription on Wi-Fi only** (off by default) changes that: on cellular the phone then keeps transcribing on device and sends no audio, reports the time as a gap, and uploads it with `PUT …/audio?at=` once on Wi-Fi, before the final pass ("Gaps and the final pass").
-5. **The hub's audio** is deleted once the final pass stored its text, as "Privacy per mode" says.
+5. **The hub's audio** is deleted once the minutes are generated from the final transcript; the hub keeps no meeting audio. The transcript and the minutes keep their retention (`recording_days`, `minutes_days`). Details in "Gaps and the final pass" and "Privacy per mode".
 
 ## Phases
 
