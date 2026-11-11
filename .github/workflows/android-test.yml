@@ -1,42 +1,36 @@
-name: Android CI
+name: Current external-origin rendering and exact channel controls
 on:
-  workflow_call:
   workflow_dispatch:
 permissions:
   contents: read
-concurrency:
-  group: android-${{ github.repository }}-${{ github.ref_name }}-android
-  cancel-in-progress: true
+defaults:
+  run:
+    shell: bash
+env:
+  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2 -Dorg.gradle.jvmargs=-Xmx3g
 jobs:
-  android:
-    name: Android ${{ matrix.lane }}
+  baseline-channel-renders:
     runs-on: ubuntu-latest
-    # Retain headroom until hosted cold/warm timings establish a safe lower bound.
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      max-parallel: 2
-      matrix:
-        # Two lanes balanced by task time; each runs its share in one Gradle invocation (scripts/ci/android-shards.py).
-        lane: [lint-build-test-0, test-1]
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: 24f6d61cfec36f1653f7f47292ef0d1758428611
           persist-credentials: false
+      - name: Record exact source identity
+        run: git rev-parse HEAD HEAD:android > source-identity.txt
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
       - uses: android-actions/setup-android@v3
         with:
-          # The default also installs the legacy `tools` package, which the SDK repository no longer has.
           packages: platform-tools
       - name: Install Android SDK
         run: sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0'
       - uses: gradle/actions/setup-gradle@v4
         with:
-          # Only a manual main run may populate caches; PRs and other refs only restore.
-          cache-read-only: ${{ github.event_name != 'workflow_dispatch' || github.ref != 'refs/heads/main' }}
+          cache-read-only: true
       - name: Restore public Robolectric runtime dependencies
         id: robolectric
         uses: actions/cache/restore@v4
@@ -45,30 +39,75 @@ jobs:
           path: |
             ~/.m2/repository/org/robolectric/android-all
             ~/.m2/repository/org/robolectric/android-all-instrumented
-          key: ${{ runner.os }}-robolectric-v1-${{ matrix.lane }}-${{ hashFiles('android/**/*.gradle.kts', 'android/gradle/libs.versions.toml', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          key: ${{ runner.os }}-robolectric-v1-test-1-${{ hashFiles('android/**/*.gradle.kts', 'android/gradle/libs.versions.toml', 'android/gradle/wrapper/gradle-wrapper.properties') }}
           # Another lane's entry, or one saved under an old lane name, holds the same public jars: better than a download.
           restore-keys: |
-            ${{ runner.os }}-robolectric-v1-${{ matrix.lane }}-
+            ${{ runner.os }}-robolectric-v1-test-1-
             ${{ runner.os }}-robolectric-v1-
-      - name: Android checks
-        run: scripts/ci/android.sh --lane '${{ matrix.lane }}' --profile
-      - name: Save public Robolectric runtime dependencies
-        if: success() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && steps.robolectric.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+      - name: Capture unchanged channel fixtures from the pinned base
+        working-directory: android
+        run: >-
+          ./gradlew :feature:chat:testDebugUnitTest --tests persona.feature.chat.ChannelSourceShotsTest
+          --no-daemon --no-watch-fs --console=plain --max-workers=2
+      - uses: actions/upload-artifact@v4
+        if: always()
         with:
+          name: external-origin-baseline-channel-renders
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            source-identity.txt
+            android/feature/chat/build/channel-shots/*.png
+            android/feature/chat/build/test-results/testDebugUnitTest/
+  render-fixtures:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Record exact source identity
+        run: git rev-parse HEAD HEAD:android > source-identity.txt
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Install Android SDK
+        run: sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: true
+      - name: Restore public Robolectric runtime dependencies
+        id: robolectric
+        uses: actions/cache/restore@v4
+        with:
+          # Never cache Maven settings, credentials or unrelated/private artifacts.
           path: |
             ~/.m2/repository/org/robolectric/android-all
             ~/.m2/repository/org/robolectric/android-all-instrumented
-          key: ${{ steps.robolectric.outputs.cache-primary-key }}
-      - name: Upload Android reports
+          key: ${{ runner.os }}-robolectric-v1-test-1-${{ hashFiles('android/**/*.gradle.kts', 'android/gradle/libs.versions.toml', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          # Another lane's entry, or one saved under an old lane name, holds the same public jars: better than a download.
+          restore-keys: |
+            ${{ runner.os }}-robolectric-v1-test-1-
+            ${{ runner.os }}-robolectric-v1-
+      - name: Capture current source and channel fixtures
+        working-directory: android
+        run: >-
+          ./gradlew :feature:assistant:testDebugUnitTest --tests persona.feature.assistant.AssistantDrawerShotsTest
+          :feature:chat:testDebugUnitTest --tests persona.feature.chat.ChannelSourceShotsTest
+          --no-daemon --no-watch-fs --console=plain --max-workers=2
+      - uses: actions/upload-artifact@v4
         if: always()
-        uses: actions/upload-artifact@v4
         with:
-          name: android-reports-${{ matrix.lane }}
+          name: external-origin-current-renders
+          if-no-files-found: error
           retention-days: 7
-          if-no-files-found: ignore
           path: |
-            android/build/reports/profile/
-            android/**/build/reports/lint-results*
-            android/**/build/reports/tests/
-            android/**/build/test-results/
+            source-identity.txt
+            android/feature/assistant/build/drawer-shots/*.png
+            android/feature/chat/build/channel-shots/*.png
+            android/feature/assistant/build/test-results/testDebugUnitTest/
+            android/feature/chat/build/test-results/testDebugUnitTest/
