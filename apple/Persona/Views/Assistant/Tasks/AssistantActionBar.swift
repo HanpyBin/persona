@@ -465,7 +465,7 @@ struct AssistantActionBar: View {
                 let state = status.taskState
                 let activity = AssistantTrayActivity(sessions: store.sessions(todo))
                 if let ask = todo.openAsk, todo.doneAt == nil {
-                    BriefAcceptRow(row: ask.row(for: todo), group: AppModel.shared.hub?.group ?? "")
+                    TodoAskRow(todo: todo, ask: ask, group: AppModel.shared.hub?.group ?? "")
                         .padding(.horizontal, Theme.Space.m)
                 } else {
                     Button {

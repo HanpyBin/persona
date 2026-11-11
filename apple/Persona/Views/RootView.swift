@@ -217,6 +217,7 @@ struct RootView: View {
         .screenProbe("connection", ConnectionShown(shown: "\(model.connection.shown)", network: model.connection.networkUp))
         .htmlCardSample()
         .voiceOrbSample()
+        .closeoutSample()
         .healthTrendsSample()
         #endif
         .alert("Claude Wants to Act on Your iPhone", isPresented: Binding(

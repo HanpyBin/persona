@@ -874,6 +874,8 @@ Below Assistant, the same four toggles as web and Android (`GET / PUT /api/v1/ag
 master switch and Triage model (opens model configuration `agent.triage`), followed by cards for decisions, automatically continuing after errors, and scheduled wake-ups; disabled while the master switch is off.
 Changes save immediately; failure restores the old value and explains why at the top; old hubs (404) show only unsupported. `TriageSettingsModel` / `TriageSettingsView`, shared with Mac.
 
+**Ask for a Closeout** (#3612, the `closeout` switch) is one more row after Wake on Time, with a sample closeout card under it, off by default and disabled while the master switch is off like the other actions. `TriageSwitches.closeout` is optional: a hub that does not name the switch gets no row, and a save leaves the key out, so that hub keeps its value. `closeout_ask` has no switch in the app.
+
 ## Knowledge selection (Settings › Knowledge Selection, #2217)
 
 Below Connectors, iPhone and iPad only: the same document the web edits in Settings → Knowledge selection (`GET / PUT /api/v1/kb/selection`, stored on the
@@ -1330,6 +1332,63 @@ and can wait and in progress when there are any.
   MOCK_TASKS_NO_ASKS=1`; `TEST_RUNNER_PERSONA_SHOTS` / `TEST_RUNNER_PERSONA_SHOTS_APPEARANCE` save it folded, unfolded and
   answered).
 
+## Closeout, orphaned tasks and answerable decisions (#3612, #3618, #3804)
+
+What the hub says about stopped work, drawn on iPhone, iPad and Vision. The wire is in `docs/assistant/agent-work.md`
+("Closeout", "Protocol") and `docs/assistant/todos.md` ("Nobody is working on this", "Decisions the owner can answer"); the
+web's `CloseoutCard.tsx`, `lib/closeout.ts` and `DecisionRow.tsx` are the reference for behavior and wording. The native
+Mac app is frozen: it decodes the same models and draws none of this (`#if os(macOS)` at each entry).
+
+- **Models** (`Shared/Closeout.swift`, `Shared/TodoAsk.swift`, `Shared/Tasks.swift`): `WorkState.closeout` and
+  `WorkState.artifacts`, `TodoItem.orphaned`, and the decision's fields on `TodoAsk` (`question`, `background`,
+  `why_owner`, `options`, `cost_of_waiting`, `default`, `deadline`, `responses`, `response`). Every new field is optional
+  and decoded on its own: one an older hub leaves out, or one in a shape this build does not know, is as if it were
+  not there, and never drops the work state, the ask or the to-do. Session lists carry only where a closeout stands;
+  `did`, `verified` and the artifacts come with the session's own read (`AppModel.refreshSessionDetail`), which the card
+  asks for again when a list row replaced them.
+- **Closeout card** (`CloseoutCard`, `Persona/Views/Chat/CloseoutCard.swift`): in the chat's header, under the
+  workflow section, for a stopped Agent session with a closeout whose status this build knows (`Session.shownCloseout`:
+  not while it works, not on a subagent's page or an assistant conversation). It is in the header and not a row of the
+  list, so it is above the transcript and outside message rendering (super rule 2 is untouched), and it folds away
+  with the header as the list scrolls. The head says the status and "The agent's own report"; a tap folds the details:
+  what changed, artifacts (a web link opens in the chat's link sheet, "PR #12" for a pull request), merged and deployed,
+  verified, still needs. Each claim shows what the Agent said and the hub's finding in one of three states that differ
+  in words, mark and color: confirmed (the check, `Theme.positive`), contradicted (the warning mark on the caution chip,
+  `Chip` with `.review(.caution)`) and not checked (a dash, secondary). The details scroll inside past a share of the page
+  (`Theme.Size.workflowShare`), and stack label over value at the accessibility text sizes.
+- **The raw block** (`ChatLines.hidingCloseout`, `Closeout.strip`): while the card shows, the last reply is drawn without
+  its `<closeout …>…</closeout>` block: exactly the last block, the blank lines it leaves and a code fence that held
+  nothing else. A reply that was only the block is not drawn; an earlier turn's block and a reply followed by a new
+  message stay as written.
+- **List rows** (`Session.listPreview`, `Session.closeoutPreview`): today's line (`workLine`), then "merged · not
+  deployed" where the Agent said or the hub found it ("merged ✓" for a finding, "✗ says merged, isn't" for a claim the
+  hub found untrue), as one string the row truncates. A turn nobody can call finished arrives with an empty phase and a
+  line (`WorkState.notFinished`): the row shows that line as it is, with no check mark and no wait. When the hub gave no
+  line the closeout's own words stand in ("Not done: …", "Blocked on: …"), never the raw block.
+- **Nobody is working on this** (`OrphanedLine`, `TodoItem.orphanedLine`): an open to-do with `orphaned` says so with
+  the reason (closed after an error, computer offline, closed) in the caution color with the warning mark, under its
+  state on the conversation's task card, the To-dos row, the to-do's page and the task board's subtitle. Not while the
+  task waits for the user, and not on a done to-do.
+- **Decisions** (`DecisionRow`, `DecisionAnswers`, `Persona/Views/Assistant/Tasks/DecisionRow.swift`): wherever an open ask
+  was drawn with its one button (the conversation's task card, the Needs You tray, the task board; `TodoAskRow` picks), a
+  decision with two or more options shows the question, the hub's background line, each option with what it leads to
+  (the recommended one first with the Recommended tag), "Taken by default at 17:30" or "Never taken by default" with
+  what waiting costs, then the options as buttons: as many as fit (`ViewThatFits`), the recommended one the only
+  prominent one, "Other…" (opens the task) and a ⋯ menu with the remaining options, the hub's fixed answers ("You Decide",
+  "This Isn't What I Asked For", "Tell Me the Background First", each with what it does) and Complete Directly (#3038).
+  At the accessibility text sizes the group is one column. When `why_owner` is `irreversible` or `visible_to_others` an
+  option takes two taps: the first arms it ("Confirm: …"). Every answer is `POST /api/v1/todos/{id}/accept` with the
+  round's `asked_at` and `option` or `response` (`APIClient.acceptTodo`); state is kept by hub, to-do and round, so the
+  three surfaces agree. Taken, the row says "Answered: …" or "Sent back to Persona"; a 409 says Already handled; any
+  other failure shows the reason as a toast, sends nothing twice and leaves the buttons (and an armed option) as they
+  were. An ask without options, and every ask on the Mac, keeps `BriefAcceptRow`.
+- **Not built**: the `TODO_DECIDE` notification's option and response actions (the push payload carries `options` and
+  `responses`); the watch.
+- **Tests**: `CloseoutTests` (decoding, claims, the rows' line, the stripped block), `DecisionRowTests` (the ask's
+  fields, the default line, every answer with `FakeHub`, orphaned to-dos), and cases in `SessionWorkTests` and
+  `TriageSettingsTests`. DEBUG `-showCloseoutSample confirmed|contradicted|blocked|rows|orphaned|decision|armed` shows
+  each state with made-up content and no hub.
+
 ## Quiet supervision rounds (#2092)
 
 Persona conversations on iOS, iPadOS and macOS share the web's whole-round visibility contract. A `system` / `supervise`
@@ -1750,6 +1809,8 @@ Check history rendering: `-loadAll YES` (load all history and scroll to the top)
 `-simulateTap <machine>/<session>` runs the notification-tap handler 4 seconds after launch; `-tab settings -openNotificationSettings YES` (Settings › Notifications; add `-openIslandSettings YES` for Dynamic Island); `-tab settings -openSentAsYou YES` (Settings › Sent as You, #5278); `-showFleetSample needsYou|working|done` (`-fleetDetails YES`, `-fleetIsland b|c|custom:<left>,<right>`) starts a Live Activity with fake data; `-showTestNotification permission|plan` shows a local notification matching an interaction push 3 seconds after backgrounding (UI tests use it to test buttons); `-openFilePath <path>` (open this file after opening the chat; `-openFileLine <line>` jumps to that line), `-showFilePerf YES` (write file-open timings and per-second frame rates to Caches/file-perf.log; `-showFileAutoScroll YES` scrolls the file at constant speed, `-showFileAutoScrollSpeed 1500` changes the speed); `-showMenu YES` opens the long-press action bar on the last reply (with `-showFromSeq`, that turn's reply); `-openWelcome YES` forgets pairing and exits demo mode at launch, stopping on the pairing page (`DemoModeTests`); `-openChangeAnswer YES` opens Change Answer on the first **Answered by the assistant** card (#544).
 
 `-showVoiceOrbs YES`: without connecting to the hub or opening the microphone, show a sheet listing every phase of the voice orb (fake fluctuating volume) and two large orbs; combine with `-ui.style`, `-ui.scheme` for screenshots (#3506).
+
+`-showCloseoutSample confirmed|contradicted|blocked|rows|orphaned|decision|armed`: without a hub, show one state in a sheet with made-up content: a closeout card the hub confirmed, one it contradicted, a blocked one, the Agents rows' line with the merged / deployed suffix, "Nobody is working on this", a decision row, and a decision whose first option is armed (#3612, #3618, #3804). The same states on their real screens come from the mock hub: `MOCK_CLOSEOUT=1` (sessions with closeouts; `-openSession server/<id>` opens one, and `-tab settings -openTriageSettings YES` shows the Ask for a Closeout switch) and `MOCK_ORPHANED=1` with `MOCK_TASKS=1` (orphaned to-dos).
 
 Tests that live updates do not interrupt interaction (`LiveUpdateTests`) use two arguments: `-openChatsFresh YES` clears the chat cache on disk at launch (steps pushed during the previous run do not remain);
 `-perfCounts YES` counts how often each view body is computed and how long each hub push takes until the main thread is idle, exposing JSON in hidden text `perf.counts` for UI tests

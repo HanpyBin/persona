@@ -361,7 +361,7 @@ struct TaskCard: View {
             let lead = store.leadSession(todo)
             let ultracode = store.ultracode(todo)
             if let ask = todo.openAsk {
-                BriefAcceptRow(row: ask.row(for: todo), group: AppModel.shared.hub?.group ?? "")
+                TodoAskRow(todo: todo, ask: ask, group: AppModel.shared.hub?.group ?? "")
                     .card(padding: Theme.Space.l)
             } else {
                 Button {
@@ -495,6 +495,8 @@ struct TaskNowLine: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
+            // Nobody is working on it (#3618): the hub's finding and why, ahead of what its agent last reported.
+            OrphanedLine(todo: todo, state: state)
             // What its agent last told Persona (report_to_supervisor, #5112): while the task is open.
             if state != .done, state != .failed, let reported = todo.supervision?.progressLine {
                 TaskProgressLine(line: reported)

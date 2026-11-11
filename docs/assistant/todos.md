@@ -461,7 +461,7 @@ An Agent is gone when its computer is not connected, the computer no longer list
 
 Not orphaned: a done to-do; one with no Agent yet (not started, or its start failed: "Remedying a start"); a supervised task waiting for its review or for the user's decision, which waits on them and not on an Agent. A to-do whose computer is connected but could not be asked this minute keeps what was found before.
 
-The assistant's snapshot says it on the task's line, and a supervised task's supervisor gets the `orphaned` signal once (`docs/assistant/unified-entry.md`, "Supervision": the supervisor loop's signals). Clients that do not know the field show the to-do as before; showing it on the task card and row is each client's own work.
+The assistant's snapshot says it on the task's line, and a supervised task's supervisor gets the `orphaned` signal once (`docs/assistant/unified-entry.md`, "Supervision": the supervisor loop's signals). Clients that do not know the field show the to-do as before; showing it on the task card and row is each client's own work: the web (`docs/web/web.md`) and the iOS app (`OrphanedLine`, `docs/apple/ios.md` "Closeout, orphaned tasks and answerable decisions (#3612, #3618, #3804)") do.
 
 ## Decision records
 
@@ -538,7 +538,8 @@ Something the owner raises in the main conversation and wants an answer to is a 
   - Counted: each is a work event `owner_cannot_answer` and `GET /api/v1/agents/work/stats` sums them per supervisor conversation (`docs/assistant/agent-work.md`, "Evaluation").
 - **Choosing an option**: `POST /api/v1/todos/{id}/accept {"asked_at", "option"}` with the recommended label is the plain OK; another option goes to the task's Agent as the owner's choice with what it leads to, is recorded in the to-do's decisions and ends the decision. The Lark card has a button per option and one per fixed answer. The `decide` push's `todo` also carries `options` (the labels, the recommended first) and `responses`, so an app can offer them from the notification; its body lists the background, the options and the cost of waiting.
 - **A decision is not replaced by "Please verify"**: while a decision waits, a turn of the task's Agent that says "deployed" (or a held deploy landing) no longer starts a "Please verify" round in its place; and a review that arrives while such a round is still being written keeps its decision, the round giving way. Before, either order left a `needs_user` task with no `ask`, passed by the supervising assistant as if it were a deployed task.
-- Not done here: a `parked` verdict for tasks that only wait; iOS and Android (they keep showing the verdict line and OK).
+- **iOS** (`DecisionRow`, `docs/apple/ios.md` "Closeout, orphaned tasks and answerable decisions (#3612, #3618, #3804)"): the same row as the web's on the conversation's task card, the Needs You tray and the task board, answered through the accept route with `option` or `response`; an option of an `irreversible` or `visible_to_others` decision takes two taps. The `TODO_DECIDE` push's OK and its `options` / `responses` are not actions in the app yet.
+- Not done here: a `parked` verdict for tasks that only wait; Android (it keeps showing the verdict line and OK).
 
 ## Decision deadlines
 
