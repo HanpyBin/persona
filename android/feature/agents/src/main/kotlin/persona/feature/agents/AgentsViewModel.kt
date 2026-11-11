@@ -126,7 +126,7 @@ internal class AgentsViewModel(
     // Written while building [page] (on listContext) and reset from the main thread.
     @Volatile private var previous: AgentListResult? = null
     // Only touched while building [page]: one build at a time, so it needs no more.
-    private var previousContext: List<Any>? = null
+    private var previousContext: List<Any?>? = null
     private val _delivery = MutableStateFlow<Map<String, RequestDelivery>>(emptyMap())
     val delivery = _delivery.asStateFlow()
     private val _requestHistory = MutableStateFlow<List<Interaction>>(emptyList())
