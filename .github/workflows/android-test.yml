@@ -147,6 +147,7 @@ jobs:
             "$ANDROID_HOME/platform-tools/adb" -s emulator-5554 root
             timeout 30 "$ANDROID_HOME/platform-tools/adb" -s emulator-5554 wait-for-device
             "$ANDROID_HOME/platform-tools/adb" -s emulator-5554 shell am force-stop com.google.android.apps.nexuslauncher
+            "$ANDROID_HOME/platform-tools/adb" -s emulator-5554 install -r android/app/build/outputs/apk/debug/app-debug.apk
             python3 scripts/ci/external_origin_screenshots.py --serial emulator-5554 --out .ci-evidence/external-origin/initial-smoke --smoke-only
             SHOTS_STYLE=glass bash scripts/app/android.sh shots -s emulator-5554 --out .ci-evidence/external-origin/native/glass
             SHOTS_STYLE=brief bash scripts/app/android.sh shots -s emulator-5554 --out .ci-evidence/external-origin/native/brief
