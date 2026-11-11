@@ -28,7 +28,7 @@ describe("file name whitespace", () => {
   it("exposes a distinct spoken label and includes the marker in the visual text", () => {
     const host = document.createElement("div");
     const root = createRoot(host);
-    act(() => root.render(<button><FileName name="report\u00a0" className="truncate" /></button>));
+    act(() => root.render(<button><FileName name={"report\u00a0"} className="truncate" /></button>));
     const visual = [...host.querySelectorAll('[aria-hidden="true"]')].map((n) => n.textContent).join("");
     expect(visual).toBe("report[non-breaking space]");
     expect(host.querySelector(".sr-only")?.textContent).toBe("report, trailing whitespace [non-breaking space]");
