@@ -101,7 +101,7 @@ class MachineMetricsManagersTest {
         MetricsFixture().use { fixture ->
             val cache = HttpMachineMetricsApi.Cache()
             val client = OkHttpClient()
-            HttpMachineMetricsApi(fixture.url, "fixture-token", client, cache = cache).dashboard()
+            val previous = HttpMachineMetricsApi(fixture.url, "fixture-token", client, cache = cache).dashboard()
             fixture.primaryCPU.set(33)
             fixture.blockSecondary.set(true)
             val primarySeen = CountDownLatch(1)
@@ -117,6 +117,7 @@ class MachineMetricsManagersTest {
             } finally { fixture.releaseSecondary.countDown() }
             try { old.await(); fail("The replaced route must be cancelled") }
             catch (_: CancellationException) { }
+            assertEquals(previous, cache.previousDashboard())
             fixture.blockSecondary.set(false)
             fixture.refused["primary"] = 503
             val next = HttpMachineMetricsApi(fixture.url, "fixture-token", client, cache = cache).dashboard()

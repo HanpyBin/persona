@@ -6,6 +6,8 @@ The merged Machines service recreates its HTTP adapter on each poll. Keep each m
 the pairing's `GroupStack`, so a failed manager retains its samples across adapter and route replacement. Read the roster
 before requesting each online manager, replace successful empty snapshots, and merge by machine ID in roster order.
 Commit a batch to that cache only after checking the captured pairing and route; a cancelled route must leave no partial samples.
+When another hub succeeds, the merged dashboard also retains a failed hub's last complete snapshot from its current pairing.
+An entirely failed poll still reports its error, and an unsupported monitoring response does not restore old numbers.
 
 ## Receipt navigation inside task details (#3841)
 
