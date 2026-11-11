@@ -162,7 +162,7 @@ Path mapping:
 | `schema/extension/**`, `spec/fixtures/injected/**`, `spec/fixtures/sync/**`, `scripts/mock/inbox_events.json` | In addition to other checks in this table, the `web/**` checks: `web/src` and its vitest suite read these files. They are the inputs outside `web/` of the web lane in `scripts/ci/paths.py`; `scripts/test/test_check_fast.py` fails when the two lists drift apart |
 | `integrations/<pkg>/**` | Package `node --test test/*.test.{js,mjs}` (skip packages without tests) |
 | `site/**` | `node --test site/worker.test.mjs` |
-| `sdk/ts/**` | `bun test` (skip with reason if bun absent) |
+| `sdk/ts/**` | `bun test` plus `go test -count=1 -run TestTrustedAdapterMatchesOfficialSDK ./internal/extension/denohost/` in `server/` (the generated adapter bundles this SDK; skip each check with reason when its Go/Bun toolchain is absent). `scripts/ci/paths.py` also selects Server CI so hosted runs cannot miss a stale adapter after an SDK-only change |
 | `sdk/go/**` | `go test ./...` in sdk/go module |
 | `server/internal/foo/**`, `server/cmd/bar/**`, `server/plugins/baz/**` | Affected packages, e.g. `go test ./internal/foo/...`; unmappable server changes fall back to `go build ./...` |
 | `server/**`, `sdk/go/**` | In addition to other checks in this table, the server's repo-wide guards (`job_go_guards` in `scripts/test/check-fast.sh`): `go test` on `internal/lazyre`, `internal/archguard`, `internal/tzguard` and `plugins`, and the named guard tests of `internal/hub` and `internal/assistant`. They read other packages' source, `go list` output, the migrations or `sdk/go`, so they fail on code outside their own package (#1936). The list is curated: not every `*guard*_test.go` is repo-wide. `--all` runs them within `go test ./...` |

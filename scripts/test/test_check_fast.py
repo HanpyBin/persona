@@ -503,11 +503,14 @@ class CheckFastServerInputsTests(unittest.TestCase):
         self.git("tag", "base")
         # A fake go outside the repository records each call ("<cwd basename>|<args>") instead of building anything.
         bin_dir = Path(tempfile.mkdtemp(prefix="check-fast-go-"))
+        self.bin_dir = bin_dir
         self.addCleanup(shutil.rmtree, bin_dir)
         (bin_dir / "go").write_text(FAKE_GO)
         (bin_dir / "go").chmod(0o755)
         (bin_dir / "npm").write_text("#!/bin/sh\n")  # passes npm ci, typecheck and vitest without running them
         (bin_dir / "npm").chmod(0o755)
+        (bin_dir / "bun").write_text("#!/bin/sh\n")  # passes sdk/ts tests; the adapter check itself uses the fake go
+        (bin_dir / "bun").chmod(0o755)
         self.go_log = bin_dir / "calls.log"
         self.env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
                     "FAKE_GO_LOG": str(self.go_log)}
@@ -593,6 +596,20 @@ class CheckFastServerInputsTests(unittest.TestCase):
         self.assertIn("./plugins/wechat/...", packages)
         self.assertEqual(2, len(self.guard_calls()), out)
         self.assertNotIn("server|build ./...", self.go_calls(), out)
+
+    def test_an_sdk_ts_change_runs_the_trusted_adapter_check(self):
+        self.write("sdk/ts/src/index.ts", "export {}\n")
+        out, _ = self.check_fast()
+        self.assertIn("queued: sdk/ts (bun)", out)
+        self.assertIn("queued: denohost trusted adapter", out)
+        self.assertIn("server|test -count=1 -run ^TestTrustedAdapterMatchesOfficialSDK$ ./internal/extension/denohost/", self.go_calls(), out)
+
+    def test_the_adapter_check_skips_when_bun_is_missing(self):
+        (self.bin_dir / "bun").unlink()
+        self.write("sdk/ts/src/index.ts", "export {}\n")
+        out, _ = self.check_fast()
+        self.assertIn("SKIP     denohost trusted adapter: bun not found", out)
+        self.assertFalse(any("TestTrustedAdapterMatchesOfficialSDK" in call for call in self.go_calls()), out)
 
     def test_an_sdk_go_change_runs_the_guards(self):
         # The plugins guard reads sdk/go: a plugin uses only the SDK, and the SDK stands alone.

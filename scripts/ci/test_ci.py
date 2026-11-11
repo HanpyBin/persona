@@ -32,6 +32,11 @@ class PathTests(unittest.TestCase):
         self.assertTrue(paths.select(["scripts/mock/inbox_events.json"])["web"])
         self.assertTrue(paths.select(["schema/extension/example.json"])["apple"])
 
+    def test_sdk_ts_changes_also_check_the_trusted_server_adapter(self):
+        selected = paths.select(["sdk/ts/src/index.ts"])
+        self.assertTrue(selected["runtimes"])
+        self.assertTrue(selected["server"], "the embedded adapter bundles the TypeScript SDK")
+
     def test_source_authoring_sdk_and_gate_paths_select_runtime_ci(self):
         for filename in ["sdk/ts/scripts/check-source-bundle.mjs", "sdk/ts/scripts/source-authoring-worker.mjs",
                          "sdk/ts/scripts/source-authoring-tests.mjs", "sdk/ts/README.md", "scripts/ci/runtimes.sh"]:

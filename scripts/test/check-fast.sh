@@ -20,7 +20,7 @@
 #                              outside web/ of the web lane in scripts/ci/paths.py; test_check_fast.py keeps the two in sync
 #   integrations/<pkg>/**      node --test test/*.test.{js,mjs} (packages without tests are skipped)
 #   site/**                    node --test site/worker.test.mjs
-#   sdk/ts/**                  bun test (skipped with a reason when bun is absent)
+#   sdk/ts/**                  bun test + the denohost trusted-adapter check (skipped with a reason when bun is absent)
 #   sdk/go/**                  go test ./... inside the sdk/go module
 #   server/internal/foo/**     go test ./internal/foo/...   (cmd/<x>/** and plugins/<x>/** likewise; other server
 #                              changes: go build ./...)
@@ -341,6 +341,14 @@ job_site() {
 job_sdk_ts() {
   [ "$HAVE_BUN" -eq 1 ] || skip "bun not found in PATH (sdk/ts tests run on bun)"
   in_dir sdk/ts step "$TIMEOUT_OTHER" "sdk/ts: bun test" bun test
+}
+
+job_deno_adapter() {
+  [ "$HAVE_GO" -eq 1 ] || skip "go not found (the trusted adapter check is a Go test)"
+  [ "$HAVE_BUN" -eq 1 ] || skip "bun not found in PATH (the trusted adapter check regenerates it)"
+  local _inner=$((TIMEOUT_GO_TEST - 10)); [ "$_inner" -lt 5 ] && _inner=5
+  in_dir server step "$TIMEOUT_GO_TEST" "go test -run TestTrustedAdapterMatchesOfficialSDK ./internal/extension/denohost/" \
+    go test -count=1 -timeout "${_inner}s" -run '^TestTrustedAdapterMatchesOfficialSDK$' ./internal/extension/denohost/
 }
 
 job_go() {  # $1 = a package dir (internal/foo, cmd/bar, plugins/baz) or ALL for ./...
@@ -800,7 +808,10 @@ if [ "${#INTEG[@]}" -gt 0 ]; then
   fi
 fi
 
-[ "$SDKTS" -eq 1 ] && schedule "sdk/ts (bun)" job_sdk_ts ""
+if [ "$SDKTS" -eq 1 ]; then
+  schedule "sdk/ts (bun)" job_sdk_ts ""
+  schedule "denohost trusted adapter" job_deno_adapter ""
+fi
 if [ "$SITE" -eq 1 ]; then
   if node_ok; then
     schedule "site (node --test)" job_site ""
