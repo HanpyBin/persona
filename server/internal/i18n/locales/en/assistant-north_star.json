@@ -1,0 +1,17 @@
+{
+  "heading": "North star",
+  "bad_query": "Use date=YYYY-MM-DD (today or earlier), split as an RFC 3339 time and tz as a time zone name.",
+  "unknown": "North star: today's numbers could not be read; they are unknown.",
+  "not_recorded": "unknown (not recorded yet)",
+  "count": "{n} ({ask} questions · {cards} cards to act on · {notify} notifications · {auth} authorization cards)",
+  "partial": ", partly unknown: recording began after the day started",
+  "no_attempts": "no starts or resumes yet",
+  "rate": "{rate} ({ok} of {n} starts and resumes worked)",
+  "change_unknown": "no comparison with yesterday",
+  "change_count": "yesterday by this time {was}, {delta}",
+  "change_rate": "yesterday by this time {was}, {delta}",
+  "interruptions": "Interruptions today: {value}; {change}",
+  "availability": "Availability today (main and leader conversations): {value}; {change}",
+  "failures": "Failures by reason: {list}",
+  "source": "Source: Persona's own records: cards and notifications that reached you (cards a supervisor took, standing authorizations and test probes excluded), and every start and resume of the main and leader conversations."
+}

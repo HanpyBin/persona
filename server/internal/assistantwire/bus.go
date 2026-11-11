@@ -59,6 +59,10 @@ const (
 
 	// EventStartEnded (StartEnded): how an app's start the node ran before answering went (POST /api/v1/sessions).
 	EventStartEnded = "session.start_ended"
+
+	// EventConversationSent (ConversationSent): how an app's message to one of the assistant's conversations went, as
+	// the hub sent it (the north star's availability, docs/assistant/north-star.md). An older manager ignores it.
+	EventConversationSent = "session.assistant_sent"
 )
 
 // Error codes that cross the bus where a Go error would lose its kind (rpc.Error.Code).
@@ -106,6 +110,7 @@ var Routes = []string{
 	"POST /api/v1/assistant/conversations/{id}/archive",
 	"GET /api/v1/assistant/conversations/{id}/always",
 	"GET /api/v1/assistant/standing-authorizations",
+	"GET /api/v1/assistant/north-star",
 	"DELETE /api/v1/assistant/standing-authorizations/{id}",
 	"DELETE /api/v1/assistant/conversations/{id}/always/{hash}",
 	"POST /api/v1/assistant/conversations/{id}/unarchive",

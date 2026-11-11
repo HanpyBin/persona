@@ -1691,6 +1691,8 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 	}
 	if t.Facts {
 		t.factsText = s.briefStart(ctx, t, time.Now()) // the run's facts, worked out once (briefing.go)
+	} else if t.Repeat == repeatDaily && t.SessionID != "" {
+		t.factsText = s.northStarRunFacts(ctx, t.SessionID, time.Now()) // a dot's daily report opens with it (north_star.go)
 	}
 	if t.SessionID != "" && t.pushesOnlyAsked() && s.mayBeMain(ctx, t.SessionID) {
 		// The conversation it came from became (or may be) the main one, which is never quiet.

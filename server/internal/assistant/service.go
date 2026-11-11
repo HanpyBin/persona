@@ -38,6 +38,8 @@ type Options struct {
 	// SecretKey is the path of the key the model providers' keys are sealed with (the manager's own secret.key,
 	// models_launchers.go); "" makes one for this run only (tests).
 	SecretKey string
+	// Build is this manager's version, kept with what the north star records (north_star.go); "" in tests.
+	Build string
 	// ID is the manager this assistant is ("" and assistantwire.AssistantID: the built-in one). Its directories on a
 	// computer are named after it (identity.AssistantDirName, docs/assistant/managers.md "Directories on a computer").
 	ID string
@@ -47,6 +49,8 @@ type Options struct {
 type Service struct {
 	// id is Options.ID: the manager this assistant is.
 	id string
+	// build is Options.Build.
+	build string
 	// nodeAnswering: the computers' requests being answered now, but the ones that wait on a person (idle.go).
 	nodeAnswering atomic.Int64
 	// taskStarting counts queued and running task starts through linking or failure bookkeeping (idle.go).
@@ -191,7 +195,7 @@ var _ Handler = (*Service)(nil)
 // New makes the assistant; nothing runs until the hub calls it.
 func New(o Options) *Service {
 	s := &Service{hub: o.Hub, store: o.Store, logf: o.Logf, mux: http.NewServeMux(), epoch: randomHex(8), tasks: newTasksState(),
-		devs: o.Devices, trustSrc: o.Trust, id: o.ID}
+		devs: o.Devices, trustSrc: o.Trust, id: o.ID, build: o.Build}
 	s.inbox.lang = func() i18n.Lang { return s.lang(context.Background()) }
 	if s.store == nil {
 		s.store = func() Store { return nil }
@@ -205,6 +209,7 @@ func New(o Options) *Service {
 	s.agentArchiveRoutes()
 	s.alwaysRoutes()
 	s.standingAuthorizationRoutes()
+	s.northStarRoutes()
 	s.reporterRoutes()
 	s.directionRoutes()
 	s.routeRoutes()
@@ -343,6 +348,9 @@ func (s *Service) call(ctx context.Context, device, method string, params, out a
 	res, ok, err := s.localFleetDeviceCall(ctx, p) // what the hub answered before the nodes' events were the manager's
 	if !ok {
 		res, err = s.hub.DeviceCall(ctx, p)
+	}
+	if sent, ok := params.(map[string]any); ok && method == DeviceAssistantSend {
+		s.recordManagerSend(device, sent, res, err) // the north star's availability (north_star.go)
 	}
 	if err != nil || out == nil || len(res) == 0 {
 		return err

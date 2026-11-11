@@ -760,6 +760,12 @@ func (b *BusHub) event(ctx context.Context, ev busEvent) error {
 			return err
 		}
 		go s.StartEnded(context.WithoutCancel(ctx), p)
+	case assistantwire.EventConversationSent:
+		var p ConversationSent
+		if err := decode(&p); err != nil {
+			return err
+		}
+		go s.ConversationSent(context.WithoutCancel(ctx), p)
 	case assistantwire.EventInteractionResolved:
 		var p InteractionResolved
 		if err := decode(&p); err != nil {
