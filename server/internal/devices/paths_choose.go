@@ -1,6 +1,7 @@
 package devices
 
 import (
+	"errors"
 	"time"
 
 	"github.com/nwverse/persona/server/internal/devicewire"
@@ -143,7 +144,8 @@ func (d *Devices) pathEnded(p *nodePath, online bool, err error, held time.Durat
 	switch {
 	case planned:
 		hl.fails, hl.failUntil, hl.err = 0, time.Time{}, ""
-	case online && held > time.Minute:
+	// Detecting a silent tailcat takes longer than a minute; that time open must not count as a healthy run.
+	case online && held > time.Minute && !errors.Is(err, errTailcatUnresponsive):
 		hl.fails = 0
 		hl.failUntil = time.Now().Add(2 * time.Second)
 	default:

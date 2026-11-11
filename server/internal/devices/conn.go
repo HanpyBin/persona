@@ -214,15 +214,15 @@ func (m *Machine) establishVia(ctx context.Context, p *nodePath, via string) (*n
 	// History reads are disposable when their caller leaves; starting/sending an agent task must keep running.
 	peer.Cancels = map[string]bool{"session.items": true}
 	// Every event goes on to the hub, the forwarded ports' bytes among them (the hub is their end, ports.go there).
-	peer.OnEvent = m.onEvent
-	peer.OnRequest = m.onRequest
+	peer.OnEvent = m.nodeTimingEvents(m.onEvent)
+	peer.OnRequest = m.nodeTimingRequests(m.onRequest)
 	c := &nodeConn{path: p, via: via, pipe: l, peer: peer, served: make(chan error, 1), cancel: cancel}
 	go func() { c.served <- peer.Serve(cctx, l.r) }()
 
 	ictx, icancel := context.WithTimeout(cctx, 40*time.Second)
 	// The engine first, before anything else the node is asked: it then never lists or watches the wrong one.
 	m.useEngine(ictx, peer)
-	err = peer.Call(ictx, "node.info", map[string]any{}, &c.info)
+	err = m.nodeTimingCall(ictx, peer, "node.info", map[string]any{}, &c.info)
 	icancel()
 	if err != nil {
 		c.close()
@@ -315,11 +315,12 @@ func (m *Machine) serve(ctx context.Context, c *nodeConn) error {
 			Sessions []proto.Session `json:"sessions"`
 		}
 		revision := m.sessionsRevision()
-		if err := c.peer.Call(ctx, "sessions.list", map[string]any{}, &list); err == nil {
+		if err := m.nodeTimingCall(ctx, c.peer, "sessions.list", map[string]any{}, &list); err == nil {
 			m.setInitialSessions(c.peer, revision, list.Sessions)
 			m.d.forward(m.cfg.ID, "sessions.changed", map[string]any{"sessions": m.sessionList()})
 			updates = true
 		}
+		m.nodeTimingInitialized()
 	} else {
 		rewatch = nil
 	}
@@ -369,6 +370,11 @@ func (m *Machine) serve(ctx context.Context, c *nodeConn) error {
 		}
 	case <-ctx.Done():
 		err = ctx.Err()
+	}
+	// The watchdog closes the transport too; its resulting read error can win the select above. Keep the specific
+	// liveness failure so a socket that merely stayed open does not reset the path's reconnect backoff.
+	if errors.Is(c.peer.Err(), errTailcatUnresponsive) {
+		err = errTailcatUnresponsive
 	}
 	if c.via == "ssh" && p.src != nil && time.Since(onlineAt) > 10*time.Minute { // ssh held: going back to it worked
 		p.src.mu.Lock()

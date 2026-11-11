@@ -98,6 +98,9 @@ type tailcatDialer struct {
 // errTailcatClosed: the manager is stopping.
 var errTailcatClosed = errors.New("tailcat: the manager is stopping")
 
+// Kept distinct from an ordinary disconnect: a connection that stayed open but did not answer was not healthy.
+var errTailcatUnresponsive = errors.New("tailcat 连接没有回应（那台电脑睡眠或断网了？）")
+
 func (d *Devices) tailcatClient() (*tunnel.Dialer, error) {
 	url := d.config().TailcatDERPMapURL
 	t := &d.tailcat
@@ -158,7 +161,8 @@ func (m *Machine) tailcatReset() {
 // path up to date, and goes back to ssh when that works again (only between interactions: a reconnect would cancel
 // a question waiting on the phone).
 //
-// A connection that moved bytes lately is alive: a ping is only sent when it was idle for a whole check, and the
+// Recent incoming bytes, or an unfinished write still making progress, keep a connection alive. A completed
+// outgoing ping is not proof of life. A ping is only sent after a whole idle check, and the
 // watcher never waits on it longer than a check (the ping queues behind any big write: on a slow relay that takes a
 // while, on a dead connection forever). Two idle checks in a row without an answer end the connection; closing it
 // also fails the stuck write.
@@ -185,7 +189,7 @@ func (m *Machine) watchTailcat(ctx context.Context, peer *rpc.Peer, activity *ac
 			if misses++; misses >= 2 {
 				m.d.logf("[%s] tailcat: no answer to two pings, reconnecting", m.cfg.ID)
 				m.tailcatReset()
-				peer.Close(errors.New("tailcat 连接没有回应（那台电脑睡眠或断网了？）"))
+				peer.Close(errTailcatUnresponsive)
 				if activity != nil {
 					_ = activity.Close() // what fails a write stuck on the dead connection (connectVia may be in one)
 				}
@@ -226,12 +230,16 @@ func (m *Machine) ping(ctx context.Context, peer *rpc.Peer) bool {
 	}
 }
 
-// activityConn is a connection that notes when bytes last moved: a read returning data, or a piece of a write going
-// out (writes are split so a big one on a slow link shows progress while it lasts).
+// activityConn records received bytes and progress within an unfinished write. A completed outgoing request
+// cannot prove the node is answering: in particular the watchdog must not count its own ping as proof of life.
+// Writes are split so a large upload over a slow link shows progress while it lasts; partial incoming frames also
+// count immediately, without waiting for their whole RPC message.
 type activityConn struct {
 	net.Conn
-	now  func() time.Time // nil: time.Now
-	last atomic.Int64     // unix nanoseconds
+	now       func() time.Time // nil: time.Now
+	lastRead  atomic.Int64     // unix nanoseconds
+	lastWrite atomic.Int64
+	writing   atomic.Int32
 }
 
 const activityChunk = 32 << 10
@@ -243,9 +251,15 @@ func (c *activityConn) clock() time.Time {
 	return time.Now()
 }
 
-func (c *activityConn) touch() { c.last.Store(c.clock().UnixNano()) }
+func (c *activityConn) touch() { c.lastRead.Store(c.clock().UnixNano()) }
 
-func (c *activityConn) idle() time.Duration { return c.clock().Sub(time.Unix(0, c.last.Load())) }
+func (c *activityConn) idle() time.Duration {
+	last := c.lastRead.Load()
+	if c.writing.Load() > 0 {
+		last = max(last, c.lastWrite.Load())
+	}
+	return c.clock().Sub(time.Unix(0, last))
+}
 
 func (c *activityConn) Read(p []byte) (int, error) {
 	n, err := c.Conn.Read(p)
@@ -256,12 +270,14 @@ func (c *activityConn) Read(p []byte) (int, error) {
 }
 
 func (c *activityConn) Write(p []byte) (int, error) {
+	c.writing.Add(1)
+	defer c.writing.Add(-1)
 	written := 0
 	for len(p) > 0 {
 		n, err := c.Conn.Write(p[:min(len(p), activityChunk)])
 		written += n
 		if n > 0 {
-			c.touch()
+			c.lastWrite.Store(c.clock().UnixNano())
 		}
 		if err != nil {
 			return written, err
