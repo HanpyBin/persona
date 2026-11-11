@@ -256,6 +256,9 @@ type Node struct {
 
 	// agentFilters: the extensions' filters of sessions kept out of the list (node.configure, agentfilters.go)
 	agentFilters []proto.AgentFilter
+
+	// dialogWait: first messages waiting for the dialog that kept them out to be answered (firstprompt.go).
+	dialogWait sync.WaitGroup
 }
 
 func New(version string) (*Node, error) {
