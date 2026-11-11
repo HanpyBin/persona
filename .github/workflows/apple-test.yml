@@ -54,7 +54,18 @@ jobs:
       - name: Apple checks
         env:
           CI_APPLE_DIAGNOSTICS: ${{ runner.temp }}/persona-apple-diagnostics-${{ inputs.lane }}-${{ github.run_id }}-${{ github.run_attempt }}
-        run: scripts/ci/apple.sh "$APPLE_CI_LANE"
+        run: scripts/ci/apple.sh "$APPLE_CI_LANE" 2>&1 | tee "${{ runner.temp }}/metrics-apple-checks.log"
+      - name: Capture Machines screens after complete native checks
+        if: success() && inputs.lane == 'ios'
+        run: python3 scripts/ci/metrics_screenshots.py "${{ runner.temp }}/metrics-apple-checks.log"
+      - name: Upload Machines screens
+        if: always() && inputs.lane == 'ios'
+        uses: actions/upload-artifact@v4
+        with:
+          name: machines-ios-${{ github.run_id }}
+          path: .ci-evidence/machines/
+          retention-days: 7
+          if-no-files-found: warn
       - name: Upload Apple failure diagnostics
         if: failure()
         uses: actions/upload-artifact@v4

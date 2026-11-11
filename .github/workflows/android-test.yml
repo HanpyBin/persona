@@ -72,3 +72,4 @@ jobs:
             android/**/build/reports/lint-results*
             android/**/build/reports/tests/
             android/**/build/test-results/
+            android/feature/machines/build/managers-shots/*.png
