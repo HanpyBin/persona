@@ -43,9 +43,11 @@ jobs:
           ./gradlew :feature:chat:testDebugUnitTest --tests persona.feature.chat.ChannelSourceShotsTest
           --no-daemon --no-watch-fs --console=plain --max-workers=2
       - name: Check shard coverage fixtures on the pinned base
+        shell: bash
         run: python3 scripts/ci/test_android_shards.py 2>&1 | tee baseline-shards.log
       - name: Check reply-block behavior on the pinned base
         if: always()
+        shell: bash
         working-directory: android
         run: >-
           ./gradlew :feature:chat:testDebugUnitTest
