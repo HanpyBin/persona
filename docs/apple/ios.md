@@ -581,7 +581,8 @@ Apps built with older Xcode do not extend under the status bar and camera on Duo
     `path = NavigationPath([value])` (in single-column mode the list is at the stack bottom, equivalent to append; Agents `openFromList`). Pages opened from details still append.
   - The first right-column page has no back button (the list is beside it): add `.splitDetailPage()` to the destination; Agents' custom chat back button hides for `\.splitDetail` (keeping its space so the title stays centered).
     With the list folded, the chat's ‹ brings it back (#963). On iPhone Duo open on its side the chat has no ‹ then either (#3680): its actions are in the system's side bars, whose
-    Show Sidebar at the top left brings the list back, and a ‹ that did the same was read as a Back that opened the sidebar instead of going back. Upright (#3641) keeps #963's ‹.
+    Show Sidebar at the top left brings the list back, and a ‹ that did the same was read as a Back that opened the sidebar instead of going back. In the one sidebar (#4206)
+    the agent's ‹ never brings the list back: Persona's page is under it, so ‹ goes back there (`ChatView.backShowsList`, #3641 upright).
   - Split chat pages do not hide the tab bar (single-column pages do, to fill the screen).
   - Settings entry points all use values (`SettingsPage`); view-based `NavigationLink { page }` pushes the left column's own stack and opens in the narrow column.
 - **Persona**: in regular width, Persona's rows lead the one sidebar (#4206, "One sidebar" below) and its page is the detail column's; the column's own button at
@@ -656,8 +657,10 @@ sidebar. Code in `Persona/Views/OneSidebar.swift`; the column is the Agents list
 - **Beside it** the detail column shows the agent's chat while one is open, and otherwise its home (`SplitNavigation.home`, `OneSidebarHome`): Persona's page, or
   Messages while its row is the one picked (`selectedTab == .feishu`). Each has its own `NavigationStack`: the home is not a page of the column's stack, since
   stacks cannot nest. A Persona row closes the agent and shows its page there; opening an agent sets `selectedTab` to `.chats`, closing it back to `.assistant`.
-  The detail column asks for at least `Theme.Size.splitDetailMin` (300 pt): with no width of its own, the split laid the column over the page, dimmed, on the
-  open Duo held upright (669 pt wide); with it the column sits beside the page in both postures, at the system's width (320 pt on the Duo).
+  On the open Duo held upright (669 pt wide) the system lays the column over the page, which keeps its full width (#4852, the owner: a column pushing the page
+  aside squeezed both). There a pick that changes the page (the main row, a place, a Recent conversation, Messages, an agent) slides the column away
+  (`\.splitHideOverlay`, and any change of the detail path); filters and groupings (Needs You, All, the segments) leave it open. The handle on its edge is
+  centered on the window's height. On its side and on the iPad the column sits beside the page.
 - **Selection**: one row at a time looks chosen: the main row, a place or a Recent conversation while Persona's page is shown, Messages while it is, the open agent's
   row while an agent is (`Theme.Tree.selected` on cards, `RepoTreeSelected` on tree rows; `.isSelected` for VoiceOver), in every grouping.
 - **Menus**: the main row's long press holds the main conversation's menu, Copy Session ID, Copy Diagnostics and End… (`MainChatRowMenu`, shared with the iPhone's

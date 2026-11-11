@@ -3353,9 +3353,11 @@ struct ChatView: View {
         host == nil && split?.isFirstPage == true && (split?.listHidden != true || systemShowsList) && pane == .chat
     }
     /// The split's first page with its list column closed: ‹ brings the list back. There is nothing to go back to, and
-    /// with this page's own header no system button to open the list (the iPad; the open Duo upright).
+    /// with this page's own header no system button to open the list. Not in the one sidebar (#4206): Persona's page is
+    /// under the agent's there (`SplitNavigation.home`), so ‹ goes back to it, whose own button brings the list back; a ‹
+    /// that slid the list out read as a Back that did not go back (the open Duo upright, #3641).
     private var backShowsList: Bool {
-        host == nil && split?.isFirstPage == true && split?.listHidden == true && !systemShowsList && pane == .chat
+        host == nil && split?.isFirstPage == true && split?.listHidden == true && !systemShowsList && !oneSidebar && pane == .chat
     }
     /// The system's Show Sidebar is on screen beside a folded list: the side bars' column of the open Duo's one sidebar.
     private var systemShowsList: Bool { oneSidebar && sideBars }

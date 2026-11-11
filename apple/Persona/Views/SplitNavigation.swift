@@ -27,6 +27,15 @@ struct SplitNavigation<Sidebar: View, Empty: View, Destinations: ViewModifier>: 
     @ViewBuilder var sidebar: Sidebar
     /// The detail column before anything is open.
     @ViewBuilder var empty: Empty
+    #if os(iOS)
+    /// Where the split, its list column's trailing edge and its page start (global x), as last laid out.
+    @State private var splitStart: CGFloat = 0
+    @State private var listEnd: CGFloat = 0
+    @State private var pageStart: CGFloat = 0
+    /// The list column slides in over the page instead of beside it: the system's choice where the page would be left too
+    /// narrow (the open iPhone Duo held upright, #4852). Read while the list is out, kept while it is away.
+    @State private var overlays = false
+    #endif
 
     var body: some View {
         layout.environment(\.splitPush, SplitPush { [path = $path] value in path.wrappedValue.append(value) })
@@ -87,19 +96,27 @@ struct SplitNavigation<Sidebar: View, Empty: View, Destinations: ViewModifier>: 
                         .accessibilityHidden(path.isEmpty)
                         if path.isEmpty { home }
                     }
-                    // The page beside the column, not under it: given no width of its own, the split laid the column over
-                    // the page, dimmed, on the open Duo held upright (669 pt; #4206). A least width lets it tile; the ideal is
-                    // the same, so the column keeps the system's width and the page takes the rest.
-                    .navigationSplitViewColumnWidth(min: Theme.Size.splitDetailMin, ideal: Theme.Size.splitDetailMin)
+                    #if os(iOS)
+                    .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minX } action: { pageStart = $0; notePosture() }
+                    #endif
                 } else {
                     NavigationStack(path: $path) {
                         empty.modifier(destinations)
                     }
+                    #if os(iOS)
+                    .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minX } action: { pageStart = $0; notePosture() }
+                    #endif
                 }
             }
             .navigationSplitViewStyle(.balanced)
+            #if os(iOS)
+            .onPreferenceChange(SidebarEdge.self) { listEnd = $0; notePosture() }
+            .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minX } action: { splitStart = $0; notePosture() }
+            // An agent picked, or anything else that changes the page: a list laid over the page goes (#4852).
+            .onChange(of: path) { hideOverlay() }
+            #endif
             .modifier(SidebarTopFill(shown: columns != .detailOnly))
-            .modifier(SplitDividerHandle(columns: $columns, key: listKey))
+            .modifier(SplitDividerHandle(columns: $columns, key: listKey, overlays: overlaysNow))
             // On the whole split, not the detail stack: its pages are built from the destinations the sidebar
             // registered, in the sidebar's environment.
             .environment(\.splitDetail, SplitDetail(isFirstPage: path.count <= 1, listHidden: columns == .detailOnly))
@@ -110,6 +127,7 @@ struct SplitNavigation<Sidebar: View, Empty: View, Destinations: ViewModifier>: 
             .environment(\.splitHideList, SplitShowList { [columns = $columns] in
                 withAnimation(Theme.Motion.layout) { columns.wrappedValue = .detailOnly }
             })
+            .environment(\.splitHideOverlay, SplitShowList { hideOverlay() })
             #endif
             #endif
         } else {
@@ -118,6 +136,31 @@ struct SplitNavigation<Sidebar: View, Empty: View, Destinations: ViewModifier>: 
             }
         }
     }
+
+    private var overlaysNow: Bool {
+        #if os(iOS)
+        overlays
+        #else
+        false
+        #endif
+    }
+
+    #if os(iOS)
+    /// The posture: the page starting before the list ends is the page under the list. Read only while the list is out
+    /// (away, both postures look the same).
+    private func notePosture() {
+        guard columns != .detailOnly, listEnd > splitStart else { return }
+        let now = pageStart < listEnd - 1
+        if overlays != now { overlays = now }
+    }
+
+    /// A pick in a list laid over the page (the open Duo upright) changed what the page shows: the list slides away, as
+    /// the system's sidebar does on an iPad in portrait. Beside the page (on its side, the iPad) it stays.
+    private func hideOverlay() {
+        guard overlays, columns != .detailOnly else { return }
+        withAnimation(Theme.Motion.layout) { columns = .detailOnly }
+    }
+    #endif
 }
 
 /// What a split shows when its list is out: the list beside the page. On the Mac the list is the content column of a
@@ -282,6 +325,9 @@ struct SplitPlaceholder: View {
 struct SplitDividerHandle: ViewModifier {
     @Binding var columns: NavigationSplitViewVisibility
     let key: String?
+    /// The list is laid over the page (the open iPhone Duo upright, #4852): its going away is a pick's, or a tap on the
+    /// page, not a choice to keep it closed.
+    var overlays = false
     /// The width dragged to; 0: never dragged (or given back), the system's.
     @StoredValue private var width: Double
     @StoredValue private var closed: Bool
@@ -299,9 +345,10 @@ struct SplitDividerHandle: ViewModifier {
         var closing: Bool
     }
 
-    init(columns: Binding<NavigationSplitViewVisibility>, key: String?) {
+    init(columns: Binding<NavigationSplitViewVisibility>, key: String?, overlays: Bool = false) {
         _columns = columns
         self.key = key
+        self.overlays = overlays
         _width = StoredValue(wrappedValue: 0, (key ?? "split.list") + ".width")
         _closed = StoredValue(wrappedValue: false, (key ?? "split.list") + ".closed")
     }
@@ -337,9 +384,13 @@ struct SplitDividerHandle: ViewModifier {
                     handle
                         .offset(x: shown ? (live?.width ?? current) - Theme.Split.handleWidth / 2 : 0)
                         .accessibilityIdentifier("split.divider." + key)
+                        // Halfway down the screen, not the safe area: under the status bar the safe area's middle sat
+                        // visibly low on the open Duo upright (#4852).
+                        .frame(maxHeight: .infinity)
+                        .ignoresSafeArea(.container, edges: .vertical)
                 }
                 .onAppear { if closed, shown { columns = .detailOnly } }
-                .onChange(of: columns) { _, now in closed = now == .detailOnly }
+                .onChange(of: columns) { _, now in if !overlays { closed = now == .detailOnly } }
         } else {
             content
         }

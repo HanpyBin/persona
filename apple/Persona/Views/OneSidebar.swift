@@ -11,6 +11,9 @@ extension EnvironmentValues {
     @Entry var oneSidebar = false
     /// Folds the split's list column away (the one sidebar's header button); nil outside a split.
     @Entry var splitHideList: SplitShowList? = nil
+    /// Slides the list column away if it is laid over the page (the open iPhone Duo upright, #4852), after a pick that
+    /// changes the page; beside the page it stays. Nil outside a split.
+    @Entry var splitHideOverlay: SplitShowList? = nil
     /// The window is wider than tall (an open iPhone Duo on its side): Recent starts folded there, for the Agents to be in
     /// sight on the first screen.
     @Entry var sidebarOnItsSide = false
@@ -67,6 +70,8 @@ struct OneSidebarSections: View {
     @Environment(AppModel.self) private var model
     @Environment(\.padRouter) private var padRouter
     @Environment(\.sidebarOnItsSide) private var onItsSide
+    /// A pick that changes the page slides an overlaid column away (#4852); folds, More and the groupings don't.
+    @Environment(\.splitHideOverlay) private var hideOverlay
     /// Closes the agent open beside the column, for a Persona page to show there.
     var leaveAgent: () -> Void
     /// An agent's page is open beside the column.
@@ -175,12 +180,14 @@ struct OneSidebarSections: View {
     private func toPersona() {
         leaveAgent()
         if model.selectedTab != .assistant { model.selectedTab = .assistant }
+        hideOverlay?.show()
     }
 
     /// Messages in the detail column (`OneSidebarHome`), where a phone has its tab.
     private func openMessages() {
         leaveAgent()
         model.selectedTab = .feishu
+        hideOverlay?.show()
     }
 
     // MARK: Recent
@@ -311,6 +318,7 @@ struct OneSidebarHeader: View {
 struct OneSidebarFoot: View {
     @Environment(AppModel.self) private var model
     @Environment(\.padRouter) private var padRouter
+    @Environment(\.splitHideOverlay) private var hideOverlay
     var leaveAgent: () -> Void
     @State private var fullSearch = false
 
@@ -351,10 +359,12 @@ struct OneSidebarFoot: View {
         }
     }
 
-    /// Persona's page in the detail column (not an agent, not Messages), for what it is asked next.
+    /// Persona's page in the detail column (not an agent, not Messages), for what it is asked next; an overlaid column
+    /// slides away (#4852).
     private func toPersona() {
         leaveAgent()
         if model.selectedTab != .assistant { model.selectedTab = .assistant }
+        hideOverlay?.show()
     }
 
     private func footButton(_ symbol: String, label: String, id: String, action: @escaping () -> Void) -> some View {

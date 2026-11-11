@@ -7,7 +7,9 @@ import XCTest
 /// - More opens inline to Messages (when on), Meeting Recording, Health and Machines;
 /// - the grouping's segments under the Agents heading, one tap each, the same choice as the ⋯ menu's;
 /// - an agent opened from the list beside Persona's page, its row the selected one; a Persona row closes it;
-/// - Recent starts folded on an open Duo held on its side.
+/// - Recent starts folded on an open Duo held on its side;
+/// - upright on the open Duo the column is over the page, and a pick that changes the page slides it away (#4852); ‹ on
+///   an agent opened from it goes back to Persona's page (#3641).
 ///
 /// Against scripts/mock/mock_hub.py (PERSONA_MOCK_HUB). On the iPad simulator, or the Duo simulator opened in Xcode's
 /// Device Hub, on its side (TEST_RUNNER_PERSONA_ORIENTATION=landscape) or upright; the closed Duo and other iPhones skip.
@@ -55,6 +57,12 @@ final class OneSidebarTests: XCTestCase {
         return UIDevice.current.userInterfaceIdiom == .phone && w.width > w.height
     }
 
+    /// The open Duo held upright: the column slides in over the page (#4852).
+    @MainActor private var duoUpright: Bool {
+        let w = app.windows.firstMatch.frame
+        return UIDevice.current.userInterfaceIdiom == .phone && w.height > w.width
+    }
+
     @MainActor private func shot(_ name: String) {
         XCTContext.runActivity(named: "one-sidebar \(name)") { _ in
             if let hold = ProcessInfo.processInfo.environment["PERSONA_HOLD"].flatMap(UInt32.init) { sleep(hold) }
@@ -78,15 +86,18 @@ final class OneSidebarTests: XCTestCase {
         XCTAssertLessThan(inbox.frame.minY, more.frame.minY)
         XCTAssertLessThan(more.frame.minY, recent.frame.minY, "Recent is not under the places")
         XCTAssertLessThan(main.frame.maxX, window.midX + 100, "the column is not on the left")
-        // The page beside the column, not under it: upright on the open Duo the split once laid the column over the page,
-        // dimmed. Its face is in the middle of the page, at least 300 pt wide, so well past the column's edge.
-        let face = app.buttons.matching(NSPredicate(format: "identifier IN %@", ["assistant-menu", "persona-avatar"])).firstMatch
-        XCTAssertTrue(face.exists, "no face on the page:\n\(app.debugDescription)")
-        XCTAssertGreaterThan(face.frame.midX, collapse.frame.maxX + 100, "the page is under the column, not beside it")
-        // The fold and the page's New Chat on one line (2026-11-11, the owner).
+        // Beside the page on the iPad and the open Duo on its side, the fold and the page's New Chat on one line (2026-11-11,
+        // the owner). Upright on the open Duo the column is over the page instead (#4852): the page keeps its full width.
         let pageNew = element("assistant-new")
         XCTAssertTrue(pageNew.exists, "no New Chat on the page")
-        XCTAssertEqual(pageNew.frame.midY, collapse.frame.midY, accuracy: 2, "the fold and the page's New Chat are not on one line")
+        if duoUpright {
+            XCTAssertGreaterThan(pageNew.frame.maxX, window.maxX - 80, "the page is not its full width under the column")
+        } else {
+            let face = app.buttons.matching(NSPredicate(format: "identifier IN %@", ["assistant-menu", "persona-avatar"])).firstMatch
+            XCTAssertTrue(face.exists, "no face on the page:\n\(app.debugDescription)")
+            XCTAssertGreaterThan(face.frame.midX, collapse.frame.maxX + 100, "the page is under the column, not beside it")
+            XCTAssertEqual(pageNew.frame.midY, collapse.frame.midY, accuracy: 2, "the fold and the page's New Chat are not on one line")
+        }
         // The rarer places wait under More.
         XCTAssertFalse(element("sidebar-machines").exists, "Machines shows before More is opened")
         // The foot: New Chat on the left, search and Settings on the right, in one row at the column's foot.
