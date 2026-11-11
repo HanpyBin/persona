@@ -18,8 +18,10 @@ vi.mock("../../lib/compare", async (original) => {
     return documents.gate ? Promise.all([read, documents.gate]).then(([units]) => units) : read;
   } };
 });
-import { getToken, setToken } from "../../lib/api";
-import { chosenManager, chooseManager } from "../../lib/manager-choice";
+vi.mock("../../lib/edge-auth", async (original) => ({ ...(await original<typeof import("../../lib/edge-auth")>()), reloadForSignIn: vi.fn() }));
+import { api, getToken, handleUnauthorized, setToken } from "../../lib/api";
+import { reloadForSignIn } from "../../lib/edge-auth";
+import { chosenManager, chooseManager, defaultManager, setRosterDefault } from "../../lib/manager-choice";
 import { getState } from "../../lib/store";
 import { t } from "../../i18n";
 import { GitPanel } from "./GitPanel";
@@ -35,6 +37,7 @@ let requested: Request[];
 let downloads: string[];
 let oldToken: string;
 let oldManager: string | null;
+let oldDefault: string;
 let features: string[];
 let hideOriginal: boolean;
 let deny: boolean;
@@ -135,14 +138,14 @@ beforeEach(() => {
   requested = []; downloads = []; cached.clear(); hideOriginal = false; deny = false; hold = undefined; statusOverride = undefined; fsLive.notify = undefined;
   documents.reads = []; documents.gate = undefined;
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
-  oldToken = getToken(); oldManager = chosenManager(); features = getState().features;
+  oldToken = getToken(); oldManager = chosenManager(); oldDefault = defaultManager(); features = getState().features;
   Object.assign(getState(), { features: [] });
   host = document.createElement("div"); document.body.append(host); root = createRoot(host);
 });
 afterEach(() => {
   act(() => root.unmount()); host.remove();
   Object.assign(getState(), { features });
-  setToken(oldToken); chooseManager(oldManager);
+  setToken(oldToken); setRosterDefault(oldDefault); chooseManager(oldManager);
   vi.unstubAllGlobals();
   rmSync(repo, { recursive: true, force: true });
 });
@@ -330,6 +333,185 @@ describe("Git panel renamed version comparisons", () => {
     expect(host.querySelectorAll("img")).toHaveLength(2);
   });
 
+  it("keeps slider mode and position across a status refresh that rereads the same file", async () => {
+    writeBase("old.png", "synthetic image bytes"); git("mv", "old.png", "new.png"); stub();
+    await show("new.png");
+    await click(t("session-files-compareview.slider"));
+    const slider = host.querySelector('input[type="range"]') as HTMLInputElement;
+    expect(slider).toBeTruthy();
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(slider, "67");
+      slider.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(slider.value).toBe("67");
+    expect(host.querySelector(`img[alt="${t("session-files-compareview.old")}"]`)?.getAttribute("style")).toContain("33%");
+    const before = requested.length;
+    await act(async () => { fsLive.notify?.({ git: true }); });
+    expect(requested.length).toBe(before + 2);
+    expect((host.querySelector('input[type="range"]') as HTMLInputElement | null)?.value).toBe("67");
+  });
+
+  it("restores the document scroll position after rereading the same comparison", async () => {
+    writeBase("old.docx", await docx("Original paragraph")); git("mv", "old.docx", "new.docx");
+    writeFileSync(join(repo, "new.docx"), await docx("Changed paragraph")); stub();
+    let releaseDocuments = holdDocuments();
+    await show("new.docx");
+    await releaseDocuments();
+    const scroller = host.querySelector("div.overflow-y-auto.py-2") as HTMLDivElement;
+    expect(scroller?.textContent).toContain("Changed paragraph");
+    act(() => { scroller.scrollTop = 55; scroller.dispatchEvent(new Event("scroll", { bubbles: true })); });
+    releaseDocuments = holdDocuments();
+    await act(async () => { fsLive.notify?.({ git: true }); });
+    await releaseDocuments();
+    expect((host.querySelector("div.overflow-y-auto.py-2") as HTMLDivElement | null)?.scrollTop).toBe(55);
+  });
+
+  it("resets slider controls when another file is selected", async () => {
+    writeBase("old-a.png", "first synthetic image");
+    writeFileSync(join(repo, "old-b.png"), "second synthetic image"); git("add", "old-b.png"); git("commit", "-qm", "second");
+    git("mv", "old-a.png", "new-a.png"); git("mv", "old-b.png", "new-b.png"); stub();
+    await show("new-a.png");
+    await click(t("session-files-compareview.slider"));
+    expect(host.querySelector('input[type="range"]')).toBeTruthy();
+    await click(t("session-files-parts.back"));
+    const second = [...host.querySelectorAll("button")].find((b) => b.title === "new-b.png");
+    expect(second).toBeTruthy();
+    await act(async () => { second!.click(); });
+    expect(host.querySelector('input[type="range"]')).toBeNull();
+    expect(host.querySelectorAll("img")).toHaveLength(2);
+  });
+
+  it("keeps the comparison when the default changes but the chosen manager stays the same", async () => {
+    setRosterDefault("default-one"); chooseManager("selected-manager");
+    writeBase("old.png", "synthetic image bytes"); git("mv", "old.png", "new.png"); stub();
+    await show("new.png");
+    await click(t("session-files-compareview.slider"));
+    await act(async () => { setRosterDefault("default-two"); });
+    expect(host.querySelector('input[type="range"]')).toBeTruthy();
+    expect(host.textContent).toContain("new.png");
+  });
+
+  it.each(["manager", "credential"])("resets slider controls after a %s change", async (kind) => {
+    writeBase("old.png", "synthetic image bytes"); git("mv", "old.png", "new.png"); stub();
+    await show("new.png");
+    await click(t("session-files-compareview.slider"));
+    expect(host.querySelector('input[type="range"]')).toBeTruthy();
+    await act(async () => {
+      if (kind === "manager") { chooseManager("replacement-manager"); chooseManager(oldManager); }
+      else { setToken("synthetic-other-token"); setToken(oldToken); }
+    });
+    const row = [...host.querySelectorAll("button")].find((b) => b.title === "new.png");
+    expect(row).toBeTruthy();
+    await act(async () => { row!.click(); });
+    expect(host.querySelector('input[type="range"]')).toBeNull();
+    expect(host.querySelectorAll("img")).toHaveLength(2);
+  });
+
+  it.each(["manager", "credential", "selection", "close"].flatMap((owner) => ["json", "html", "redirect"].map((kind) => ({ owner, kind }))))("does not let a retired $owner comparison's late $kind response reset authentication", async ({ owner, kind }) => {
+    writeBase("old.png", "synthetic image bytes"); git("mv", "old.png", "new.png");
+    let answer!: (response: Response) => void;
+    hold = (r) => r.rev === "HEAD" ? new Promise<Response>((resolve) => { answer = resolve; }) : undefined; stub();
+    const unauthorized = vi.fn();
+    const restore = handleUnauthorized(unauthorized);
+    vi.mocked(reloadForSignIn).mockClear();
+    try {
+      await show("new.png");
+      const response = kind === "json" ? json({ error: "Synthetic unauthorized" }, 401)
+        : kind === "html" ? new Response("<html>Sign in</html>", { status: 401, headers: { "Content-Type": "text/html" } })
+        : new Response("", { status: 302, headers: { Location: "/sign-in" } });
+      await act(async () => {
+        if (owner === "manager") { chooseManager("replacement-manager"); chooseManager(oldManager); }
+        else if (owner === "credential") { setToken("synthetic-other-token"); setToken(oldToken); }
+        else if (owner === "selection") button(t("session-files-parts.back"))!.click();
+        else button(t("session-files-parts.close_panel"))!.click();
+        answer(response);
+      });
+      expect(unauthorized).not.toHaveBeenCalled();
+      expect(reloadForSignIn).not.toHaveBeenCalled();
+    } finally { handleUnauthorized(restore); }
+  });
+
+  it.each(["json", "html", "redirect"])("keeps authentication recovery for a current %s comparison response", async (kind) => {
+    writeBase("old.png", "synthetic image bytes"); git("mv", "old.png", "new.png");
+    hold = (r) => r.rev !== "HEAD" ? undefined : Promise.resolve(kind === "json" ? json({ error: "Synthetic unauthorized" }, 401)
+      : kind === "html" ? new Response("<html>Sign in</html>", { status: 401, headers: { "Content-Type": "text/html" } })
+      : new Response("", { status: 302, headers: { Location: "/sign-in" } }));
+    stub();
+    const unauthorized = vi.fn();
+    const restore = handleUnauthorized(unauthorized);
+    vi.mocked(reloadForSignIn).mockClear();
+    try {
+      await show("new.png");
+      expect(unauthorized).toHaveBeenCalledTimes(kind === "json" ? 1 : 0);
+      expect(reloadForSignIn).toHaveBeenCalledTimes(kind === "json" ? 0 : 1);
+    } finally { handleUnauthorized(restore); }
+  });
+
+  it.each(["json", "html"])("does not recover authentication from a retired sibling after Retry (%s)", async (kind) => {
+    writeBase("old.png", "synthetic image bytes"); git("mv", "old.png", "new.png");
+    let answer!: (response: Response) => void;
+    let firstHead = true, firstIndex = true;
+    hold = (r) => {
+      if (r.rev === "HEAD" && firstHead) { firstHead = false; return Promise.resolve(json({ error: "Synthetic refusal" }, 403)); }
+      if (r.rev === "INDEX" && firstIndex) { firstIndex = false; return new Promise<Response>((resolve) => { answer = resolve; }); }
+      return undefined;
+    };
+    stub();
+    const unauthorized = vi.fn();
+    const restore = handleUnauthorized(unauthorized);
+    vi.mocked(reloadForSignIn).mockClear();
+    try {
+      await show("new.png");
+      expect(host.textContent).toContain("Synthetic refusal");
+      await act(async () => {
+        button(t("session-gitpanel.retry"))!.click();
+        answer(kind === "json" ? json({ error: "Synthetic unauthorized" }, 401)
+          : new Response("<html>Sign in</html>", { status: 401, headers: { "Content-Type": "text/html" } }));
+      });
+      expect(unauthorized).not.toHaveBeenCalled();
+      expect(reloadForSignIn).not.toHaveBeenCalled();
+      expect(host.querySelectorAll("img")).toHaveLength(2);
+    } finally { handleUnauthorized(restore); }
+  });
+
+  it.each(["json", "html", "redirect"])("preserves unowned %s probe recovery", async (kind) => {
+    const unauthorized = vi.fn();
+    const restore = handleUnauthorized(unauthorized);
+    vi.mocked(reloadForSignIn).mockClear();
+    vi.stubGlobal("fetch", vi.fn(async () => kind === "json" ? json({ error: "Synthetic unauthorized" }, 401) : kind === "html"
+      ? new Response("<html>Sign in</html>", { status: 401, headers: { "Content-Type": "text/html" } })
+      : new Response("", { status: 302, headers: { Location: "/sign-in" } })));
+    try {
+      await expect(api("/machines", { token: "synthetic-probe-token" })).rejects.toBeTruthy();
+      expect(unauthorized).not.toHaveBeenCalled();
+      expect(reloadForSignIn).toHaveBeenCalledTimes(kind === "json" ? 0 : 1);
+    } finally { handleUnauthorized(restore); }
+  });
+
+  it("does not forward the authentication fence to fetch and preserves ordinary and 304 reads", async () => {
+    const unauthorized = vi.fn();
+    const restore = handleUnauthorized(unauthorized);
+    vi.mocked(reloadForSignIn).mockClear();
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => init?.headers && new Headers(init.headers).has("If-None-Match")
+      ? new Response(null, { status: 304 }) : json({ machines: [] }));
+    vi.stubGlobal("fetch", fetcher);
+    try {
+      const fence = () => true;
+      expect(await api("/machines", { isAuthContextCurrent: fence })).toEqual({ machines: [] });
+      expect(await api("/machines", { headers: { "If-None-Match": '"synthetic"' }, isAuthContextCurrent: fence })).toEqual({});
+      expect(fetcher.mock.calls.every(([, init]) => !Object.hasOwn(init ?? {}, "isAuthContextCurrent"))).toBe(true);
+      expect(unauthorized).not.toHaveBeenCalled();
+      expect(reloadForSignIn).not.toHaveBeenCalled();
+    } finally { handleUnauthorized(restore); }
+  });
+
+  it("lets an unowned probe opt out of reloading after its view retires", async () => {
+    vi.mocked(reloadForSignIn).mockClear();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 302, headers: { Location: "/sign-in" } })));
+    await expect(api("/machines", { token: "synthetic-probe-token", isAuthContextCurrent: () => false })).rejects.toBeTruthy();
+    expect(reloadForSignIn).not.toHaveBeenCalled();
+  });
+
   it.each(["manager", "credential"])("retires the selected comparison when the %s changes away and back", async (kind) => {
     writeBase("old.png", "synthetic image bytes"); git("mv", "old.png", "new.png");
     let answer!: (response: Response) => void;
@@ -343,5 +525,10 @@ describe("Git panel renamed version comparisons", () => {
     expect(host.textContent).not.toContain("Stale refusal");
     expect(host.querySelectorAll("img")).toHaveLength(0);
     expect([...host.querySelectorAll("button")].some((b) => b.title === "new.png")).toBe(true);
+    hold = undefined;
+    const row = [...host.querySelectorAll("button")].find((b) => b.title === "new.png")!;
+    await act(async () => { row.click(); });
+    expect(host.querySelector('input[type="range"]')).toBeNull();
+    expect(host.querySelectorAll("img")).toHaveLength(2);
   });
 });

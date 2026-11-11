@@ -4,6 +4,8 @@
 
 A staged rename's source exists at HEAD under the original status path, while its destination exists in the index under the new path. A later unstaged edit uses the new path for both sides; an unstaged rename reported separately by Git reads the index at its own original path. Keep both paths through the real comparison caller, guard each read, and treat missing rename metadata or a denied read as an error rather than an absent original. Exercise the actual viewer and client with a temporary Git repository, and retire delayed results when the selection, assistant or credential changes.
 
+A status refresh must reread versions without resetting the same file's slider or document scroll. A roster update that leaves the chosen assistant unchanged is not an ownership change. Fence authentication recovery itself to the request's still-current view and credential: ignoring a late component result is too late if the shared client has already signed out or reloaded. Current requests and unowned sign-in probes keep their existing recovery behavior.
+
 ## Dismiss a draft, not its source item (#3743)
 
 A task-progress reply card has its own feed id; its Inbox reference can be shared by later progress drafts. Persist
