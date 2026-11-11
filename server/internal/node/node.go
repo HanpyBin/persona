@@ -336,12 +336,21 @@ func (n *Node) Serve(ctx context.Context, r io.Reader, w io.Writer) error {
 	if err := n.writeClaudeConfig(); err != nil {
 		n.logger.Printf("write claude config: %v", err)
 	}
+	var trace func(rpc.TraceEvent)
+	if os.Getenv("PERSONA_NODE_RPC_TRACE") == "1" {
+		connection := time.Now().UnixNano()
+		trace = func(e rpc.TraceEvent) {
+			n.logf("rpc.trace connection=%d phase=%s kind=%s label=%s id=%x frame=%d bytes=%d written=%d elapsed_us=%d outcome=%s", connection, e.Phase, e.Kind, e.Label, e.ID, e.Frame, e.Bytes, e.Written, e.Elapsed.Microseconds(), e.Outcome)
+		}
+		w = rpc.TraceWriter(w, trace)
+	}
 	// What the node sends hides the values handed to Agent starts (secretenv.go): the innermost writer, so every line.
 	w = scrubWriter{w: w, s: n.handoffs().scrub}
 	if n.updater != nil {
 		w = &updateResponseWriter{Writer: w, responseWritten: n.updater.ResponseWritten}
 	}
 	n.peer = rpc.New("n", w)
+	n.peer.Trace = trace
 	// A tool call whose caller went away (the assistant's turn stopped, a hook killed) ends on the hub too: an
 	// approval it was waiting on is withdrawn, not left to run the call when allowed later (#2597).
 	n.peer.Cancels = map[string]bool{"mcp.call": true}

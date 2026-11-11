@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/maphash"
 	"io"
 	"sync"
 	"sync/atomic"
@@ -31,8 +32,9 @@ type message struct {
 	Params json.RawMessage `json:"params,omitempty"`
 	Result json.RawMessage `json:"result,omitempty"`
 	Error  *Error          `json:"error,omitempty"`
-	// line is the whole line, written already (Marshaled params); nothing else is set.
-	line []byte
+	// line is the whole line, written already (Marshaled params); Event is diagnostic metadata.
+	line        []byte
+	traceMethod string // response label, never serialized
 }
 
 type Error struct {
@@ -66,9 +68,15 @@ func (droppedError) Is(target error) bool { return target == ErrClosed }
 type Limits struct{ FrameBytes, ConcurrentRequests, PendingCalls int }
 
 type Peer struct {
-	Limits Limits
-	prefix string
-	w      io.Writer
+	// Trace is optional diagnostic metadata only. Configure before using the peer.
+	// It runs synchronously; callbacks must be concurrency safe and return promptly.
+	Trace      func(TraceEvent)
+	traceOnce  sync.Once
+	traceSeed  maphash.Seed
+	traceFrame atomic.Uint64
+	Limits     Limits
+	prefix     string
+	w          io.Writer
 	// wsem is a one-slot semaphore around w, not a mutex: a write can block for good (SSH stdin to a frozen node,
 	// a stalled relay WebSocket), and whoever waits behind it must still return on its ctx or on Close.
 	wsem    chan struct{}
@@ -148,6 +156,7 @@ func (p *Peer) Serve(ctx context.Context, r io.Reader) error {
 		}
 		switch {
 		case m.Method != "":
+			p.trace(p.traceMeta(m), "request.received", 0, 0, time.Time{}, nil)
 			// Registered before the handler starts: a cancel right behind the request finds it.
 			hctx, cancel := context.WithCancel(context.WithValue(ctx, connKey{}, ctx))
 			p.mu.Lock()
@@ -166,6 +175,7 @@ func (p *Peer) Serve(ctx context.Context, r io.Reader) error {
 				ID string `json:"id"`
 			}
 			_ = json.Unmarshal(m.Params, &c)
+			p.trace(p.traceMeta(message{ID: c.ID, Event: cancelEvent}), "cancel.received", 0, 0, time.Time{}, nil)
 			p.mu.Lock()
 			cancel := p.running[c.ID]
 			p.mu.Unlock()
@@ -174,7 +184,11 @@ func (p *Peer) Serve(ctx context.Context, r io.Reader) error {
 			}
 		case m.Event != "":
 			if p.OnEvent != nil {
+				t := p.traceMeta(m)
+				started := p.traceStart()
+				p.trace(t, "event.start", 0, 0, time.Time{}, nil)
 				p.OnEvent(m.Event, m.Params)
+				p.trace(t, "event.end", 0, 0, started, nil)
 			}
 		case m.ID != "":
 			p.mu.Lock()
@@ -204,6 +218,9 @@ func (p *Peer) handle(ctx context.Context, m message) {
 			cancel()
 		}
 	}()
+	t := p.traceMeta(m)
+	started := p.traceStart()
+	p.trace(t, "handler.start", 0, 0, time.Time{}, nil)
 	var res any
 	var err error
 	if p.OnRequest == nil {
@@ -211,19 +228,24 @@ func (p *Peer) handle(ctx context.Context, m message) {
 	} else {
 		res, err = p.OnRequest(ctx, m.Method, m.Params)
 	}
+	p.trace(t, "handler.end", 0, 0, started, err)
 	// A cancelled caller will never consume this result. In particular, do not marshal or queue a large history
 	// reply behind another write after its HTTP request has already timed out.
 	if ctx.Err() != nil {
+		p.trace(t, "response.canceled", 0, 0, time.Time{}, ctx.Err())
 		return
 	}
-	out := message{ID: m.ID}
+	out := message{ID: m.ID, traceMethod: m.Method}
 	var coded *Error
 	if errors.As(err, &coded) {
 		out.Error = coded
 	} else if err != nil {
 		out.Error = &Error{Message: err.Error()}
 	} else {
+		started := p.traceStart()
+		p.trace(t, "payload.prepare.start", 0, 0, time.Time{}, nil)
 		b, merr := marshal(res)
+		p.trace(t, "payload.prepare.end", len(b), 0, started, merr)
 		if merr != nil {
 			out.Error = &Error{Message: merr.Error()}
 		} else {
@@ -233,7 +255,7 @@ func (p *Peer) handle(ctx context.Context, m message) {
 	if err := p.writeContext(ctx, out); errors.Is(err, errFrameBudget) {
 		// The request must get an error, not a permanently unresolved promise.
 		// If even the error cannot fit, disconnect so all pending calls fail.
-		if err := p.writeContext(ctx, message{ID: m.ID, Error: &Error{Message: errFrameBudget.Error()}}); err != nil && ctx.Err() == nil {
+		if err := p.writeContext(ctx, message{ID: m.ID, traceMethod: m.Method, Error: &Error{Message: errFrameBudget.Error()}}); err != nil && ctx.Err() == nil {
 			p.Close(err)
 		}
 	}
@@ -272,37 +294,55 @@ func plainEncoder(w io.Writer) *json.Encoder {
 }
 
 func (p *Peer) writeContext(ctx context.Context, m message) error {
+	t := p.traceMeta(m)
+	if p.Trace != nil {
+		t.frame = p.traceFrame.Add(1)
+	}
 	if err := ctx.Err(); err != nil {
+		p.trace(t, "frame.canceled", 0, 0, time.Time{}, err)
 		return err
 	}
+	started := p.traceStart()
+	p.trace(t, "frame.prepare.start", 0, 0, time.Time{}, nil)
 	b, err := encodeLine(m)
+	p.trace(t, "frame.prepare.end", len(b), 0, started, err)
 	if err != nil {
 		return err
 	}
 	if p.Limits.FrameBytes > 0 && len(b) > p.Limits.FrameBytes {
 		return errFrameBudget
 	}
-	// Wait for the writer, but not past the caller or the connection: the write ahead may never finish. A write
-	// already under way cannot be interrupted.
+	// Wait for the writer, but not past the caller or the connection: the write
+	// ahead may never finish. A write already under way cannot be interrupted.
+	started = p.traceStart()
+	p.trace(t, "writer.wait.start", len(b), 0, time.Time{}, nil)
 	select {
 	case p.wsem <- struct{}{}:
 	case <-ctx.Done():
+		p.trace(t, "writer.wait.end", len(b), 0, started, ctx.Err())
 		return ctx.Err()
 	case <-p.closed:
+		p.trace(t, "writer.wait.end", len(b), 0, started, ErrClosed)
 		return ErrClosed
 	}
 	defer func() { <-p.wsem }()
-	// Both may have become ready together and select picks at random: check again so a cancelled request never
-	// reaches the wire.
+	p.trace(t, "writer.acquired", len(b), 0, started, nil)
+	// Both may have become ready together and select picks at random: check again
+	// so a cancelled request never reaches the wire.
 	if err := ctx.Err(); err != nil {
+		p.trace(t, "frame.canceled", len(b), 0, time.Time{}, err)
 		return err
 	}
 	select {
 	case <-p.closed:
+		p.trace(t, "frame.canceled", len(b), 0, time.Time{}, ErrClosed)
 		return ErrClosed
 	default:
 	}
-	_, err = p.w.Write(b)
+	started = p.traceStart()
+	p.trace(t, "write.start", len(b), 0, time.Time{}, nil)
+	n, err := p.w.Write(b)
+	p.trace(t, "write.end", len(b), n, started, err)
 	return err
 }
 
@@ -396,7 +436,7 @@ func (p *Peer) NotifyContext(ctx context.Context, event string, params any) erro
 	}
 	if raw, ok := params.(Marshaled); ok {
 		if line, ok := marshaledLine(event, raw); ok {
-			return p.writeContext(ctx, message{line: line})
+			return p.writeContext(ctx, message{line: line, Event: event})
 		}
 		params = json.RawMessage(raw)
 	}
@@ -406,7 +446,11 @@ func (p *Peer) NotifyContext(ctx context.Context, event string, params any) erro
 	if raw, ok := params.(json.RawMessage); ok && len(raw) > 0 {
 		return p.writeContext(ctx, message{Event: event, Params: raw})
 	}
+	t := p.traceMeta(message{Event: event})
+	started := p.traceStart()
+	p.trace(t, "payload.prepare.start", 0, 0, time.Time{}, nil)
 	raw, err := marshal(params)
+	p.trace(t, "payload.prepare.end", len(raw), 0, started, err)
 	if err != nil {
 		return err
 	}
