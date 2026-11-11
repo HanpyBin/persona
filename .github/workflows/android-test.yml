@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ad6910b9286f4151d08f231ce6f4bdd283432bc7
+          ref: 8a2d168a15769d4296abe91b037ac8a39f47eeb7
           persist-credentials: false
       - uses: actions/setup-java@v4
         with:
@@ -42,6 +42,16 @@ jobs:
         run: >-
           ./gradlew :feature:chat:testDebugUnitTest --tests persona.feature.chat.ChannelSourceShotsTest
           --no-daemon --no-watch-fs --console=plain --max-workers=2
+      - name: Check shard coverage fixtures on the pinned base
+        run: python3 scripts/ci/test_android_shards.py 2>&1 | tee baseline-shards.log
+      - name: Check reply-block behavior on the pinned base
+        if: always()
+        working-directory: android
+        run: >-
+          ./gradlew :feature:chat:testDebugUnitTest
+          --tests persona.feature.chat.ReplyBlocksShotsTest.copyTakesTheWholeBlockAndALongQuoteFolds
+          --no-daemon --no-watch-fs --console=plain --max-workers=2
+          2>&1 | tee ../baseline-reply-block.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -51,6 +61,8 @@ jobs:
           path: |
             android/feature/chat/build/channel-shots/*.png
             android/feature/chat/build/test-results/testDebugUnitTest/
+            baseline-shards.log
+            baseline-reply-block.log
   render-fixtures:
     runs-on: ubuntu-latest
     timeout-minutes: 30
