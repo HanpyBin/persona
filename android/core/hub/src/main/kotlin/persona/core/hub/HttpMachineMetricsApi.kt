@@ -29,6 +29,9 @@ class HttpMachineMetricsApi(
     class Cache {
         internal val lock = Mutex()
         internal val snapshots = linkedMapOf<String, MetricsDashboard>()
+        internal var previous: MetricsDashboard? = null
+
+        suspend fun previousDashboard(): MetricsDashboard? = lock.withLock { previous }
     }
 
     private val base = baseUrl.toHttpUrl()
@@ -55,14 +58,14 @@ class HttpMachineMetricsApi(
         val roster = try {
             get<ManagerRoster>(base.newBuilder().addPathSegments("api/v1/managers").build())
         } catch (_: MetricsUnavailable) {
-            return@withLock readDashboard(null)
+            return@withLock readDashboard(null).also { cache.previous = it }
         }
         checkScope()
         val installed = roster.installed
         val ids = installed.filter { it.online }.map { it.id }
         if (ids.isEmpty()) {
             cache.snapshots.keys.retainAll(installed.map { it.id }.toSet())
-            return@withLock MetricsDashboard()
+            return@withLock MetricsDashboard().also { cache.previous = it }
         }
         val results = supervisorScope {
             ids.map { manager -> async {
@@ -81,7 +84,7 @@ class HttpMachineMetricsApi(
         cache.snapshots.keys.retainAll(installed.map { it.id }.toSet())
         fresh.forEach { (manager, dashboard) -> cache.snapshots[manager] = dashboard }
         val machines = ids.flatMap { cache.snapshots[it]?.machines.orEmpty() }.distinctBy { it.machineId }
-        fresh.first().second.copy(machines = machines)
+        fresh.first().second.copy(machines = machines).also { cache.previous = it }
     }
 
     private suspend fun readDashboard(manager: String?): MetricsDashboard {
