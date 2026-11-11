@@ -323,7 +323,7 @@ The main chat **supervises** tasks it dispatches (`task_plan`, and to-dos create
 - **No automatic closure**: when hub judges a supervised to-do complete (the "Automatic completion" check in `docs/assistant/todos.md`), it does not write `done_at`; it marks it pending review. If judged incomplete (`not_done` / `waiting` / `needs_user` / `unsure`), tell the supervisor "Stopped but not finished." Manual completion is unchanged.
 - **A stop that waits on the owner is not accepted** (#1277): when the judge says a stretch of work stopped on a decision only the owner can make (`needs_user`, such as drafts waiting for the owner to pick one), the ledger keeps it as `waits` (`{work, at, reason}`, persisted with the ledger, `todo_supervision.waits`). While it holds, `task_review accepted` is refused (`user_check` included), because closing the task would lose the decision. The refusal tells the supervisor to review it `needs_user` as a decision the owner can answer, to send the owner's answer to the Agent if they already gave it, or to cancel it. The Agent working again, or any review written, clears it. The live snapshot labels such a task "停下等用户拍板，别直接验收" ("stopped on the owner's decision, don't accept it"). Before this, a supervisor once accepted four tasks whose outcomes were each a decision still waiting on the owner, and the decisions were lost with them.
   Completion is about the assigned task and its `done_when`, not whichever side question the Agent answered last. A known peer, cross-conversation or inspection turn cannot enter pending review on its answer alone. Only a fresh, successful `report_to_supervisor` done call with evidence tied to this task can establish the completion candidate from such a turn; the supervisor must still verify it. Unknown-source fallbacks never imply that a new question replaced a finished task. Ordinary delivery turns continue through the existing judge without requiring that tool.
-  Ordinary `agent_send` from a conversation other than the task's supervisor carries a `side-conversation` context marker; the supervisor's instructions and explicit task handoffs retain their existing behavior.
+  Ordinary `agent_send` from a conversation other than the task's supervisor carries a `side-conversation` context marker; the supervisor's instructions and explicit task handoffs retain their existing behavior. A text of only `/exit` / `/quit` (no attachments) from such a conversation, as `agent_send` or as `agent_interrupt`'s `then`, is refused before anything is stopped, sent or confirmed on the phone, and again after the phone answers should the agent have become such a task meanwhile (#3537): the node closes an agent only for the bare command, and the agent a task runs on is not another conversation's to close (the user can close it in the app, or with `agent_archive` and `close` once it is idle).
 - **Supervisor loop** (`server/internal/assistant/supervise_signals.go`, no model calls): every 30 seconds, inspect supervised tasks plus task events and derive signals:
   `review` pending review, `idle` stopped unfinished, `needs_you` waiting for an answer over 3 minutes (immediately for quiet tasks, since the user received no push), `stalled` working without progress (no session update) for more than max(20 minutes, estimate × 1.5), `interrupted` by model-service error, `failed` to start, `orphaned` when nobody works on it any more (below).
   The same signal for the same task is reported only once within the same state segment. A second guard suppresses an unchanged summary for the same task, Agent and signal kind for 30 minutes, regardless of new turn timestamps or elapsed-minute counters. Its hashed fingerprints and timestamps live in Postgres settings (`assistant.supervision_dedup`), survive manager restarts, and are reserved before dispatch; failed dispatch and queue admission release the reservation. An unreadable or unwritable reservation is retried rather than treated as empty history. Changed evidence, questions, summary, task, Agent or status can wake again. Signals from multiple tasks are combined into **one "📋 督办" (supervision) message** in the main chat (`prompts/assistant/supervise.md`: task, signal, criteria, question, Agent's last text, links, and handling instructions).
@@ -389,8 +389,9 @@ never writes `request`: a `brief` in the tool call is dropped.
 `expect_minutes`, and a read-only task without `goal` and `expect_minutes`; the refusal names what is missing and
 nothing is planned. The plan's task carries the brief (`tasks[i].brief`) from the moment the plan is made, so the card
 can show the owner's words, the criteria and the time, and "Start" confirms them. The brief is kept when the task
-starts, dated from the start. No client draws `tasks[i].brief` on the plan card yet; each one would (web
-`views/assistant/Tasks.tsx`, iOS and Android plan cards).
+starts, dated from the start. The web draws `tasks[i].brief` on the plan card and the to-do's `brief` and `lineage`
+on its page (the criteria stay in the page's one list, the ledger's; a finished task adds the dropped ones and
+`also_done` under it) (`docs/web/web.md`, "Pages": **A task's brief**); the iOS and Android plan cards and task pages do not yet.
 
 **Lineage.** A task that takes over from another gives `continues` (that task's to-do id) and `continues_why` in
 `task_plan`: a retry on another computer, a rework round, a new Agent after the first failed, a part split off. It
@@ -422,6 +423,23 @@ them, with the dropped ones named, not only the latest prompt. `task_review` che
 criteria; an accepted or cancelled review (and the judge's own acceptance) records the brief's `result`: each
 criterion `met`, `not_met`, `unchecked` or `dropped` (with the scope change that dropped it), then `also_done`. The
 review's feed item carries it (`body.result`), and the tool's answer says it.
+
+Two more places list the criteria (`server/internal/assistant/task_brief_result.go`):
+
+- **The done receipt** (feed kind `receipt`, `state: "done"`) carries `criteria`: each criterion of the brief as it
+  stood when the Agent stopped, `{criterion, state, evidence?, change?, changed_at?}` with the states above. They are
+  read from the supervision ledger's per-criterion state (`supervision.criteria`, #3635, `docs/assistant/assistant.md`,
+  "Per-criterion acceptance progress": what the Agent reported and what a review or the judge checked), not worked
+  out again: `met` / `not_met` with its evidence, `pending` there is `unchecked` here, then the `dropped` ones, which
+  the ledger no longer lists (from the brief's log). At
+  most 8; `criteria_more` counts the rest. Absent for a to-do without a brief or criteria (no brief is made for a
+  receipt), so a receipt from before reads as it did. `review {state, criteria}` (the count) is unchanged.
+- **The conclusion card** (`docs/extensions/bots.md`, "Conclusions") of a done or cannot-be-done conclusion lists the
+  result under its goal: **Against what was asked**, one line a criterion ("✅ …", "❌ … (not met)", "▫️ … (not
+  checked)", "➖ … (dropped: <the scope change>)"), the first 8 and "… and N more", then "Also done: …". Only once the
+  work ended against its brief with this to-do carrying it; a decision's card lists nothing (it is about what to
+  choose). It reads the brief's recorded `result`, the review's own checks at the moment the work ended, which is
+  also what the briefing tells; the ledger goes on living after that (a reopened task's criteria start again). The card's other lines and the ask's fields are unchanged.
 
 **The briefing.** The morning and evening routines' facts (`docs/assistant/assistant.md`, "Scheduled tasks") list, from
 the briefs: for each open piece of work that needs the owner, is overdue, or whose scope changed since the last
