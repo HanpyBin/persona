@@ -2,7 +2,8 @@ import XCTest
 
 /// The line between a list and its page (#2624, regular width: iPad, iPhone Duo open): its handle drags the list wider
 /// or narrower, well past the least it closes the list, and from the page's edge it brings it back; the width is
-/// remembered. Agents and the assistant's history. Against scripts/mock/mock_hub.py (PERSONA_MOCK_HUB);
+/// remembered. The one sidebar's column (#4206; Persona's page has no history column of its own beside it any more).
+/// Against scripts/mock/mock_hub.py (PERSONA_MOCK_HUB);
 /// PERSONA_SHOTS keeps the screens.
 final class SplitDividerTests: XCTestCase {
     private var hub = ""
@@ -42,23 +43,13 @@ final class SplitDividerTests: XCTestCase {
         XCTAssertTrue(wait(for: NSPredicate(format: "label == %@", "显示列表"), on: handle), "the list closed: \(handle.label)")
         XCTAssertLessThan(handle.frame.midX, 60, "the handle waits at the page's edge")
         shot(app, "split-agents-closed")
-        drag(handle, by: 160)
-        XCTAssertTrue(wait(for: NSPredicate(format: "label == %@", "调整列表宽度"), on: handle), "the list came back: \(handle.label)")
-        XCTAssertGreaterThan(listWidth(app), 200, "the list is back at its width")
-    }
-
-    @MainActor func testTheAssistantsHistoryIsDraggedToo() throws {
-        let app = launch(agents: false, fresh: true)
-        let handle = try divider(app, "assistant.list")
-        let before = handle.frame.midX
-        drag(handle, by: 60)
-        XCTAssertGreaterThan(handle.frame.midX, before + 20, "the history's edge moved right (\(before) → \(handle.frame.midX))")
-        shot(app, "split-assistant-wider")
-        drag(handle, by: -320)
-        XCTAssertTrue(wait(for: NSPredicate(format: "label == %@", "显示列表"), on: handle), "the history closed")
-        shot(app, "split-assistant-closed")
-        drag(handle, by: 160)
-        XCTAssertTrue(wait(for: NSPredicate(format: "label == %@", "调整列表宽度"), on: handle), "the history came back")
+        app.terminate()
+        let again = launch(agents: true, fresh: false)
+        let kept = try divider(again, "agents.list")
+        XCTAssertTrue(wait(for: NSPredicate(format: "label == %@", "显示列表"), on: kept), "closed is kept across launches: \(kept.label)")
+        drag(kept, by: 160)
+        XCTAssertTrue(wait(for: NSPredicate(format: "label == %@", "调整列表宽度"), on: kept), "the list came back: \(kept.label)")
+        XCTAssertGreaterThan(listWidth(again), 200, "the list is back at its width")
     }
 
     // MARK: -

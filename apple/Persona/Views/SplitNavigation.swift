@@ -37,6 +37,19 @@ struct SplitNavigation<Sidebar: View, Empty: View, Destinations: ViewModifier>: 
     @State private var overlays = false
     #endif
 
+    init(path: Binding<NavigationPath>, listKey: String? = nil, destinations: Destinations, home: AnyView? = nil,
+         @ViewBuilder sidebar: () -> Sidebar, @ViewBuilder empty: () -> Empty) {
+        _path = path
+        self.listKey = listKey
+        self.destinations = destinations
+        self.home = home
+        self.sidebar = sidebar()
+        self.empty = empty()
+        // A list closed last time starts closed (#2624). Closed only once it appeared, the split put it back out as it
+        // first laid itself out, and the list came back on every launch.
+        _columns = State(initialValue: SplitDividerHandle.startsClosed(listKey) ? .detailOnly : SplitColumns.shown)
+    }
+
     var body: some View {
         layout.environment(\.splitPush, SplitPush { [path = $path] value in path.wrappedValue.append(value) })
     }
@@ -115,7 +128,7 @@ struct SplitNavigation<Sidebar: View, Empty: View, Destinations: ViewModifier>: 
             // An agent picked, or anything else that changes the page: a list laid over the page goes (#4852).
             .onChange(of: path) { hideOverlay() }
             #endif
-            .modifier(SidebarTopFill(shown: columns != .detailOnly))
+            .modifier(SidebarTopFill(shown: columns != .detailOnly, color: topFillColor))
             .modifier(SplitDividerHandle(columns: $columns, key: listKey, overlays: overlaysNow))
             // On the whole split, not the detail stack: its pages are built from the destinations the sidebar
             // registered, in the sidebar's environment.
@@ -137,6 +150,15 @@ struct SplitNavigation<Sidebar: View, Empty: View, Destinations: ViewModifier>: 
         }
     }
 
+    /// The one sidebar's column has a color of its own on the iPad (#4855): the strip over it matches; nil, the system's.
+    private var topFillColor: Color? {
+        #if os(iOS)
+        home == nil ? nil : OneSidebarMetrics.padColumn
+        #else
+        nil
+        #endif
+    }
+
     private var overlaysNow: Bool {
         #if os(iOS)
         overlays
@@ -149,7 +171,9 @@ struct SplitNavigation<Sidebar: View, Empty: View, Destinations: ViewModifier>: 
     /// The posture: the page starting before the list ends is the page under the list. Read only while the list is out
     /// (away, both postures look the same).
     private func notePosture() {
-        guard columns != .detailOnly, listEnd > splitStart else { return }
+        // As the split first lays itself out the list is narrower than any it takes, and the page slides in from before
+        // it: read then, an iPad's list looked laid over its page, and its closing went unremembered.
+        guard columns != .detailOnly, listEnd - splitStart >= Theme.Size.sidebarMinPhone, pageStart >= splitStart else { return }
         let now = pageStart < listEnd - 1
         if overlays != now { overlays = now }
     }
@@ -217,6 +241,8 @@ struct SidebarEdge: PreferenceKey {
 struct SidebarTopFill: ViewModifier {
     /// The column is open (closed, its last frame stays reported: the fill must go by this).
     var shown: Bool
+    /// The column's own color, where it has one (the one sidebar on the iPad, #4855); nil: the system sidebar's.
+    var color: Color? = nil
     @State private var edge: CGFloat = 0
 
     func body(content: Content) -> some View {
@@ -224,7 +250,7 @@ struct SidebarTopFill: ViewModifier {
             content
                 .onPreferenceChange(SidebarEdge.self) { edge = $0 }
                 .background(alignment: .topLeading) {
-                    (AppStyle.current.usesGlass ? Theme.systemSidebar : Theme.pageBackground)
+                    (color ?? (AppStyle.current.usesGlass ? Theme.systemSidebar : Theme.pageBackground))
                         .frame(width: shown ? max(edge, 0) : 0)
                         .animation(Theme.Motion.layout, value: shown)
                         .ignoresSafeArea()
@@ -351,6 +377,16 @@ struct SplitDividerHandle: ViewModifier {
         self.overlays = overlays
         _width = StoredValue(wrappedValue: 0, (key ?? "split.list") + ".width")
         _closed = StoredValue(wrappedValue: false, (key ?? "split.list") + ".closed")
+    }
+
+    /// Whether the list kept under `key` was closed when last left; the split starts so.
+    static func startsClosed(_ key: String?) -> Bool {
+        #if os(iOS)
+        guard let key, UIDevice.current.userInterfaceIdiom == .pad || UIDevice.current.userInterfaceIdiom == .phone else { return false }
+        return UserDefaults.standard.bool(forKey: key + ".closed")
+        #else
+        false
+        #endif
     }
 
     private var shown: Bool { columns != .detailOnly }

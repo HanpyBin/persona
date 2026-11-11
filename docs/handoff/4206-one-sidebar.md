@@ -60,7 +60,7 @@ Branch `feat/4206-one-sidebar`, with origin/main merged in at `53232dd61` and ag
    - `SidebarTopFill` in `SplitNavigation.swift`.
    Keep decision 1 (one line) true after the change.
 4. **#4854: New Chat to the right column on its side.** On the open Duo on its side, move the home page's top-right New Chat (`assistant-new`) into the system's right side-bar column, as ChatGPT does. If the Dynamic Island grows (Live Activity), the button must move rather than sit under it. Read the island or safe area, not a fixed offset. **Not started.** See `docs/apple/ios.md` "iPhone Duo" (`sideBars`, the system's side-bar columns). Also see how the chat already puts its actions there (#3680).
-5. **#4855: the iPad column's background.** The owner finds the iPad column's grey-blue ugly and points to ChatGPT's (a near-white/neutral grey). They asked whether the change is global or iPad only. **Conclusion: iPad only. Not implemented.**
+5. **#4855: the iPad column's background.** The owner finds the iPad column's grey-blue ugly and points to ChatGPT's (a near-white/neutral grey). They asked whether the change is global or iPad only. **Conclusion: iPad only. Done** (see #4855 below).
    - The grey-blue on the iPad (glass style) is the system sidebar column's own colour plus `SidebarTopFill` in `SplitNavigation.swift`. That modifier fills the top only when `UIDevice.current.userInterfaceIdiom == .pad`, with `Theme.systemSidebar` = `Color(light: 0xE6E9EE, dark: 0x191C20)`.
    - The open Duo's column is already white.
    - `Theme.systemSidebar` is also the Mac's sidebar colour (`MacRootView`), so **do not change the token**. Give the iPad column its own background (and the matching `SidebarTopFill` colour), e.g. `Theme.Shell.drawer` (0xF9F9F9 / 0x171717), behind an iPad-only check.
@@ -92,24 +92,27 @@ On GitHub, #4852–#4855 and #3641 only take `Refs` until a fix is verified (no 
 - `4724529fb`: upright tiling (300 pt detail minimum). **Rejected by the owner and reverted** by this handoff's commit.
 - This handoff's commit (see `git log`). It contains #4852 and #3641 ① as described above, compiled only.
 
-## Step 2 and #4853 / #4854 (this session, 2026-11-12)
+## Step 2 and #4853 / #4854 / #4855 (this session, 2026-11-12)
 
 - **Pinned instead of Recent** (decision 7): `OneSidebarSections.pinned` / `pinnedRow` / `allChatsRow` in `OneSidebar.swift`; `RootTabs` no longer reads the posture for Recent.
 - **Messages upright**: after its pick slid the column away there was no way back but the edge handle (its own stack has no system button). `OneSidebarHome` now shows Show Sidebar (`feishu-sidebar-button`) at its top corner while the column is away.
 - **#4853**: `RootTabs` reads the system's bar edge at the root (`readsVerticalBarEdge`, as the shell does) and, under side bars (the open Duo on its side), gives both columns `safeAreaPadding(.top, OneSidebarMetrics.topMargin)` = `Theme.Space.l`. Both columns move together, so decision 1 holds; content insets and the fog follow the safe area.
 - **#4854**: under side bars beside the one sidebar, `AssistantView` shows the system's navigation bar with New Chat as a `.topBarTrailing` item (title removed), so the system places it in its side column under the clock and the camera and moves it with the Dynamic Island; `AssistantTopBar(newInSideBar:)` leaves its own out (an empty spot keeps the face where it was). The New Chat action is `AssistantView.newConversationAction` (Health's page in a health conversation, as before).
   - **Decision 1 on its side** now reads: the fold and the page's top (the face) start on one line; New Chat is in the side column. The test asserts `face.minY == collapse.minY`.
+- **#4855**: on the iPad with the glass style, the column (`OneSidebarColumnColor`: list background hidden, `Theme.Shell.drawer` behind), its header and foot (`OneSidebarMetrics.chromeBackground`) and the status-bar strip above it (`SplitNavigation.topFillColor` into `SidebarTopFill(color:)`) are one neutral color: F9F9F9 light, 171717 dark. Before, the list was `Theme.systemSidebar` (E6E9EE / 191C20) and the header, foot and strip were white / black. `Theme.systemSidebar` is unchanged (the Mac and the open Duo keep it). Shots: `~/Documents/persona-4206-shots/4855-{before,after}-{light,dark}.png` (iPad, zh-Hans, glass).
 - **Tests**:
   - `OneSidebarTests`: `testTheColumnHasThePlacesPinnedAndAgents` (Pinned / All Chats, no Recent; on its side the margin, the face line and New Chat in the side column), `testUprightAPickSlidesTheColumnAwayAndFiltersDoNot`, `testUprightBackFromAnAgentGoesToPersonasPage` (#3641 ①; opens the agent from a Needs You card, since synthetic drags miss upright), and the older tests adapted upright (the column slides away after a pick; brought out from the page's button, the system's Show Sidebar or `feishu-sidebar-button`). The mock hub must run with `MOCK_LEADERS=1`.
   - `DuoOpenChromeTests`: upright aware (the column is brought out in setUp, folded before the face is tapped; Settings' × upright is in the top bar's trailing items, left of the display's top-right corner). `testTheNewConversationShowsWhatNeedsYou` passes upright (#3641 ②).
 
 ## Status of the runs
 
-(Updated as runs finish.)
+- Duo upright: `OneSidebarTests` + `DuoOpenChromeTests` all pass (the last two fixed in later runs: ‹ from an agent, #3641 ①; the main row's and the face's menus).
+- iPad: `OneSidebarTests` (8 pass, the 2 upright-only skip), `IPadSidebarTests`, `SplitDividerTests` (2) and `PersonaTests/SidebarMetricsTests` (5) pass. `SidebarMetricsTests` first caught the Pinned heading (a `.frame` between its padding and `minHeight`), fixed.
+- **The handle's closed state was not kept on the iPad** (found while checking step 2 ④): the split lays itself out first with a ~117 pt list and the page sliding in from before it, so `notePosture` read it as laid over (`overlays`), the close was not written, and the split put the list back out right after `onAppear` closed it. Fixed in `SplitNavigation`: the split starts from the kept state (`SplitDividerHandle.startsClosed`), and the posture is only read once the list is at least `sidebarMinPhone` wide and the page does not start before the split. `SplitDividerTests.testDraggedPastItsLeastTheListClosesAndComesBackFromTheEdge` now relaunches and checks the list stays closed. `testTheAssistantsHistoryIsDraggedToo` is removed: Persona's page has no history column of its own beside the one sidebar.
+- Duo on its side: (not yet)
 
 ## Not done
 
-- #4855 (the iPad column's background, iPad only; before / after screenshots, light and dark). See decision 5.
 - Runs on the Duo on its side and on the iPad (`OneSidebarTests`, `DuoOpenChromeTests`; `OneSidebarTests`, `IPadSidebarTests`, `PersonaTests/SidebarMetricsTests`), and checking the handle still opens / closes and remembers its state there.
 - Merge origin/main once more before the final screenshots (the supervisor: main moved again; no rush before that).
 - **Screenshots for the owner, light and dark**: iPad, Duo on its side, Duo upright, into `~/Documents/persona-4206-shots/` (`ipad-{light,dark}.png`, `duo-landscape-{light,dark}.png`, `duo-portrait-{light,dark}.png`; the old `duo-landscape-light.png` is stale, overwrite it), plus #4855 before / after. Report the paths to the supervisor.
@@ -166,7 +169,7 @@ On GitHub, #4852–#4855 and #3641 only take `Refs` until a fix is verified (no 
 - **`apple/Persona.xcodeproj/` is untracked** (generated by xcodegen). Never `git add` it; stage files by path. A new test file does not run until `xcodegen generate`.
 - An agent chat's title is `chat.title` or `chat.compactTitle`. Agent rows can be offscreen in the column, so swipe up to find them.
 - The Messages list's frame starts at the window edge, so check its first static text's `minX`, not the list's.
-- **main's `apple/PersonaTests/JSONDateTests.swift` (#4931) does not compile with Xcode 27.1** (static `ISO8601DateFormatter`s are not concurrency-safe), so `build-for-testing` fails. Locally it carries an **uncommitted** `nonisolated(unsafe)` on its two statics; never stage it (stage by path). Reported to the supervisor.
+- **main's `apple/PersonaTests/JSONDateTests.swift` (#4931) does not compile with Xcode 27.1** (static `ISO8601DateFormatter`s are not concurrency-safe), so `build-for-testing` fails. Locally it carries an **uncommitted** `nonisolated(unsafe)` on its two statics; never stage it (stage by path). The supervisor: CI builds with Xcode 26.0.1, so only newer local Xcode fails and main's CI is not blocked; keep the local patch, do not commit it into #4206, no issue.
 - **Pre-existing check failures, also on origin/main, not ours**:
   - `test_apple_perf_patterns` (`AppModel+Managers.swift` file read);
   - `test_apple_state_initial_values` (`AssistantSwitcher.swift` `ManagersModel`).

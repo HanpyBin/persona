@@ -583,13 +583,13 @@ Apps built with older Xcode do not extend under the status bar and camera on Duo
   - Settings entry points all use values (`SettingsPage`); view-based `NavigationLink { page }` pushes the left column's own stack and opens in the narrow column.
 - **Persona**: in regular width, Persona's rows lead the one sidebar (#4206, "One sidebar" below) and its page is the detail column's; the column's own button at
   its top folds it and the page's top-left one only brings it back; compact still uses a drawer.
-- **The line between the list and the page** (#2624, `SplitDividerHandle`, Persona's history and the Agents list; iPad and open Duo), as Feishu's:
+- **The line between the list and the page** (#2624, `SplitDividerHandle`; iPad and open Duo), as Feishu's. Since the one sidebar (#4206) it is the one column's, `agents.list`: Persona's page has no history column of its own there:
   - A short handle on the line drags the list column wider or narrower. The bounds are iPad 340–480 pt and Duo from 200 pt, and the page keeps at least 300 pt; the page takes the rest.
   - Dragged more than 80 pt past the least, the list closes and the handle waits at the page's leading edge; dragged right from there, the list comes back.
   - Width and closing are remembered per list: `agents.list.width` / `.closed`, `assistant.list.width` / `.closed`. Until dragged, the column is the system's.
   - The column's own button closes and opens it too, remembered the same. A double tap on the handle gives the column back to the system.
   - VoiceOver: adjusting the handle resizes the list by 40 pt, Hide List / Show List close and open it.
-  - `SplitDividerTests` (`-openSplitFresh YES` starts both lists at the system's width).
+  - `SplitDividerTests` (`-openSplitFresh YES` starts the lists at the system's width).
 - **Readable width**: chats and the Persona home page are at most 760pt wide (`ChatView.readableWidth`), centered when wider; the top bar still spans the full width.
 - **No screen dimensions**: the screens have different sizes and ratios; never use `UIScreen.main`. The long-press message action bar stays within the chat area (`MessageMenu.area`
   coordinate space); interaction forms have a maximum height of 55% of their container (`containerRelativeFrame`); image scaling uses the view's `traitCollection.displayScale`.
@@ -659,6 +659,13 @@ sidebar. Code in `Persona/Views/OneSidebar.swift`; the column is the Agents list
   (`\.splitHideOverlay`, and any change of the detail path); filters and groupings (Needs You, All, the segments) leave it open. The handle on its edge is
   centered on the window's height. With the column away, Persona's page brings it back from its own top-left button, a page pushed there from the system's,
   and Messages, whose stack has no system button for it, from Show Sidebar in its top corner (`feishu-sidebar-button`). On its side and on the iPad the column sits beside the page.
+- **On its side** (the open Duo, the system's bars at the side; `RootTabs` reads `readsVerticalBarEdge` at the root and passes `\.oneSidebarSideBars`):
+  both columns start `Theme.Space.l` lower (`safeAreaPadding(.top, OneSidebarMetrics.topMargin)`, #4853: the display's corner clipped the mark), and the fold and
+  the page's face still start on one line. Persona's page shows New Chat (`assistant-new`) as the system navigation bar's `.topBarTrailing` item, title removed,
+  so the system puts it in its side column under the clock and the camera and moves it with the island and the safe area (#4854, no offset of our own);
+  `AssistantTopBar` keeps a blank in its place so the face stays centered. Upright and on the iPad New Chat stays in the page's top bar.
+- **The iPad column's color** (#4855, iPad and glass only): the column, its header and foot and the status-bar strip above it are `Theme.Shell.drawer`, a
+  neutral near-white / near-black (`OneSidebarMetrics.padColumn`), not the blue-grey `Theme.systemSidebar`, which stays as it was for the Mac and the open Duo.
 - **Selection**: one row at a time looks chosen: the main row, a place or a Pinned row while Persona's page is shown, Messages while it is, the open agent's
   row while an agent is (`Theme.Tree.selected` on cards, `RepoTreeSelected` on tree rows; `.isSelected` for VoiceOver), in every grouping.
 - **Menus**: the main row's long press holds the main conversation's menu, Copy Session ID, Copy Diagnostics and End… (`MainChatRowMenu`, shared with the iPhone's
@@ -689,7 +696,7 @@ One App for iPhone and iPad (`TARGETED_DEVICE_FAMILY` 1,2). Previously only 1, g
   `DetailStack` (no extra stack when pushed). Where there is no stack to push into (a to-do opened from a session-info sheet), use at least `.presentationSizing(.page)`.
   Tests: `IPadTaskDetailTests` (iPad only, `MOCK_TASKS=1 MOCK_TASKS_NO_ASKS=1`).
 - Left column reaches the screen top: the split view's left column starts below the status bar and cannot draw into it; that strip used to be window white, making the list appear short of the top (2026-10-31).
-  `SidebarTopFill` behind the whole split view colors the strip to the left-column width (system sidebar color `Theme.systemSidebar` for glass, page background for other styles);
+  `SidebarTopFill` behind the whole split view colors the strip to the left-column width (system sidebar color `Theme.systemSidebar` for glass, page background for other styles; the iPad's one sidebar passes its column's color, #4855);
   it does not fill when the column is hidden (uses `columnVisibility`; the hidden column still reports its last position). `IPadLayoutTests.testSidebarReachesTheTop` checks pixels.
 - Tests: `IPadLayoutTests` (iPad simulator only: native full-screen portrait / landscape, wide enough sidebar, chats open on the right); `InboxSplitTests` (split layout:
   switching between Lark chats shows the new chat's own messages and draft on the right, switching back preserves the draft). XCUITest's own landscape screenshots are rotated;

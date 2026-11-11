@@ -142,10 +142,10 @@ final class DuoOpenChromeTests: XCTestCase {
             XCTAssertTrue(app.buttons[label].firstMatch.waitForExistence(timeout: 5), "no \(label) in the main row's menu:\n\(app.debugDescription)")
         }
         shot("main-menu")
-        // The menu away: a tap on the far side of the window from it (upright the menu reaches the window's middle).
-        let item = app.buttons["拷贝诊断"].firstMatch, window = app.windows.firstMatch.frame
-        app.coordinate(withNormalizedOffset: CGVector(dx: item.frame.midX < window.midX ? 0.95 : 0.05, dy: 0.97)).tap()
-        XCTAssertTrue(item.waitForNonExistence(timeout: 5), "the main row's menu did not close")
+        // The menu away through its harmless copy: a tap beside it does not land on the open Duo upright, where
+        // synthetic input off an element misses.
+        app.buttons["拷贝会话 ID"].firstMatch.tap()
+        sleep(1) // the menu's closing (its items' names are also other buttons' on the page: no wait on them)
         // Upright the column lies over the face (#4852): folded first, if that tap did not send it away already.
         let collapse = element("assistant-sidebar-collapse")
         if upright, collapse.exists, collapse.isHittable {

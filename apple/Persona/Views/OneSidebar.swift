@@ -24,6 +24,17 @@ enum OneSidebarMetrics {
     /// and the page's top bar sat at the display's edge, the column's mark under its rounded corner. As ChatGPT's open Duo,
     /// a margin; both columns get it, so the fold and the page's top stay on one line.
     static func topMargin(sideBars: Bool) -> CGFloat { sideBars ? Theme.Space.l : 0 }
+
+    /// The column's color behind its rows, header and foot, and over the status bar above it (#4855): on the iPad in the
+    /// glass styles a neutral grey, as ChatGPT's and the iPhone's drawer (`Theme.Shell.drawer`), not the system sidebar's
+    /// grey-blue (`Theme.systemSidebar`, still the Mac's). Nil elsewhere: the column as it was (white on the open Duo, the
+    /// page's color in the other styles).
+    @MainActor static var padColumn: Color? {
+        UIDevice.current.userInterfaceIdiom == .pad && AppStyle.current.usesGlass ? Theme.Shell.drawer : nil
+    }
+
+    /// The header's and the foot's background: the column's.
+    @MainActor static var chromeBackground: Color { padColumn ?? Theme.pageBackground }
 }
 
 extension EnvironmentValues {
@@ -75,9 +86,21 @@ struct OneSidebarChrome: ViewModifier {
     func body(content: Content) -> some View {
         if enabled {
             content
+                .modifier(OneSidebarColumnColor())
                 .toolbarVisibility(.hidden, for: .navigationBar)
                 .safeAreaInset(edge: .top, spacing: 0) { OneSidebarHeader() }
                 .safeAreaInset(edge: .bottom, spacing: 0) { OneSidebarFoot(leaveAgent: leaveAgent) }
+        } else {
+            content
+        }
+    }
+}
+
+/// The column's own color where it has one (`OneSidebarMetrics.padColumn`), in place of the system sidebar's.
+private struct OneSidebarColumnColor: ViewModifier {
+    func body(content: Content) -> some View {
+        if let color = OneSidebarMetrics.padColumn {
+            content.scrollContentBackground(.hidden).background(color)
         } else {
             content
         }
@@ -220,8 +243,8 @@ struct OneSidebarSections: View {
                 .accessibilityAddTraits(.isHeader)
                 .padding(.horizontal, Theme.Space.m)
                 .padding(.vertical, Theme.Sidebar.rowPadding)
-                .frame(maxWidth: .infinity, alignment: .leading)
                 .scaledFrame(minHeight: Theme.Sidebar.row)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .sidebarRow()
                 .accessibilityIdentifier("sidebar-pinned-heading")
             ForEach(leads) { s in pinnedRow(s) }
@@ -346,7 +369,7 @@ struct OneSidebarHeader: View {
         // the fold here and New Chat there on one line (2026-11-11, the owner).
         .padding(.top, AssistantTopBar.topInset)
         .padding(.bottom, Theme.Space.s)
-        .background(Theme.pageBackground)
+        .background(OneSidebarMetrics.chromeBackground)
     }
 }
 
@@ -386,7 +409,7 @@ struct OneSidebarFoot: View {
         }
         .padding(.horizontal, Theme.Space.l)
         .padding(.vertical, Theme.Space.m)
-        .background(Theme.pageBackground) // the list scrolls under it
+        .background(OneSidebarMetrics.chromeBackground) // the list scrolls under it
         .fullScreenCover(isPresented: $fullSearch) {
             AssistantFullSearch { key in
                 fullSearch = false

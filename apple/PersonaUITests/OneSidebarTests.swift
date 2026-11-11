@@ -280,15 +280,15 @@ final class OneSidebarTests: XCTestCase {
         // The agents are under the first screen upright, and synthetic drags miss there: the first Needs You card's
         // place, at the column's foot, is tapped (a tap scrolls it in), which opens its agent as its row would.
         let card = app.staticTexts.matching(identifier: "agents.interaction").firstMatch
+        let edge = element("sidebar-main").frame.maxX // the column's edge, read before it scrolls Main Chat away
         if !card.waitForExistence(timeout: 3) {
             // Not built yet: the column's Needs You heading (its lowest, under the filter chips) tapped scrolls the cards in.
-            let edge = element("sidebar-main").frame.maxX
             let heading = app.staticTexts.matching(NSPredicate(format: "label == %@", "需要你")).allElementsBoundByIndex
                 .filter { $0.frame.maxX < edge }.max { $0.frame.minY < $1.frame.minY }
             heading?.tap()
         }
         XCTAssertTrue(card.waitForExistence(timeout: 10), "no Needs You card in the column:\n\(app.debugDescription)")
-        XCTAssertLessThan(card.frame.maxX, element("sidebar-main").frame.maxX + 1, "the card is not the column's")
+        XCTAssertLessThan(card.frame.maxX, edge + 1, "the card is not the column's")
         card.tap()
         let title = app.descendants(matching: .any).matching(NSPredicate(format: "identifier IN %@", ["chat.title", "chat.compactTitle"])).firstMatch
         XCTAssertTrue(title.waitForExistence(timeout: 20), "the agent did not open:\n\(app.debugDescription)")
