@@ -22,9 +22,7 @@ struct MachineMetricsStoreTests {
 
     @Test func readsEachOnlineManagerAndKeepsOnlyTheFailedManagersPreviousSamples() async {
         let hub = FakeHub()
-        var primaryCPU = 11
-        var refused: [String: Int] = [:]
-        var emptySecondary = false
+        let replies = ManagerMetricsReplies()
         hub.on("GET", "/api/v1/managers", json: #"""
         {"default":"primary","managers":[
           {"id":"primary","name":"Primary","online":true,"default":true},
@@ -34,10 +32,10 @@ struct MachineMetricsStoreTests {
         """#)
         hub.on("GET", "/api/v1/metrics") { request in
             let manager = request.headers[APIClient.managerHeader] ?? ""
-            if let status = refused[manager] { throw APIError(status: status, message: "Unavailable") }
+            if let status = replies.refused[manager] { throw APIError(status: status, message: "Unavailable") }
             switch manager {
-            case "primary": return body([("first", primaryCPU, 111, 10)])
-            case "secondary": return body(emptySecondary ? [] : [("second", 22, 222, 20)])
+            case "primary": return body([("first", replies.primaryCPU, 111, 10)])
+            case "secondary": return body(replies.emptySecondary ? [] : [("second", 22, 222, 20)])
             default: throw APIError(status: 400, message: "Unexpected manager")
             }
         }
@@ -55,8 +53,8 @@ struct MachineMetricsStoreTests {
         #expect(hub.sent("GET", "/api/v1/managers").count == 1)
         #expect(Set(requests.compactMap { $0.headers[APIClient.managerHeader] }) == Set(["primary", "secondary"]))
         let previous = model.metrics[second]
-        primaryCPU = 33
-        refused["secondary"] = 503
+        replies.primaryCPU = 33
+        replies.refused["secondary"] = 503
         await model.load(groups: ["group"], apis: apis, rosters: rosters)
         #expect(model.metrics[first]?.latest?.cpu == 33)
         #expect(model.metrics[second] == previous)
@@ -69,18 +67,18 @@ struct MachineMetricsStoreTests {
         #expect(model.metrics.isEmpty)
         await model.load(groups: ["group"], apis: apis, rosters: rosters)
         #expect(model.metrics[second] == previous)
-        refused = ["primary": 404, "secondary": 404]
+        replies.refused = ["primary": 404, "secondary": 404]
         await model.load(groups: ["group"], apis: apis, rosters: rosters)
         #expect(model.unmonitoredGroups == Set(["group"]))
         #expect(model.metrics[second] == previous)
-        refused.removeValue(forKey: "primary")
-        primaryCPU = 44
+        replies.refused.removeValue(forKey: "primary")
+        replies.primaryCPU = 44
         await model.load(groups: ["group"], apis: apis, rosters: rosters)
         #expect(model.unmonitoredGroups.isEmpty)
         #expect(model.metrics[first]?.latest?.cpu == 44)
         #expect(model.metrics[second] == previous)
-        refused.removeValue(forKey: "secondary")
-        emptySecondary = true
+        replies.refused.removeValue(forKey: "secondary")
+        replies.emptySecondary = true
         await model.load(groups: ["group"], apis: apis, rosters: rosters)
         #expect(model.metrics[second] == nil)
     }
@@ -177,6 +175,13 @@ struct MachineMetricsStoreTests {
         await read.value
         #expect(model.metrics.isEmpty)
     }
+}
+
+@MainActor
+private final class ManagerMetricsReplies {
+    var primaryCPU = 11
+    var refused: [String: Int] = [:]
+    var emptySecondary = false
 }
 
 private actor MetricsReadGate {
