@@ -22,6 +22,10 @@ struct SplitNavigation<Sidebar: View, Empty: View, Destinations: ViewModifier>: 
     var destinations: Destinations
     /// The Assistant | Agents switch over the page column, on a phone's tabs (iPhone Duo open: `pageTabSwitch`, #2623).
     var pageSwitch = false
+    /// iOS beside the one sidebar (#4206): what the detail column shows while nothing is open, in place of the stack.
+    /// Persona's page has a stack of its own (its pushed pages), which can't be inside this one; an agent opened takes
+    /// the column back to the stack.
+    var home: AnyView? = nil
     @ViewBuilder var sidebar: Sidebar
     /// The detail column before anything is open.
     @ViewBuilder var empty: Empty
@@ -72,8 +76,14 @@ struct SplitNavigation<Sidebar: View, Empty: View, Destinations: ViewModifier>: 
                 sidebar.modifier(destinations)
                     .modifier(SidebarWidth())
             } detail: {
-                NavigationStack(path: $path) {
-                    empty.modifier(destinations)
+                Group {
+                    if let home, path.isEmpty {
+                        home
+                    } else {
+                        NavigationStack(path: $path) {
+                            empty.modifier(destinations)
+                        }
+                    }
                 }
                 #if os(iOS)
                 // The stack's root page only: the pages opened on it carry their own (`SplitDetailPage`, #3680).
@@ -89,6 +99,11 @@ struct SplitNavigation<Sidebar: View, Empty: View, Destinations: ViewModifier>: 
             .environment(\.splitShowList, SplitShowList { [columns = $columns] in
                 withAnimation(Theme.Motion.layout) { columns.wrappedValue = SplitColumns.shown }
             })
+            #if os(iOS)
+            .environment(\.splitHideList, SplitShowList { [columns = $columns] in
+                withAnimation(Theme.Motion.layout) { columns.wrappedValue = .detailOnly }
+            })
+            #endif
             #endif
         } else {
             NavigationStack(path: $path) {

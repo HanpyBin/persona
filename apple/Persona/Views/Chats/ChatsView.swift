@@ -209,6 +209,9 @@ struct ChatsView: View {
     @Environment(\.shell) private var shell
     /// A phone's tabs (iPhone Duo open): the switch over the page column, as on Assistant (#2623).
     @Environment(\.pageTabSwitch) private var pageTabSwitch
+    /// iPad and the open iPhone Duo (#4206): this page is the whole window, Persona's places and chats atop its list and
+    /// Persona's page beside it while no agent is open.
+    @Environment(\.oneSidebar) private var oneSidebar
     @State private var path = NavigationPath()
     /// Which space page sits at which depth of `path` (only this view pushes them), so a chat opened from a space
     /// page goes back to it instead of stacking another copy.
@@ -298,7 +301,8 @@ struct ChatsView: View {
         // Closing the search before a push from its results redraws the navigation with it, as when the list was
         // drawn here: drawn by the list alone, the chat came up under the system navigation bar again (SearchOpenTests).
         let _ = searching
-        SplitNavigation(path: pushing, listKey: "agents.list", destinations: AgentsDestinations(), pageSwitch: pageTabSwitch) {
+        SplitNavigation(path: pushing, listKey: "agents.list", destinations: AgentsDestinations(), pageSwitch: pageTabSwitch,
+                        home: oneSidebar ? AnyView(AssistantView()) : nil) {
             AgentsList(path: $path, spaceAt: $spaceAt, query: $query, searching: $searching,
                        searchedBeforePush: $searchedBeforePush, showNew: newSession, menuActions: menuActions, ownsTop: ownsTop,
                        showsPersonalEntry: showsPersonalEntry, beginSearch: beginSearch)
@@ -310,6 +314,12 @@ struct ChatsView: View {
                 // back, #340). On a phone the room is the list's first row's (`AgentsHeader`).
                 .background { ShellNavigationClearance(active: shell != nil && !ownsTop && !searching) }
                 .background { StackStillProbe(watcher: stackStill) }
+                #if os(iOS)
+                // The one sidebar (#4206): Persona's mark and name over the column, New Chat, search and Settings at its
+                // foot, no navigation bar (the Agents heading in the list carries ⋯ and New Session).
+                .modifier(OneSidebarChrome(enabled: oneSidebar, leaveAgent: leaveAgent))
+                .environment(\.oneSidebarLead, oneSidebar ? OneSidebarLead(leaveAgent: leaveAgent, agentOpen: !path.isEmpty) : nil)
+                #endif
                 #if os(macOS)
                 .onAppear { MacShellState.shared.agentsList = menuActions } // the shell's toolbar menu, Display › Collapse All / Expand All
                 #endif
@@ -370,6 +380,12 @@ struct ChatsView: View {
                 }
                 // Searching is not the root either: the drawer would slide the page with the keyboard up and the field open.
                 .onChange(of: path.isEmpty && !searching, initial: true) { _, root in shell?.workAtRoot = root }
+                #if os(iOS)
+                // The one sidebar has no tabs (#4206): the app's tab says which side of the window is in front, and a
+                // route to Persona (a notification, Siri, the Inbox's links) closes the agent open beside the column.
+                .onChange(of: model.selectedTab) { _, tab in if oneSidebar, tab != .chats { leaveAgent() } }
+                .onChange(of: path.isEmpty) { _, empty in if oneSidebar { model.selectedTab = empty ? .assistant : .chats } }
+                #endif
                 .onChange(of: path) { _, p in
                     spaceAt = spaceAt.filter { $0.key < p.count }
                     if p.isEmpty, !leaving { AppModel.rememberChat(nil); model.chatSwitched = [:] } // back at the list: next launch starts here
@@ -555,6 +571,13 @@ struct ChatsView: View {
         spaceAt[path.count - 1] = id
     }
 
+    /// The one sidebar's Persona rows (#4206): the agent open beside the column goes, for Persona's page to show there.
+    private func leaveAgent() {
+        guard !path.isEmpty else { return }
+        spaceAt = [:]
+        path = NavigationPath()
+    }
+
     /// Something opened from here (a new chat, a debug page): it replaces the detail column, or pushes onto the list.
     private func openFromList(_ value: some Hashable) {
         spaceAt = (value as? SpaceRoute).map { [0: $0.id] } ?? [:]
@@ -613,6 +636,15 @@ private struct AgentsList: View {
     @Binding var searchedBeforePush: String?
     @Binding var showNew: Bool
     var menuActions: AgentsListMenu.Actions
+    #if os(iOS)
+    /// The one sidebar (#4206): Persona's rows first, the filters in the list under them as on a phone.
+    @Environment(\.oneSidebarLead) private var lead
+    private var inListControls: Bool { widthClass != .regular || lead != nil }
+    private var oneSidebarMode: Bool { lead != nil }
+    #else
+    private var oneSidebarMode: Bool { false }
+    private var inListControls: Bool { widthClass != .regular }
+    #endif
     /// A phone: the page's own top (`AgentsHeader`), not the system's search.
     var ownsTop: Bool
     var showsPersonalEntry: Bool
@@ -698,7 +730,7 @@ private struct AgentsList: View {
     private var covered: Bool {
         #if os(iOS) || os(visionOS)
         if ownsTop && !path.isEmpty { return true }
-        if model.selectedTab != .chats && shell?.pager.moving != true { return true }
+        if model.selectedTab != .chats && shell?.pager.moving != true && !oneSidebarMode { return true }
         #else
         if widthClass != .regular && !path.isEmpty { return true }
         #endif
@@ -903,10 +935,18 @@ private struct AgentsList: View {
                            needsYou: [AgentsNeedsYou.Row], unreadShown: [SessionKey], active: [SpaceGroup], quiet: [SpaceGroup],
                            tree: [RepoTree.Host], byHost: Bool, hasSearchResults: Bool) -> some View {
         List {
+            #if os(iOS)
+            if let lead {
+                Section {
+                    OneSidebarSections(leaveAgent: lead.leaveAgent, agentOpen: lead.agentOpen, menuActions: menuActions,
+                                       showNew: $showNew)
+                }
+            }
+            #endif
             // On a phone the filter bar is the list's first row: it scrolls with the list, so the search field can
             // fold away and come back on a pull (a bar pinned in the safe area stayed put under a folded search field,
             // leaving a blurred gap, TestFlight 35). Beside the split (regular width) it stays above the list.
-            if widthClass != .regular {
+            if inListControls {
                 Section {
                     #if os(iOS) || os(visionOS)
                     if ownsTop {
@@ -957,7 +997,7 @@ private struct AgentsList: View {
                 Section { HubNoticeRow() } // the hub's version: an update out, under way, or too old (docs/operations/hub-update.md)
             }
             #endif
-            if widthClass != .regular && showsHerdrNotices {
+            if inListControls && showsHerdrNotices {
                 // "MacBook's herdr is not running" with Start (#1916); beside the split they are under the filter bar (`herdrNoticesAbove`).
                 ForEach(herdrStopped) { m in
                     Section { HerdrNoticeRow(machine: m, watch: herdr) }
@@ -1118,7 +1158,7 @@ private struct AgentsList: View {
         .modifier(AgentsListPage(capsules: floating, workspaceSidebar: grouping == .repo && !repoTree))
         // In the split's sidebar column (iPhone Duo open) the bar sits above the list; on a phone it is the list's
         // first row (above).
-        .modifier(TopBar(abovePage: widthClass == .regular) {
+        .modifier(TopBar(abovePage: !inListControls) {
             filterBar(base)
             if showsHerdrNotices { herdrNoticesAbove } // beside the split: over the list, not its first section
         })
@@ -1134,7 +1174,8 @@ private struct AgentsList: View {
         // Beside the split and on the Mac: the system's search (a phone has its own, `AgentsHeader`). The filter bar is
         // not pinned in the safe area under a folding field: pinned, it stayed under the folded field (TestFlight 35,
         // ~120 pt of blurred list). On the list itself, before the alerts, as it always was.
-        .modifier(AgentsSystemSearch(enabled: !ownsTop, query: $query, searching: $searching))
+        // Not beside the one sidebar: its search is the foot's, over the whole window (#4206).
+        .modifier(AgentsSystemSearch(enabled: !ownsTop && !oneSidebarMode, query: $query, searching: $searching))
     }
 
     private func observedAgentList<Content: View>(_ content: Content, base: [Session], interactions: [Interaction],

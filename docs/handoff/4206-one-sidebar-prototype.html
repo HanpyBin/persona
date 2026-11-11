@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>#4206 侧栏合一 · 原型</title>
+<style>
+:root{
+  --bg:#e9e9ee; --page:#fff; --side:#f5f5f7; --line:#e3e3e8; --text:#1c1c1e; --sub:#8e8e93; --faint:#aeaeb2;
+  --chip:#fff; --chipLine:#dcdce1; --seg:#ececf0; --segOn:#fff; --sel:#e6e6eb; --accent:#0a7cff; --amber:#a86a00; --amberBg:#f6ead2;
+  --amberDot:#c98a10; --green:#1f9d55; --term:#6e4ff6; --bubble:#e9f1ff; --card:#fff;
+}
+body.dark{
+  --bg:#0e0e10; --page:#000; --side:#1c1c1e; --line:#2c2c2e; --text:#f2f2f7; --sub:#98989f; --faint:#636366;
+  --chip:#2c2c2e; --chipLine:#3a3a3c; --seg:#2c2c2e; --segOn:#48484a; --sel:#2c2c2e; --amber:#f0b44c; --amberBg:#3a2e17;
+  --amberDot:#f0b44c; --green:#32d74b; --term:#a28bff; --bubble:#1d2b44; --card:#1c1c1e;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,"PingFang SC","Helvetica Neue",sans-serif;background:var(--bg);color:var(--text);padding:18px 22px}
+.bar{display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
+.bar h1{font-size:16px;margin-right:10px}
+.bar button{font:inherit;font-size:13px;border:1px solid var(--chipLine);background:var(--chip);color:var(--text);border-radius:16px;padding:5px 12px;cursor:pointer}
+.bar button.on{background:var(--text);color:var(--page);border-color:var(--text)}
+.bar .hint{font-size:12px;color:var(--sub);margin-left:6px}
+/* device */
+.dev{position:relative;background:var(--page);border:10px solid #1c1c1e;border-radius:34px;overflow:hidden;display:flex}
+.status{position:absolute;font-weight:600;font-size:15px;z-index:3}
+.sys{width:86px;flex:none;background:var(--side);border-left:1px solid var(--line);position:relative}
+.sys .pill{position:absolute;right:12px;top:104px;width:62px;background:var(--page);border:1px solid var(--line);border-radius:24px;display:flex;flex-direction:column;align-items:center;gap:16px;padding:12px 0}
+.sys .pill i{width:22px;height:16px;border:2px solid var(--accent);border-radius:4px;display:block}
+/* sidebar */
+.sb{flex:none;background:var(--side);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0;position:relative}
+.sb .scroll{overflow-y:auto;flex:1;min-height:0;padding-bottom:8px;scrollbar-width:thin}
+.srch{margin:12px 12px 6px;background:var(--seg);border-radius:10px;padding:8px 11px;color:var(--sub);font-size:14px;display:flex;gap:6px;align-items:center}
+.main{position:sticky;top:0;z-index:2;background:var(--side);display:flex;align-items:center;gap:10px;padding:9px 12px;margin:0 6px;font-weight:700;font-size:15px;border-radius:12px;cursor:pointer}
+.main.sel{background:var(--sel)}
+.main .logo{width:24px;height:24px;border-radius:50%;background:conic-gradient(from 200deg,#7b61ff,#0a7cff,#28c7fa,#7b61ff);flex:none}
+.divider{height:1px;background:var(--line);margin:4px 14px 2px}
+.hd{display:flex;align-items:center;padding:14px 16px 6px;font-size:12px;letter-spacing:.06em;color:var(--sub);font-weight:600;cursor:pointer;user-select:none}
+.hd .fold{width:14px;display:inline-block;transition:transform .15s;color:var(--faint)}
+.hd.closed .fold{transform:rotate(-90deg)}
+.hd .acts{margin-left:auto;display:flex;gap:16px;font-size:17px;color:var(--text);letter-spacing:0;font-weight:400}
+.seg{display:flex;background:var(--seg);border-radius:18px;padding:3px;margin:2px 12px 8px}
+.seg span{flex:1;text-align:center;font-size:13.5px;padding:6px 0;border-radius:15px;color:var(--text);cursor:pointer;white-space:nowrap}
+.seg span.on{background:var(--segOn);font-weight:600;box-shadow:0 1px 3px #0002}
+.chips{display:flex;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;gap:2px;padding:0 12px 6px;font-size:13.5px;mask-image:linear-gradient(to right,#000 85%,transparent)}
+.chips>span{padding:5px 10px;border-radius:16px;cursor:pointer;display:flex;gap:4px;align-items:center;color:var(--text);white-space:nowrap}
+.chips>span.on{background:var(--chip);box-shadow:0 0 0 1px var(--chipLine);font-weight:600}
+.chips em{font-style:normal;color:var(--sub)}
+.grp{display:flex;align-items:center;gap:6px;padding:12px 16px 4px;font-size:13px;color:var(--sub);cursor:pointer;user-select:none}
+.grp b{font-weight:600}
+.grp .n{margin-left:auto;font-size:12px}
+.grp.machine{font-size:15px;color:var(--text);padding-top:16px}
+.grp.machine .n{color:var(--sub)}
+.grp.sub{padding-left:26px;font-size:14px;color:var(--text)}
+.grp .chev{color:var(--faint);font-size:11px;width:10px;display:inline-block;transition:transform .15s}
+.grp.closed .chev{transform:rotate(-90deg)}
+.row{display:flex;align-items:center;gap:8px;padding:0 10px 0 12px;margin:1px 6px;min-height:40px;border-radius:12px;cursor:pointer;font-size:14.5px}
+.row.indent{padding-left:28px}
+.row:hover{background:color-mix(in srgb,var(--sel) 60%,transparent)}
+.row.sel{background:var(--sel)}
+.row .ttl{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;padding:5px 0}
+.row .t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row.sel .t,.row.ask .t{font-weight:600}
+.row .ask{font-size:12.5px;color:var(--amber);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .ws{display:flex;gap:4px;align-items:center;color:var(--sub);font-size:12.5px;max-width:34%;white-space:nowrap;overflow:hidden}
+.row .ws .tm{color:var(--term);font-weight:700;font-family:ui-monospace,Menlo,monospace;font-size:12px}
+.row .ws span:last-child{overflow:hidden;text-overflow:ellipsis}
+.row .cnt{background:var(--amberBg);color:var(--amber);border-radius:10px;font-size:11.5px;font-weight:600;padding:1px 7px}
+.row .more{color:var(--sub);font-size:15px;visibility:hidden}
+.row.sel .more{visibility:visible}
+.row .time{color:var(--sub);font-size:12px}
+.mk{position:relative;width:22px;height:22px;flex:none}
+.mk .a{font-size:19px;line-height:22px;color:#e2683c}
+.mk .a.codex{color:var(--text);font-size:15px}
+.mk .b{position:absolute;right:-4px;bottom:-3px;width:13px;height:13px;border-radius:4px;background:#1c1c1e;color:#fff;font-size:7px;display:flex;align-items:center;justify-content:center;border:1.5px solid var(--side);font-weight:700}
+.st{width:14px;height:14px;flex:none;display:flex;align-items:center;justify-content:center}
+.st.idle::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--faint)}
+.st.ask::before{content:"";width:9px;height:9px;border-radius:50%;background:var(--amberDot);box-shadow:0 0 0 2px var(--side),0 0 0 3.5px var(--amberDot)}
+.st.work::before{content:"";width:10px;height:10px;border-radius:50%;border:2px solid transparent;border-left-color:#d9742b;border-bottom-color:#d9742b;animation:spin 1s linear infinite}
+.st.wait::before{content:"◷";font-size:13px;color:var(--amber)}
+.st.done::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--green)}
+@keyframes spin{to{transform:rotate(360deg)}}
+.autorow{color:var(--sub)}
+.row.chat{min-height:34px;font-size:14px}
+.morechats{display:flex;gap:14px;padding:4px 18px 2px;font-size:13px;color:var(--sub)}
+.morechats span{cursor:pointer}
+.quota{margin:6px 12px 12px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:9px 12px;font-size:13px;color:var(--sub)}
+.quota .q{display:flex;justify-content:space-between}
+.quota .barq{height:5px;background:var(--seg);border-radius:3px;margin-top:6px}
+.quota .barq i{display:block;height:100%;width:22%;background:#5aa9ff;border-radius:3px}
+/* detail */
+.det{flex:1;min-width:0;display:flex;flex-direction:column;position:relative}
+.det .top{display:flex;align-items:center;justify-content:center;gap:8px;padding:16px 16px 6px;font-weight:600;font-size:15px}
+.det .top small{display:block;font-weight:400;color:var(--sub);font-size:12px;text-align:center}
+.det .msgs{flex:1;overflow:hidden;padding:12px 26px;display:flex;flex-direction:column;gap:12px}
+.bub{align-self:flex-end;background:var(--bubble);border-radius:18px;padding:9px 14px;font-size:14.5px;max-width:70%}
+.ans{font-size:14.5px;line-height:1.55;max-width:92%}
+.ln{height:9px;border-radius:5px;background:var(--seg);margin:7px 0}
+.askcard{border:1px solid var(--amberDot);background:var(--amberBg);border-radius:14px;padding:10px 14px;font-size:14px;max-width:92%}
+.askcard .btns{display:flex;gap:8px;margin-top:8px}
+.askcard .btns span{background:var(--page);border:1px solid var(--chipLine);border-radius:14px;padding:4px 12px;font-size:13px}
+.comp{margin:8px 18px 16px;border:1px solid var(--chipLine);border-radius:24px;padding:12px 16px;color:var(--sub);font-size:14px;display:flex;justify-content:space-between;background:var(--page)}
+.cap{margin-top:12px;font-size:13px;color:var(--sub);max-width:900px;line-height:1.5}
+.cap b{color:var(--text)}
+
+/* v2: ChatGPT's open-Duo sidebar */
+.sbh{display:flex;align-items:center;justify-content:space-between;padding:14px 14px 6px 16px;flex:none}
+.brand{display:flex;align-items:center;gap:9px;font-weight:700;font-size:20px}
+.face{width:30px;height:30px;border-radius:9px;background:#f3e3cf;display:flex;align-items:center;justify-content:center;font-size:17px}
+.circ{width:40px;height:40px;border-radius:50%;border:1px solid var(--line);background:var(--page);display:flex;align-items:center;justify-content:center;color:var(--text);box-shadow:0 1px 3px #0001}
+.nav{display:flex;align-items:center;gap:13px;padding:0 12px 0 14px;margin:1px 6px;min-height:40px;border-radius:12px;font-size:15.5px;cursor:pointer}
+.nav:hover{background:color-mix(in srgb,var(--sel) 60%,transparent)}
+.nav.sel{background:var(--sel);font-weight:600}
+.nav svg{width:21px;height:21px;flex:none;stroke:var(--text);fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.nav .badge{margin-left:auto;background:var(--accent);color:#fff;border-radius:11px;font-size:12px;font-weight:600;min-width:22px;height:22px;display:flex;align-items:center;justify-content:center;padding:0 6px}
+.nav .bdot{margin-left:auto;width:8px;height:8px;border-radius:50%;background:var(--accent)}
+.foot{flex:none;display:flex;align-items:center;justify-content:space-between;padding:10px 14px 14px;background:linear-gradient(to bottom,transparent,var(--side) 30%)}
+.newchat{display:flex;align-items:center;gap:7px;background:var(--text);color:var(--page);border-radius:24px;padding:11px 18px;font-size:15px;font-weight:600}
+.cap2{display:flex;align-items:center;gap:4px;border:1px solid var(--line);background:var(--page);border-radius:26px;padding:4px;box-shadow:0 1px 3px #0001}
+.cap2 span{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center}
+.cap2 svg{width:20px;height:20px;stroke:var(--text);fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.home{flex:1;padding:30px 34px 0}
+.home h2{font-size:30px;margin:6px 0 10px}
+.home p{color:var(--sub);font-size:14.5px;line-height:1.55;max-width:560px}
+.cards{display:flex;gap:12px;margin-top:18px}
+.cards div{flex:1;border:1px solid var(--line);border-radius:16px;padding:14px;font-weight:600;font-size:15px;background:var(--page)}
+.nav.extra{padding-left:24px;font-size:15px}
+.nav .chev2{margin-left:auto;color:var(--faint);font-size:16px;transform:rotate(90deg);transition:transform .15s}
+.nav .chev2.up{transform:rotate(-90deg)}
+.nav .wdot{width:7px;height:7px;border-radius:50%;background:#ff9f0a;margin-left:6px}
+.nav .warn{margin-left:auto;font-size:12px;color:#c77700}
+</style>
+</head>
+<body>
+<div class="bar">
+  <h1>#4206 侧栏合一 · 原型 v3</h1>
+  <button data-dev="duo-land" class="on">Duo 展开 · 横握</button>
+  <button data-dev="duo-up">Duo 展开 · 竖握</button>
+  <button data-dev="ipad">iPad · 横屏</button>
+  <button id="dark">深色</button>
+  <span class="hint">可点：行、分组切换、筛选、折叠（标题 / 机器 / 仓库）</span>
+</div>
+<div id="stage"></div>
+<div class="cap" id="cap"></div>
+
+<script>
+// Made-up data: three computers, a handful of repositories, agents in every state.
+const AGENTS = [
+  {id:1, t:"单元测试补齐", m:"MacBook", r:"persona", ws:"persona", s:"ask", ask:"在问你：要不要顺便把快照测试也改掉？", cnt:1, pin:true, agent:"claude", todo:"今天"},
+  {id:2, t:"修复登录页闪退", m:"Mac Studio", r:"persona", ws:"login-fix", s:"work", pin:true, agent:"claude", todo:"今天"},
+  {id:3, t:"WidgetKit 调研", m:"MacBook", r:"weather", ws:"weather", s:"wait", pin:true, agent:"claude", todo:"本周"},
+  {id:4, t:"整理 README", m:"MacBook", r:"weather", ws:"weather", s:"done", agent:"codex", todo:"本周"},
+  {id:5, t:"数据清洗脚本", m:"Linux 开发机", r:"ml-train", ws:"ml-train", s:"idle", agent:"claude", todo:"之后"},
+  {id:6, t:"第 30 轮训练对比", m:"Linux 开发机", r:"ml-train", ws:"exp-30", s:"work", agent:"codex", todo:"本周"},
+  {id:7, t:"迁移到 Astro", m:"Mac Studio", r:"blog", ws:"blog", s:"idle", agent:"claude", todo:"之后"},
+  {id:8, t:"图片懒加载", m:"Mac Studio", r:"blog", ws:"blog", s:"idle", agent:"claude", todo:"之后"},
+  {id:9, t:"#1 接口文档对齐", m:"MacBook", r:"persona", ws:"api-docs", s:"idle", agent:"claude", todo:"之后"},
+  {id:10,t:"发布说明草稿", m:"MacBook", r:"persona", ws:"release", s:"idle", agent:"codex", todo:"本周"},
+];
+const CHATS = [
+  {id:"c1", t:"周报整理", time:"10:42", pin:true},
+  {id:"c2", t:"机票比价：下周去上海", time:"昨天"},
+  {id:"c3", t:"家里网络排查", time:"周一"},
+];
+const IC = {
+  main:'<path d="M4 12a8 8 0 1 1 3.2 6.4L4 20l1-3.4A8 8 0 0 1 4 12z"/><circle cx="9" cy="11" r=".8"/><circle cx="15" cy="11" r=".8"/>',
+  meeting:'<circle cx="12" cy="12" r="9"/><path d="M8 10v4M10.7 8v8M13.3 9.5v5M16 11v2"/>',
+  inbox:'<path d="M3 13l3-7h12l3 7v5H3z"/><path d="M3 13h5l1.5 2h5l1.5-2h5"/>',
+  todo:'<path d="M4 6l1.5 1.5L8 5M4 13l1.5 1.5L8 12"/><path d="M11 6.5h9M11 13.5h9M5 19.5h15"/>',
+  schedule:'<circle cx="12" cy="13" r="7"/><path d="M12 10v3.5l2 1.5M5 5l2.5-2M19 5l-2.5-2"/>',
+  knowledge:'<path d="M4 4h4v16H4zM9.5 4h4v16h-4zM15 5l3.6-1 2.4 15.5-3.6 1z"/>',
+  health:'<path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/>',
+  machines:'<rect x="4" y="5" width="16" height="11" rx="1.5"/><path d="M2 19h20"/>',
+  search:'<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>',
+  gear:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
+  side:'<rect x="3.5" y="5" width="17" height="14" rx="3"/><path d="M9 5v14"/>',
+  more:'<circle cx="5.5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="18.5" cy="12" r="1.2"/>',
+  pen:'<path d="M4 20h4L19 9l-4-4L4 16z"/>',
+};
+const svg = (k, cls="") => `<svg viewBox="0 0 24 24" class="${cls}">${IC[k]}</svg>`;
+const PAGES = [["main","主对话",{dot:true}],["inbox","收件箱",{n:4}],["todo","待办",{n:7}],["schedule","定时任务"],["knowledge","知识"],
+  ["meeting","会议录音",{more:true}],["health","健康",{more:true}],["machines","机器",{more:true,warn:"1 台离线"}]];
+const STATE_NAME = {ask:"需要你", work:"工作中", wait:"后台等待中", done:"完成未看", idle:"空闲"};
+const DEV = {
+  "duo-land":{W:951,H:669,side:300,sys:true, clock:{right:24,top:24}, cap:"<b>Duo 展开横握</b>：左栏 300pt；会议录音、健康、机器收进「更多」；第一屏能看到 AGENTS 标题和筛选，「最近」折起时还能看到前两个 Agent。右侧系统栏只剩系统按钮，<b>没有助手 / Agents 切换</b>，左栏一栏到底。"},
+  "duo-up":  {W:669,H:951,side:290,sys:false,clock:{left:28,top:14}, top:44, cap:"<b>Duo 展开竖握</b>：同一个左栏（290pt），系统栏横在顶部，同样没有切换。"},
+  "ipad":    {W:1194,H:834,side:340,sys:false,clock:{left:26,top:12}, top:30, cap:"<b>iPad 横屏</b>：同一个左栏（340pt），和网页版宽屏一样；左栏可收起（以后再做）。"},
+};
+let ui = {dev:"duo-land", grouping:"机器", filter:"全部", sel:"main", closed:new Set()};
+
+const esc = s => s.replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+function mark(a){ return a.agent==="codex"
+  ? `<div class="mk"><div class="a codex">⌬</div></div>`
+  : `<div class="mk"><div class="a">✻</div><div class="b">&lt;/&gt;</div></div>`; }
+function agentRow(a, indent){
+  const sel = ui.sel==="agent-"+a.id;
+  return `<div class="row${indent?" indent":""}${sel?" sel":""}${a.s==="ask"?" ask":""}" data-sel="agent-${a.id}">
+    ${mark(a)}<div class="st ${a.s}"></div>
+    <div class="ttl"><div class="t">${esc(a.t)}</div>${a.s==="ask"&&a.ask?`<div class="ask">${esc(a.ask)}</div>`:""}</div>
+    <div class="ws"><span class="tm">&gt;_</span><span>${esc(a.ws)}</span></div>
+    ${a.cnt?`<span class="cnt">${a.cnt}</span>`:""}<span class="more">⋯</span></div>`;
+}
+function passes(a){
+  if(ui.filter==="全部") return true;
+  if(ui.filter==="终端") return true;
+  return STATE_NAME[a.s]===ui.filter;
+}
+function group(key, label, n, cls, body){
+  const closed = ui.closed.has(key);
+  return `<div class="grp ${cls}${closed?" closed":""}" data-fold="${key}"><span class="chev">▾</span>${label}<span class="n">${n}</span></div>${closed?"":body}`;
+}
+function agentsBody(){
+  const list = AGENTS.filter(passes);
+  let h = "";
+  const pinned = list.filter(a=>a.pin);
+  if(pinned.length) h += group("pin", "📌 <b>置顶</b>", pinned.length, "", pinned.map(a=>agentRow(a)).join(""));
+  const rest = list.filter(a=>!a.pin);
+  const by = (k) => { const m = new Map(); rest.forEach(a=>{ const v=a[k]; if(!m.has(v)) m.set(v,[]); m.get(v).push(a); }); return m; };
+  if(ui.grouping==="机器"){
+    for(const [m, as] of by("m")){
+      const online = m!=="Linux 开发机" || true;
+      let inner = "";
+      const repos = new Map(); as.forEach(a=>{ if(!repos.has(a.r)) repos.set(a.r,[]); repos.get(a.r).push(a); });
+      for(const [r, rs] of repos) inner += group("r:"+m+r, `<span style="color:#d9742b">◜</span> ${esc(r)}`, rs.length, "sub", rs.map(a=>agentRow(a,true)).join(""));
+      h += group("m:"+m, `<span style="color:var(--green);font-size:10px">●</span> <b>${esc(m)}</b>`, as.length, "machine", inner);
+    }
+  } else if(ui.grouping==="仓库" || ui.grouping==="项目"){
+    for(const [r, as] of by("r")) h += group("r:"+r, `<b>${esc(r)}</b>`, as.length, "machine", as.map(a=>agentRow(a)).join(""));
+  } else if(ui.grouping==="状态"){
+    for(const s of ["ask","work","wait","done","idle"]){ const as = rest.filter(a=>a.s===s); if(as.length) h += group("s:"+s, `<b>${STATE_NAME[s]}</b>`, as.length, "machine", as.map(a=>agentRow(a)).join("")); }
+  } else {
+    for(const d of ["今天","本周","之后"]){ const as = rest.filter(a=>a.todo===d); if(as.length) h += group("d:"+d, `<b>${d}</b>`, as.length, "machine", as.map(a=>agentRow(a)).join("")); }
+  }
+  return h;
+}
+function sidebar(d){
+  const count = s => AGENTS.filter(a=>a.s===s).length;
+  const chips = [["全部",""],["需要你",`<span class="st ask"></span>`,count("ask")],["工作中",`<span class="st work"></span>`,count("work")],["后台等待中",`<span class="st wait"></span>`,count("wait")],["终端","",17]];
+  const chatsClosed = ui.closed.has("sec:chats"), agentsClosed = ui.closed.has("sec:agents");
+  const navRow = ([k,n,o={}]) => `<div class="nav${o.more?" extra":""}${ui.sel===k?" sel":""}" data-sel="${k}">${svg(k)}${n}${o.n?`<span class="badge">${o.n}</span>`:""}${o.dot?`<span class="bdot"></span>`:""}${o.warn?`<span class="warn">${o.warn}</span>`:""}</div>`;
+  const extra = PAGES.filter(p=>p[2]&&p[2].more), open = !ui.closed.has("more") ? false : true;
+  const hiddenSel = extra.some(p=>p[0]===ui.sel);
+  const nav = PAGES.filter(p=>!(p[2]&&p[2].more)).map(navRow).join("")
+    + `<div class="nav" data-fold="more">${svg("more")}${open||hiddenSel?"收起":"更多"}<span class="chev2${open||hiddenSel?" up":""}">›</span>${!(open||hiddenSel)&&extra.some(p=>p[2].warn)?`<span class="wdot"></span>`:""}</div>`
+    + (open||hiddenSel ? extra.map(navRow).join("") : "");
+  return `<div class="sb" style="width:${d.side}px">
+    <div class="sbh"><div class="brand"><div class="face">🫧</div>Persona</div><div class="circ">${svg("side","").replace('<svg','<svg style="width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.7"')}</div></div>
+    <div class="scroll">
+      ${nav}
+      <div class="divider" style="margin:8px 16px 0"></div>
+      <div class="hd${chatsClosed?" closed":""}" data-fold="sec:chats"><span class="fold">▾</span>最近<span class="acts"><span>⋯</span></span></div>
+      ${chatsClosed?"":`
+        ${CHATS.map(c=>`<div class="row chat${ui.sel===c.id?" sel":""}" data-sel="${c.id}"><div class="ttl"><div class="t">${c.pin?"📌 ":""}${esc(c.t)}</div></div><span class="time">${c.time}</span></div>`).join("")}
+        <div class="morechats"><span>自动对话 4 <span class="st work" style="display:inline-flex;vertical-align:-2px"></span></span><span>全部对话 ›</span></div>`}
+      <div class="hd${agentsClosed?" closed":""}" data-fold="sec:agents"><span class="fold">▾</span>AGENTS<span class="acts"><span>⋯</span><span>＋</span></span></div>
+      ${agentsClosed?"":`
+        <div class="seg">${["待办","机器","仓库","项目","状态"].map(g=>`<span class="${g===ui.grouping?"on":""}" data-group="${g}">${g}</span>`).join("")}</div>
+        <div class="chips">${chips.map(([n,ic,c])=>`<span class="${n===ui.filter?"on":""}" data-filter="${n}">${ic}${n}${c!==undefined?` <em>${c}</em>`:""}</span>`).join("")}</div>
+        ${agentsBody()}`}
+    </div>
+    <div class="foot"><div class="newchat">${svg("pen").replace('<svg','<svg style="width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.8"')}新对话</div>
+      <div class="cap2"><span>${svg("search")}</span><span>${svg("gear")}</span></div></div>
+  </div>`;
+}
+function detail(){
+  const pg = PAGES.find(p=>p[0]===ui.sel);
+  if(pg && pg[0]!=="main"){
+    return `<div class="det"><div class="top">${pg[1]}</div><div class="msgs"><div class="ln" style="width:70%"></div><div class="ln" style="width:85%"></div><div class="ln" style="width:60%"></div><div class="ln" style="width:78%"></div></div></div>`;
+  }
+  if(ui.sel==="main"){
+    return `<div class="det"><div class="home"><h2>下午好</h2><p>开个新的支线对话。我能看到你的电脑、iPhone、邮件、飞书和整理好的项目，也能帮你盯着事情、到点提醒你。</p>
+      <div class="cards"><div>📅 今天的日程</div><div>✉️ 待处理邮件</div></div></div><div class="comp"><span>问 Persona</span><span>🎙</span></div></div>`;
+  }
+  if(ui.sel.startsWith("c")){
+    const name = ui.sel==="main" ? "Persona" : CHATS.find(c=>c.id===ui.sel).t;
+    return `<div class="det"><div class="top">${esc(name)}</div><div class="msgs">
+      <div class="bub">帮我看下今天还有哪些 Agent 在等我</div>
+      <div class="ans">有 1 个在问你：「单元测试补齐」想确认要不要顺便改快照测试；「修复登录页闪退」和「第 30 轮训练对比」还在跑。<div class="ln" style="width:80%"></div><div class="ln" style="width:60%"></div></div>
+    </div><div class="comp"><span>问 Persona…</span><span>🎙</span></div></div>`;
+  }
+  const a = AGENTS.find(x=>"agent-"+x.id===ui.sel);
+  return `<div class="det"><div class="top"><div>${esc(a.t)}<small>${esc(a.r)} · ${esc(a.m)}</small></div></div><div class="msgs">
+    <div class="bub">把 persona 的单元测试补齐，覆盖率到 80%</div>
+    <div class="ans"><div class="ln" style="width:90%"></div><div class="ln" style="width:75%"></div><div class="ln" style="width:82%"></div><div class="ln" style="width:50%"></div></div>
+    ${a.s==="ask"?`<div class="askcard">${esc(a.ask.replace("在问你：",""))}<div class="btns"><span>要</span><span>先不用</span><span>其他回答…</span></div></div>`:""}
+  </div><div class="comp"><span>补充说明（会排队发送）</span><span>🎙</span></div></div>`;
+}
+function render(){
+  const d = DEV[ui.dev];
+  const clock = Object.entries(d.clock).map(([k,v])=>`${k}:${v}px`).join(";");
+  document.getElementById("stage").innerHTML =
+    `<div class="dev" style="width:${d.W+20}px;height:${d.H+20}px;${d.top?`padding-top:${d.top}px`:""}">
+      <div class="status" style="${clock}">22:00</div>
+      ${sidebar(d)}${detail()}${d.sys?`<div class="sys"><div class="pill"><i></i><i></i><i></i><i></i></div></div>`:""}
+    </div>`;
+  document.getElementById("cap").innerHTML = d.cap;
+  document.querySelectorAll(".bar [data-dev]").forEach(b=>b.classList.toggle("on", b.dataset.dev===ui.dev));
+}
+document.addEventListener("click", e=>{
+  const t = e.target.closest("[data-dev],[data-sel],[data-group],[data-filter],[data-fold],#dark");
+  if(!t) return;
+  if(t.id==="dark"){ document.body.classList.toggle("dark"); t.classList.toggle("on"); return; }
+  if(t.dataset.dev) ui.dev = t.dataset.dev;
+  if(t.dataset.sel) ui.sel = t.dataset.sel;
+  if(t.dataset.group) ui.grouping = t.dataset.group;
+  if(t.dataset.filter) ui.filter = t.dataset.filter;
+  if(t.dataset.fold){ ui.closed.has(t.dataset.fold) ? ui.closed.delete(t.dataset.fold) : ui.closed.add(t.dataset.fold); }
+  render();
+});
+// #duo-up / #ipad / #dark in the address open that state (for screenshots).
+const h = location.hash.slice(1).split(",");
+if(DEV[h[0]]) ui.dev = h[0];
+if(h.includes("dark")) document.body.classList.add("dark");
+if(h.includes("repo")) ui.grouping = "仓库";
+if(h.includes("agent")) ui.sel = "agent-1";
+if(h.includes("more")) ui.closed.add("more");
+if(h.includes("recentfold")) ui.closed.add("sec:chats");
+render();
+if(h.includes("agents")) { const sc=document.querySelector(".sb .scroll"); sc.scrollTop = document.querySelector("[data-fold='sec:agents']").offsetTop - 60; }
+</script>
+</body>
+</html>

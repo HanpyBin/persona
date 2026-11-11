@@ -249,6 +249,8 @@ struct RootView: View {
     @Environment(AppModel.self) private var model
     #if os(iOS)
     @State private var pad = PadRouter()
+    /// An open iPhone Duo held on its side (`sidebarOnItsSide`).
+    @State private var onItsSide = false
     #endif
 
     var body: some View {
@@ -256,19 +258,25 @@ struct RootView: View {
         let _ = PerfTrace.body("RootTabs")
         #endif
         @Bindable var model = model
+        #if os(iOS)
+        // iPad and the open iPhone Duo (RootTabs is iOS's regular width): one sidebar, no tabs (#4206).
+        ChatsView()
+            .environment(\.oneSidebar, true)
+            .environment(\.sidebarOnItsSide, onItsSide)
+            .onGeometryChange(for: Bool.self) { g in
+                UIDevice.current.userInterfaceIdiom == .phone && g.size.width > g.size.height
+            } action: { onItsSide = $0 }
+            .modifier(PadRoutes(router: pad))
+        #else
         TabView(selection: $model.selectedTab) {
             AssistantRootTab()
             AgentsRootTab()
             #if os(iOS) || os(visionOS)
             if LarkHomePreference.shared.shows { FeishuRootTab() }
             #endif
-            #if !os(iOS)
             InboxRootTab()
             SettingsRootTab()
-            #endif
         }
-        #if os(iOS)
-        .modifier(PadRoutes(router: pad))
         #endif
     }
 }

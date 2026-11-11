@@ -41,6 +41,29 @@ struct AssistantView: View {
     @Environment(\.shellRailEdge) private var railEdge
     /// A phone's tabs (iPhone Duo open): the column's own button folds it, at its top (#2623).
     @Environment(\.pageTabSwitch) private var pageTabSwitch
+    #if os(iOS)
+    /// The detail column beside the one sidebar (#4206): only the page; the sidebar is the Agents page's column.
+    @Environment(\.oneSidebar) private var oneSidebar
+    @Environment(\.splitDetail) private var splitDetail
+    @Environment(\.splitShowList) private var splitShowList
+    #else
+    private let oneSidebar = false
+    #endif
+    /// The iPhone's new conversation (`ShellHome`): the shell, a phone's tabs, and the open iPhone Duo's one sidebar.
+    private var phoneHome: Bool {
+        #if os(iOS)
+        shell != nil || pageTabSwitch || (oneSidebar && UIDevice.current.userInterfaceIdiom == .phone)
+        #else
+        shell != nil || pageTabSwitch
+        #endif
+    }
+    /// The sidebar is out beside the page: its own column, or the one sidebar's.
+    private var sidebarOut: Bool {
+        #if os(iOS)
+        if oneSidebar { return splitDetail?.listHidden != true }
+        #endif
+        return columns != .detailOnly
+    }
     /// The manager switcher's height as drawn (several managers).
     @State private var switcherHeight: CGFloat = 0
     #if DEBUG
@@ -73,8 +96,8 @@ struct AssistantView: View {
         #if DEBUG || PERF_SIGNPOST
         let _ = PerfTrace.body("AssistantView")
         #endif
-        if shell != nil {
-            stack // the shell holds the drawer around both of its pages
+        if shell != nil || oneSidebar {
+            stack // the shell holds the drawer around both of its pages; the one sidebar is beside this column
         } else if widthClass == .regular {
             // The split keeps both columns clear of the fold when the device is partly folded.
             #if os(macOS)
@@ -154,6 +177,10 @@ struct AssistantView: View {
     private func toggleSidebar() {
         if let shell {
             shell.drawer.open()
+        } else if oneSidebar {
+            #if os(iOS)
+            splitShowList?.show()
+            #endif
         } else if widthClass == .regular {
             withAnimation(Theme.Motion.standard) { columns = columns == .detailOnly ? SplitColumns.shown : .detailOnly }
         } else {
@@ -209,7 +236,7 @@ struct AssistantView: View {
                         .id(key)
                         // The iPad draws the shell's composer too (`ChatComposerKind.padCard`): the assistant's, as on the iPhone.
                         .environment(\.shellChat, shell != nil || ChatComposerKind.padCard)
-                } else if shell != nil || pageTabSwitch {
+                } else if phoneHome {
                     // A phone's tabs too (iPhone Duo open, #3680): the iPhone's new conversation, with what needs the user
                     // over the composer. The iPad keeps `AssistantHome`.
                     ShellHome(pending: shownStart, error: shownFailure?.reason, launcher: $starterLauncher, mode: $starterMode,
@@ -239,7 +266,7 @@ struct AssistantView: View {
             .overlay(alignment: .top) {
                 AssistantTopBar(key: pending == nil ? current : nil,
                                 sidebarIsColumn: widthClass == .regular,
-                                sidebarShown: columns != .detailOnly,
+                                sidebarShown: sidebarOut,
                                 openSidebar: toggleSidebar,
                                 // In a health conversation New opens Health's new conversation page, whose list has the
                                 // space's past ones (#4329); elsewhere the assistant's.
