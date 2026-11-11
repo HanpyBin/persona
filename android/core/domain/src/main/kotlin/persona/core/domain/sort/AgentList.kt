@@ -382,7 +382,7 @@ fun buildFlatAgentList(
                 }
                 if (tasks.isEmpty()) return@forEach
                 above = true
-                val title = if (direction.secretary) CoreText.of(Key.DirectionSecretary) else CoreText.plain(direction.name)
+                val title = direction.title
                 // Every agent under the heading counts, children of children too (each is placed once, so this ends).
                 fun withChildren(row: AgentSession): List<AgentSession> = listOf(row) + placedChildren[row.id].orEmpty().flatMap(::withChildren)
                 heading(id, title, tasks.flatMap { it.second }.flatMap(::withChildren), id in settings.folded)

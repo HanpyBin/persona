@@ -10,6 +10,7 @@ import persona.core.contracts.DirectionTaskState
 import persona.core.contracts.DirectionTree
 import persona.core.contracts.Session
 import persona.core.contracts.SessionKey
+import persona.core.contracts.Todo
 import persona.core.domain.sort.AgentGrouping
 import persona.core.domain.sort.AgentListSettings
 import persona.core.domain.sort.AgentSession
@@ -116,6 +117,37 @@ class DirectionTreeTest {
         val list = buildAgentList(listOf(row("a1")), settings = AgentListSettings(grouping = AgentGrouping.Direction),
             directions = DirectionTree(listOf(tree.directions.last())))
         assertEquals(CoreText.of(CoreText.Key.DirectionSecretary), list.groups.first { it.id == DirectionGroupPrefix + "main" }.title)
+    }
+
+    @Test fun anUnnamedLeadReadsAsAnUntitledChat() {
+        // The hub sends "" for a lead whose conversation has no title: the heading is never blank.
+        val list = buildAgentList(listOf(row("a2")), settings = AgentListSettings(grouping = AgentGrouping.Direction),
+            directions = DirectionTree(listOf(Direction("lead-x", "", tasks = listOf(DirectionTask("t2", "Write docs", agents = listOf(agent("a2"))))))))
+        assertEquals(CoreText.of(CoreText.Key.DirectionUntitled), list.groups.first { it.id == DirectionGroupPrefix + "lead-x" }.title)
+        assertEquals(CoreText.plain("Product"), tree.directions.first().title)
+        assertEquals(CoreText.of(CoreText.Key.DirectionUntitled), Direction("lead-y", "  ").title)
+    }
+
+    @Test fun theToDosTheTreeShowsLeaveTheirStatusSectionsAndTheRestStay() {
+        // t1 and t2 share a row (t1 leads it); t3 is shelved on its own. The tree shows t1: t2 now leads that row in
+        // its own section, and t3 stays where it was.
+        fun triage(section: TriageSection, last: Long) = Triage(section, TriageRule.Rest, last)
+        val t1 = Todo("t1"); val t2 = Todo("t2"); val t3 = Todo("t3")
+        val shared = TriageGroup("t1", TriageSection.Waiting, t1, listOf(t1, t2),
+            mapOf("t1" to triage(TriageSection.Waiting, 5), "t2" to triage(TriageSection.Working, 3)), 5)
+        val shelved = TriageGroup("t3", TriageSection.Shelved, t3, listOf(t3), mapOf("t3" to triage(TriageSection.Shelved, 1)), 1)
+        val result = TriageResult(
+            TriageSection.entries.associateWith { emptyList<TriageGroup>() } + mapOf(TriageSection.Waiting to listOf(shared), TriageSection.Shelved to listOf(shelved)),
+            TriageSection.entries.associateWith { 0 } + mapOf(TriageSection.Waiting to 1, TriageSection.Working to 1, TriageSection.Shelved to 1),
+            open = 2, shelved = 1, finished = 0)
+        val rest = result.without(setOf("t1"))
+        assertTrue(rest.rows(TriageSection.Waiting).isEmpty())
+        assertEquals(listOf("t2"), rest.rows(TriageSection.Working).map { it.lead.id })
+        assertEquals(listOf("t3"), rest.rows(TriageSection.Shelved).map { it.lead.id })
+        assertEquals(0, rest.todoCounts[TriageSection.Waiting])
+        assertEquals(1, rest.todoCounts[TriageSection.Working])
+        assertEquals(result, result.without(emptySet()))
+        assertTrue(TriageSection.entries.all { result.without(setOf("t1", "t2", "t3")).rows(it).isEmpty() })
     }
 
     @Test fun withoutATreeEveryAgentIsUnderNoTodoAndOpen() {

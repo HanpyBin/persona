@@ -15,9 +15,10 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import persona.core.contracts.CoreText
+import persona.core.contracts.Direction
 import persona.core.contracts.DirectionCounts
 import persona.core.contracts.DirectionTaskState
-import persona.core.designsystem.icons.PhIcons
+import persona.core.designsystem.icons.PersonaIcons
 
 // The direction tree's words and colours (#4352), one place for the drawer, the To-dos page and the Agents page: the
 // hub decides a task's state, these only say it. Needs you takes the needs-you colour, Working the working one, Stuck and
@@ -30,11 +31,11 @@ fun PersonaPalette.directionTone(state: DirectionTaskState): StatusColors = when
     DirectionTaskState.Stuck, DirectionTaskState.Review -> tone(Tone.Caution)
 }
 
-/** A task's state word ("Needs you", "To verify", "Stuck", "Doing") in the page's language. */
+/** A task's state word ("Needs you", "To verify", "Stuck", "Working") in the page's language. */
 val DirectionTaskState.localizedLabel: String @Composable get() = CoreText.of(label).text()
 
-/** The secretary group's name (书记官): the to-dos the main conversation or no current direction supervises. */
-val secretaryName: String @Composable get() = CoreText.of(CoreText.Key.DirectionSecretary).text()
+/** What a direction's heading says: its name, 书记官 for the secretary group, an untitled chat's word without a name. */
+val Direction.localizedTitle: String @Composable get() = title.text()
 
 /** A task's state in words, in its colour, for the end of a task row. */
 @Composable
@@ -44,24 +45,22 @@ fun JDirectionStateLabel(state: DirectionTaskState, modifier: Modifier = Modifie
 }
 
 /**
- * A direction's two counts, "Doing N · Needs you N" (`counts.working`, `counts.needs_you` of the hub's tree), in quiet
- * caption text; the Needs you part takes the needs-you colour while it is above zero.
+ * A direction's counts as the drawer's 常驻 row says them (`counts.working`, `counts.needs_you` of the hub's tree, the
+ * words of leaderCountsLabel): only the parts above zero, "2 working · 1 need you", nothing at all when both are zero.
+ * Quiet caption text; the Needs you part takes the needs-you colour.
  */
 @Composable
 fun JDirectionCounts(counts: DirectionCounts, modifier: Modifier = Modifier) {
     val palette = PersonaTheme.palette
-    val full = CoreText.of(CoreText.Key.DirectionCounts, counts.working, counts.needsYou).text()
-    val needsWord = CoreText.of(CoreText.Key.DirectionNeedsYou).text()
+    val working = counts.working.takeIf { it > 0 }?.let { CoreText.of(CoreText.Key.DirectionCountWorking, it).text() }
+    val needsYou = counts.needsYou.takeIf { it > 0 }?.let { CoreText.of(CoreText.Key.DirectionCountNeedsYou, it).text() }
+    if (working == null && needsYou == null) return
     val needsYouColor = palette.status(Status.NeedsYou).text
-    val text = remember(full, needsWord, counts.needsYou, needsYouColor) {
-        // The Needs you part is the end of the words in every language: it is coloured from its word on.
-        val at = if (counts.needsYou > 0) full.lastIndexOf(needsWord) else -1
+    val text = remember(working, needsYou, needsYouColor) {
         buildAnnotatedString {
-            if (at < 0) append(full)
-            else {
-                append(full.substring(0, at))
-                withStyle(SpanStyle(color = needsYouColor)) { append(full.substring(at)) }
-            }
+            working?.let(::append)
+            if (working != null && needsYou != null) append(" · ")
+            needsYou?.let { withStyle(SpanStyle(color = needsYouColor)) { append(it) } }
         }
     }
     Text(text, modifier, style = PersonaTheme.type.caption, color = palette.ink2, maxLines = 1, softWrap = false,
@@ -76,7 +75,7 @@ fun JDirectionCounts(counts: DirectionCounts, modifier: Modifier = Modifier) {
 fun JDisclosureButton(open: Boolean, onToggle: () -> Unit, label: String, modifier: Modifier = Modifier) {
     Box(modifier.sizeIn(minWidth = Tokens.MinTouch.android, minHeight = Tokens.MinTouch.android).foldToggle(open, onToggle)
         .semantics { contentDescription = label }, contentAlignment = Alignment.Center) {
-        JIcon(PhIcons.CaretRight, null, size = Tokens.Space.l, tint = PersonaTheme.palette.ink3,
+        JIcon(PersonaIcons.disclosure, null, size = Tokens.Space.l, tint = PersonaTheme.palette.ink3,
             modifier = Modifier.rotate(if (open) 90f else 0f), decorative = true)
     }
 }

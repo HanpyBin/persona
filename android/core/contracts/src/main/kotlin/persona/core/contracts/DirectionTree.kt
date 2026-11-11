@@ -35,7 +35,17 @@ data class Direction(
     val secretary: Boolean = false,
     val counts: DirectionCounts = DirectionCounts(),
     val tasks: List<DirectionTask> = emptyList(),
-)
+) {
+    /**
+     * What a heading calls it: the secretary group is named by the app, a lead the hub has no name for ("" when its
+     * conversation has no title either) reads as an untitled chat, as the drawer's row does.
+     */
+    val title: CoreText get() = when {
+        secretary -> CoreText.of(CoreText.Key.DirectionSecretary)
+        name.isBlank() -> CoreText.of(CoreText.Key.DirectionUntitled)
+        else -> CoreText.plain(name)
+    }
+}
 
 /** How many of a direction's listed tasks are in each state (`counts`): the row shows [working] and [needsYou]. */
 data class DirectionCounts(val working: Int = 0, val needsYou: Int = 0, val stuck: Int = 0, val review: Int = 0)

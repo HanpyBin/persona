@@ -390,17 +390,20 @@ fun TodosScreen(
                 }
             } else {
                 // By direction (#4352): one section per direction of the hub's tree, in its order, with its two counts; the
-                // rows are the tree's to-dos in its order (those the search and filter leave). Completed stays its own fold.
+                // rows are the tree's to-dos in its order (those the search and filter leave); the rest keep their status sections.
                 val tree = directions?.takeIf { grouping == TodoListGrouping.Direction }
-                if (tree != null) {
+                val directionRows = if (tree == null) emptyList() else {
                     val placed = triaged.sections.values.flatten()
                         .flatMap { group -> group.members.map { member -> member.id to (member to group.triage.getValue(member.id)) } }.toMap()
-                    for ((direction, rows) in tree.todoRows(placed) { (_, triage) -> triage.section == TriageSection.Done }) {
+                    tree.todoRows(placed) { (_, triage) -> triage.section == TriageSection.Done }
+                }
+                if (tree != null) {
+                    for ((direction, rows) in directionRows) {
                         val foldKey = directionFoldKey(direction.id)
                         val folded = foldKey in toggled
                         item(key = "direction:${direction.id}") {
                             JSectionHeader(
-                                if (direction.secretary) secretaryName else direction.name,
+                                direction.localizedTitle,
                                 onClick = { toggled = if (folded) toggled - foldKey else toggled + foldKey },
                                 open = !folded,
                                 action = {
@@ -429,15 +432,18 @@ fun TodosScreen(
                         }
                     }
                 }
+                // The to-dos the tree does not list (shelved ones, Completed, any other the hub leaves out) keep their
+                // status sections after the directions, so grouping by direction hides none of them.
+                val rest = triaged.without(directionRows.flatMap { (_, rows) -> rows.map { it.first.id } }.toSet())
                 // No "N open · N shelved · N done" line: each section title carries its count (#3712).
-                for (section in if (tree != null) listOf(TriageSection.Done) else TriageSection.entries) {
-                    val rows = sortedRows(triaged.rows(section), listSort, zone)
+                for (section in TriageSection.entries) {
+                    val rows = sortedRows(rest.rows(section), listSort, zone)
                     if (rows.isEmpty()) continue
                     val folded = isFolded(section)
                     item(key = "section:${section.name}") {
                         JSectionHeader(
                             section.label,
-                            count = triaged.listed(section),
+                            count = rest.listed(section),
                             status = section.status,
                             countTone = section.status ?: Status.Idle,
                             onClick = { toggled = if (section.name in toggled) toggled - section.name else toggled + section.name },
