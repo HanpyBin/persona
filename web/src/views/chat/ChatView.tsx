@@ -100,8 +100,10 @@ import { VoiceBar } from "./voice/VoiceBar";
 import { useVoiceEntry, VoiceEnded, VoiceTail } from "./voice/VoiceParts";
 import { ChatOnlyNote, FailureCard, ReadinessCard, useReadinessGate, type ReadinessGate } from "../assistant/Readiness";
 import { codedFailure, refreshReadiness, turnErrorFix, type CodedFailure } from "../../lib/readiness";
+import { FALLBACK_UNAVAILABLE } from "../../lib/model-fallback";
+import { ModelFallbackCard } from "./ModelFallbackCard";
 import { usageLimitLabel } from "../../lib/usage-limit";
-import { displayLines, getFeedState, loadFeed, loadToday, sendRouted, startOfDay, useFeed, type FeedItem } from "../../lib/feed";
+import { displayLines, getFeedState, loadedFrom, loadFeed, loadToday, sendRouted, startOfDay, useFeed, type FeedItem } from "../../lib/feed";
 import { CardConversation } from "../../ui/AssistantCard";
 import { SessionMark } from "../../ui/AgentMark";
 import { AssistantActionBar, DayLine, FeedLineView, QuickResultCard, RouteChip, TaskQuestions } from "../assistant/Tasks";
@@ -192,7 +194,7 @@ export interface PanelChrome {
 
 /** `readOnly`: a subagent's conversation (`<parent>@<agent>`) in the side panel (SubagentPanel): the transcript only,
  *  no header, no composer. */
-export function ChatView({ mid, sid, assistant, starting: launching, onToggleSidebar, readOnly, topCenter, inPage, panel, banner, offline, mainCache, refreshError, onRefresh }: {
+export function ChatView({ mid, sid, assistant, starting: launching, onToggleSidebar, readOnly, topCenter, inPage, panel, banner, offline, mainCache, refreshError, onRefresh, headerActions }: {
   mid: string;
   sid: string;
   assistant?: boolean;
@@ -213,6 +215,8 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
   mainCache?: { scope: string; manager?: string };
   refreshError?: string;
   onRefresh?: () => void;
+  /** The page's own buttons at the header's end, before the permission mode and ⋯ (Health's New and its past conversations, #4329). */
+  headerActions?: React.ReactNode;
 }) {
   const { session, detail, retry: retryDetail } = useRuntimeSession(mid, sid);
   // an archived agent (lib/agent-archives.ts) is not in the lists: its chat says so and offers Restore
@@ -266,6 +270,16 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
   // a message Claude queued shows in the queue strip, not as a sending bubble too (ChatView.swift chatScroll)
   const queued = session?.queued ?? [];
   const shownPending = queued.length ? pending.filter((p) => !queued.some((q) => sameMessage(q, p.msg.text))) : pending;
+  // a queued message taken back or deleted (QueueStrip) is not on its way any more: its sending bubble goes with it,
+  // rather than showing again until the turn ends (#4342)
+  // the photos a Persona chat's queued message went with, when it was sent from here (its queue holds only the words)
+  const queuedPhotos = (raw: string) => pending.find((p) => sameMessage(raw, p.msg.text))?.msg.images?.length ?? 0;
+  const withdrawn = (text: string) => {
+    const gone = pending.find((p) => !p.posting && sameMessage(text, p.msg.text));
+    if (!gone) return;
+    forgetOutgoing(outboxKey(mid, sid), gone.id);
+    setPending((ps) => ps.filter((p) => p.id !== gone.id));
+  };
   const outgoing = shownPending.length + outbox.filter((e) => e.state !== "failed").length;
   const persona = usePersona();
   const state = session ? stateOf(session) : "unknown";
@@ -695,6 +709,16 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
     };
   }, [follow, scrollEl]);
 
+  const loadEarlierNearTop = () => {
+    const el = scroller.current;
+    if (!el || el.scrollTop >= 300 || !tr.hasMore || tr.loadingEarlier || first.current) return;
+    before.current = { h: el.scrollHeight, top: el.scrollTop };
+    void tr.loadEarlier().finally(() => {
+      // nothing came: forget the anchor
+      requestAnimationFrame(() => (before.current = null));
+    });
+  };
+
   const onScroll = () => {
     const el = scroller.current;
     if (!el) return;
@@ -705,14 +729,16 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
     if (atEnd.current) {
       if (leavesOnScrollbarDrag({ dragging: dragging.current, delta })) follow(false);
     } else if (!anchor.current && !jumping.current && followsAgain({ gap, delta })) follow(true);
-    if (el.scrollTop < 300 && tr.hasMore && !tr.loadingEarlier && !first.current) {
-      before.current = { h: el.scrollHeight, top: el.scrollTop };
-      void tr.loadEarlier().finally(() => {
-        // nothing came: forget the anchor
-        requestAnimationFrame(() => (before.current = null));
-      });
-    }
+    loadEarlierNearTop();
   };
+
+  // Reaching the top only loads older pages through a scroll event, and a view that cannot scroll (a page shorter than
+  // it: the main conversation's newest rounds are often two folded background rounds) or a page that landed without
+  // moving it sends none. Each change asks again, so older pages load until the top is out of reach.
+  useEffect(() => {
+    loadEarlierNearTop();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tr.items, tr.hasMore, tr.loadingEarlier]);
 
   const toEnd = () => {
     const el = scroller.current;
@@ -899,9 +925,11 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
   // a line that comes out the same as last time keeps its object, so a push re-renders only the lines it changed
   // (lib/stable-lines.ts); the task index likewise, or every row reading the context would render again
   const lastLines = useRef<ChatLine[] | undefined>(undefined);
+  // the main conversation folds rounds it did not start from the user (docs/assistant/assistant.md "Background rounds")
+  const foldBackground = useStore((s) => s.assistant?.main_background_folded) !== false && isMain;
   const lines = useMemo(
-    () => stabilizeLines(lastLines.current, chatLines(tr.items, { live: lastLive && (readOnly || !outgoing) })),
-    [tr.items, lastLive, readOnly, outgoing],
+    () => stabilizeLines(lastLines.current, chatLines(tr.items, { live: lastLive && (readOnly || !outgoing), background: foldBackground })),
+    [tr.items, lastLive, readOnly, outgoing, foldBackground],
   );
   lastLines.current = lines;
   // the last two exchanges are always drawn (the one going on, the one just done); those before them skip drawing while
@@ -1178,7 +1206,9 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
   // needs-you and back before the hub clears it (iOS ChatView @State retried)
   const [retriedOn, setRetried] = useState<{ chat: string; reason?: string }>();
   const retried = retriedOn?.chat === `${mid}/${sid}` ? retriedOn.reason : undefined;
-  const canRetry = !readOnly && lastLine?.kind === "apiError" && state !== "working" && !outgoing && sessionCan(session, "send");
+  // a turn that failed on the refusal fallback's missing model (#2528): "Continue" would send it to the same model
+  const canRetry =
+    !readOnly && lastLine?.kind === "apiError" && state !== "working" && !outgoing && sessionCan(session, "send") && session?.turn_error_code !== FALLBACK_UNAVAILABLE;
   // Claude Code's "while you were away" recap, open in full while it is the newest thing and not closed: the chat's last
   // line, in the flow with the agent's words (#1360: above the composer it covered the end of the reply)
   const recapKey = `${mid}/${sid}`;
@@ -1240,7 +1270,11 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
   const background = useMemo(() => (readOnly ? null : backgroundLine(session)), [readOnly, session]);
   const wait = useMemo(() => (readOnly || outgoing || awaiting ? null : backgroundWaitLine(session)), [readOnly, outgoing, awaiting, session]);
   const running = session ? <RunningStatusBar mid={mid} sid={sid} working={state === "working" || awaiting} startedAt={runStart} clock={barClock.current} agents={waitingOn} background={background} wait={wait} /> : null;
-  const queue = session && queued.length > 0 ? <QueueStrip session={session} draftKey={draftKey} canEdit={canCompose && !assistant} compact={short} /> : null;
+  const queue =
+    session && queued.length > 0 ? (
+      <QueueStrip session={session} draftKey={draftKey} canEdit={canCompose} compact={short} persona={assistant ? persona.name : undefined} onWithdrawn={withdrawn}
+        photosOf={assistant ? queuedPhotos : undefined} />
+    ) : null;
   // with the plan's pill showing, "Jump to bottom" goes beside it (over the chat, they hid each other)
   const jumpInDock = Boolean(planPill) && !readOnly;
   const pills = jumpInDock && away ? (
@@ -1297,6 +1331,7 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
           onView={switchable ? setView : undefined}
           viewDot={view === "term" && (interactions.length > 0 || state === "needs_you")}
           panel={panel}
+          actions={headerActions}
         />
       )}
       {banner}
@@ -1348,7 +1383,7 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
             <ChatContext.Provider value={ctx}>
               <CardConversation.Provider value={assistant ? sid : ""}>
               {assistant
-                ? displayLines(lines, feed).flatMap((d) => [
+                ? displayLines(lines, feed, tr.hasMore ? loadedFrom(tr.items) : undefined).flatMap((d) => [
                     ...failedBefore(d.kind === "chat" ? d.id : ""),
                     d.kind === "feed" ? (
                       <FeedLineView key={d.id} item={d.item} simplified />
@@ -1458,6 +1493,7 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
           </>
         )}
         {(!assistant || voiceState === "live") && pendingCards}
+        {!assistant && !readOnly && session?.model_fallback && <ModelFallbackCard session={session} headless={false} />}
         {assistant && session && <CompactionStrip session={session} />}
         {failure ? <FailureCard failure={failure} onClose={() => setSendFailure(null)} onHelp={gate.help} onConfirm={gate.confirm} onRetry={failedEntry && !refusedNoRow && sessionCan(session, "send") && !gate.blocked ? () => void retryOutbox(mid, sid, failedEntry.id) : undefined} /> : <ReadinessCard gate={gate} />}
         <ChatOnlyNote gate={gate} />
@@ -1705,6 +1741,7 @@ export const Header = memo(function Header({
   viewDot,
   panel: chrome,
   subtitle,
+  actions,
 }: {
   session?: Session;
   title: string;
@@ -1731,6 +1768,8 @@ export const Header = memo(function Header({
   panel?: PanelChrome;
   /** A conversation still starting has no session to make its subtitle from: what it will say (the new-conversation page, #1697). */
   subtitle?: string;
+  /** The page's own buttons, before the permission mode and ⋯ (ChatView `headerActions`). */
+  actions?: React.ReactNode;
 }) {
   const menu = useMenu();
   const tabs = useMenu();
@@ -1971,6 +2010,7 @@ export const Header = memo(function Header({
       )}
       {/* wide screens have New chat at the top of the sidebar; a phone's sidebar is a drawer */}
       {assistant && !chrome && session?.space !== "health" && <IconButton icon="compose" label={t("chat-chatview.new_chat")} onClick={() => navigate({ name: "persona-new" })} className="lg:hidden" />}
+      {!chrome && actions}
       {/* the permission mode, always in view and changed here (#3956, iOS #3719): the end of the header's controls, before ⋯,
           at every width; not in a panel, whose header stays as it was */}
       {!chrome && showsInHeader(session, assistant) && session && <HeaderModeButton session={session} />}
