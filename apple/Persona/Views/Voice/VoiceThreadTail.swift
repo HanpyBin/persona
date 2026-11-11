@@ -59,7 +59,7 @@ struct VoiceThreadTail: View {
     private func row(_ caption: VoiceCaption) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: Theme.Space.s) {
             if caption.isUser || model.showsAssistantIdentity {
-                Text(caption.isUser ? String(localized: "You") : model.persona.name)
+                Text(caption.isUser ? String(localized: "You") : model.assistantShownName)
                     .font(Theme.Font.labelStrong)
                     .foregroundStyle(caption.isUser ? Color.secondary : Theme.persona)
                     .lineLimit(1)

@@ -15,6 +15,11 @@ extension AppModel {
 
     var assistantDisplayName: String { showsAssistantIdentity ? persona.name : String(localized: "Persona") }
 
+    /// The name beside the Persona face where a page says whose it is (the sidebar's foot, the Mac's status line, the
+    /// voice captions): the current assistant's on a hub with several, as the sidebar's head says it (the face stays the
+    /// persona's, picked in Appearance); the persona's with one assistant, as before.
+    var assistantShownName: String { assistantManager?.name ?? persona.name }
+
     /// Reads group's roster again. A hub without one (404) has none; one that can't be read now keeps the last.
     func refreshManagerRoster(_ group: String) async {
         guard let api = api(group) else { return }

@@ -282,6 +282,48 @@ struct AssistantScopeTests {
         #expect(model.sessionLists.managed(SessionListQuery(), group: "") == SessionListQuery())
     }
 
+    /// One installed assistant, or a hub from before the roster: nothing of this is there. Nothing is filtered, no
+    /// request names a manager (no header, no `?manager=`), the sessions in Needs You are not read for any count, and
+    /// there is no count and no mark; a pick kept from another time changes none of it.
+    @Test func withOneAssistantOrNoRosterNothingIsFilteredNamedOrCounted() async throws {
+        for roster in [Self.one, nil] {
+            let hub = pagedHub()
+            let folder = FileManager.default.temporaryDirectory.appending(path: "assistant-scope-" + UUID().uuidString)
+            AssistantPickStore.save(["": "m-1"], folder: folder) // kept from when the hub had it
+            let model = try model(hub, roster: roster, folder: folder)
+            if roster == nil { model.rosterless.insert("") } // the hub answered that it has none
+            model.link("")?.received(HubHello(features: ["sessions_list", SessionListQuery.sessionsManagerFeature]))
+            // A hub with one manager stamps its things with it; a hub from before the roster stamps nothing.
+            let own = roster == nil ? nil : "assistant", other = roster == nil ? nil : "m-1"
+            model.replaceMachines("", [try machine("server", manager: own), try machine("MacBook", manager: other)])
+            let sessions = [try session("a", on: "server", manager: own, state: "needs_you"),
+                            try session("b", on: "MacBook", manager: other, state: "needs_you"),
+                            try session("chat", on: "server", manager: own, assistant: true)]
+            model.applySessions(Dictionary(grouping: sessions, by: \.machineRef))
+            model.replaceInteractions("", [try card("x", on: "MacBook", session: "b", manager: other)])
+            model.inboxNeedsYou[""] = ["m-1": 4]
+
+            #expect(model.assistantScope == nil && model.assistantManagerID == nil && model.api?.shownManager == nil)
+            #expect(model.scopedMachines().count == 2 && model.scopedInteractions.count == 1 && model.scoped(model.allSessions).count == 3)
+            #expect(model.badges.agents == 2, "every waiting agent, as before")
+            #expect(model.assistantBadges.isEmpty && !model.othersWaiting && model.assistantManagerOffline == nil)
+            #expect(model.assistantShownName == model.persona.name, "the persona's name beside its face, as before")
+            #expect(model.feedManager(of: "chat", group: "") == nil && model.feedManager(of: "unlisted", group: "") == nil)
+            #expect(model.itemManager(own) == nil)
+
+            model.followScope()
+            model.followNeedsYou()
+            await model.sessionLists.select(SessionListQuery(), hub: nil, model: model)
+            await model.sessionLists.rescope("", model: model)
+            await Task.yield()
+            let asked = hub.sent("GET", "/api/v1/sessions")
+            #expect(!asked.isEmpty && asked.allSatisfy { $0.query["manager"] == nil && $0.query["state"] != "needs_you" },
+                    "the list as before: no manager asked for, and no read of the sessions in Needs You")
+            #expect(hub.requests.allSatisfy { $0.headers["X-Persona-Manager"] == nil }, "no request names a manager")
+            #expect(model.sessionLists.sessions.count == 3)
+        }
+    }
+
     // MARK: the inbox
 
     private func item(_ id: String, _ manager: String?, tier: String = "action", done: Bool = false, connector: Bool = false) throws -> InboxItem {
