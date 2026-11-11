@@ -6,23 +6,25 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"regexp"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/nwverse/persona/server/internal/db"
 	"github.com/nwverse/persona/server/internal/i18n"
+	"github.com/nwverse/persona/server/internal/lazyre"
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
 // The small deterministic fast path avoids a model call for plain confirmations. Natural cards use the complete-action judge.
-var standingRequest = regexp.MustCompile(`(?i)^(?:(?:should|may|can) i |please |是否|可以|请)?(merge|push|deploy-test|deploy-production|send|delete|spend|合并|推送|部署测试|部署生产|发送|删除|花钱)(?:\s+(?:(?:the|this) )?(?:pr|branch|changes|message|files|money))?(?:\s+(https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/[1-9][0-9]*))?\s*(?:now|现在)?[?.？。!！]?$`) // i18n-ignore: matched requests
+var standingRequest = lazyre.New(`(?i)^(?:(?:should|may|can) i |please |是否|可以|请)?(merge|push|deploy-test|deploy-production|send|delete|spend|合并|推送|部署测试|部署生产|发送|删除|花钱)(?:\s+(?:(?:the|this) )?(?:pr|branch|changes|message|files|money))?(?:\s+(https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/[1-9][0-9]*))?\s*(?:now|现在)?[?.？。!！]?$`) // i18n-ignore: matched requests
 
-var standingConfirmationLabel = regexp.MustCompile(`(?i)^(yes|no|continue|not now|cancel|approve|proceed|是|否|继续|暂不|取消|批准|はい|いいえ|続行|キャンセル)(?: \(recommended\))?$`) // i18n-ignore: matched option labels
+var standingConfirmationLabel = lazyre.New(`(?i)^(yes|no|continue|not now|cancel|approve|proceed|是|否|继续|暂不|取消|批准|はい|いいえ|続行|キャンセル)(?: \(recommended\))?$`) // i18n-ignore: matched option labels
 
-var standingConfirmationHeader = regexp.MustCompile(`(?i)^(confirm|confirmation|approval|merge|push|确认|审批|合并|推送|確認|承認)$`) // i18n-ignore: matched question headers
+var standingConfirmationHeader = lazyre.New(`(?i)^(confirm|confirmation|approval|merge|push|确认|审批|合并|推送|確認|承認)$`) // i18n-ignore: matched question headers
 
 func standingCardCandidate(ix proto.Interaction) bool {
 	if ix.Kind != proto.IxQuestion && ix.Kind != proto.IxPlan {
@@ -161,7 +163,7 @@ func (s *Service) approveStandingInteraction(ix proto.Interaction) bool {
 	if !ok {
 		return false
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_, guest, err := s.guestOf(ctx, ix.MachineID, ix.SessionID)
 	if err != nil || guest {
@@ -227,7 +229,7 @@ func (s *Service) approveStandingInteraction(ix proto.Interaction) bool {
 	}
 	for _, grant := range grants {
 		matches, matchErr := s.standingScopeMatches(ctx, ix.MachineID, grant.Directory, taskCwd)
-		if matchErr != nil || !matches || !standingAssessmentAllowed(grant, assessment, ix) || !s.standingCardDirectoriesMatch(ctx, ix.MachineID, grant.Directory, ix) {
+		if matchErr != nil || !matches || !standingAssessmentAllowed(grant, assessment, ix) || !s.standingCardDirectoriesMatch(ctx, ix.MachineID, grant.Directory, cwd, ix) {
 			continue
 		}
 		if !s.standingConditions(ctx, ix.MachineID, cwd, strings.Join(assessment.Actions, ","), target, grant.Conditions) {
@@ -285,12 +287,69 @@ func standingQuestionHasNoOptions(ix proto.Interaction, question string) bool {
 	return false
 }
 
-// Explicit absolute paths must also fit the grant, even if a model misses the scope change.
-var standingAbsolutePath = regexp.MustCompile("(?:^|[\\s\"'`])(/[A-Za-z0-9_.~/-]+)")
+// Quoted paths stay whole: unsupported quoting, shell expansion and ambiguous paths remain manual.
+var standingPathToken = lazyre.New("\"[^\"]*\"|'[^']*'|`[^`]*`|[^\\s\"'`()<>;,!?。；，！？]+")
 
-func (s *Service) standingCardDirectoriesMatch(ctx context.Context, machine, directory string, ix proto.Interaction) bool {
-	for _, match := range standingAbsolutePath.FindAllStringSubmatch(standingCardText(ix), -1) {
-		matches, err := s.standingScopeMatches(ctx, machine, directory, match[1])
+func standingCardPaths(ix proto.Interaction) ([]string, bool) {
+	texts := []string{ix.Plan, ix.Summary, ix.Reason}
+	for _, q := range ix.Questions {
+		texts = append(texts, q.Question, q.Header)
+		for _, option := range q.Options {
+			texts = append(texts, option.Label, option.Description, option.Action)
+		}
+	}
+	var paths []string
+	for _, text := range texts {
+		for _, token := range standingPathToken.FindAllString(text, -1) {
+			token = strings.Trim(token, "\"'`")
+			if strings.HasPrefix(token, "https://") || strings.HasPrefix(token, "http://") {
+				if strings.IndexFunc(token, unicode.IsSpace) >= 0 {
+					return nil, false
+				}
+				continue
+			}
+			if !strings.ContainsAny(token, "/~$\\") && token != "." && token != ".." {
+				continue
+			}
+			// Do not interpret shell operators, globs, assignments, or a partial quoted path.
+			if strings.ContainsAny(token, "\\*?[];|&<>=()") || strings.IndexFunc(token, unicode.IsSpace) >= 0 {
+				return nil, false
+			}
+			paths = append(paths, token)
+		}
+	}
+	return paths, true
+}
+
+func (s *Service) standingCardDirectoriesMatch(ctx context.Context, machine, directory, cwd string, ix proto.Interaction) bool {
+	paths, ok := standingCardPaths(ix)
+	if !ok || !path.IsAbs(cwd) {
+		return false
+	}
+	for _, token := range paths {
+		// Session variables are not the hub's environment. Only these known directory
+		// variables can be resolved without evaluating agent-supplied shell code.
+		for _, variable := range []struct{ name, value string }{
+			{"${HOME}", "~"}, {"$HOME", "~"}, {"${PWD}", cwd}, {"$PWD", cwd},
+		} {
+			if token == variable.name || strings.HasPrefix(token, variable.name+"/") {
+				token = variable.value + strings.TrimPrefix(token, variable.name)
+				break
+			}
+		}
+		if strings.ContainsAny(token, "$\\{}") || strings.Contains(token, "~") && token != "~" && !strings.HasPrefix(token, "~/") {
+			return false
+		}
+		if !path.IsAbs(token) && token != "~" && !strings.HasPrefix(token, "~/") {
+			token = cwd + "/" + token
+		}
+		// Resolve on the session's node, including home and symlinks. An old or
+		// unavailable node cannot prove scope and must retain manual confirmation.
+		var identity proto.RepositoryIdentity
+		if s.call(ctx, machine, "git.status", map[string]any{"cwd": token, "identity_only": true}, &identity) != nil || identity.Version != 1 || !identity.PathResolved || !path.IsAbs(identity.Cwd) {
+			return false
+		}
+		matches, err := s.standingScopeMatches(ctx, machine, directory, identity.Cwd)
 		if err != nil || !matches {
 			return false
 		}
@@ -298,7 +357,7 @@ func (s *Service) standingCardDirectoriesMatch(ctx context.Context, machine, dir
 	return true
 }
 
-var standingPRReference = regexp.MustCompile(`(?i)https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/[1-9][0-9]*|(?:\bPR\s*#?|#)([1-9][0-9]*)`)
+var standingPRReference = lazyre.New(`(?i)https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/[1-9][0-9]*|(?:\bPR\s*#?|#)([1-9][0-9]*)`)
 
 func standingCardTarget(ix proto.Interaction) (string, bool) {
 	var target string
@@ -401,11 +460,11 @@ func (s *Service) persistStandingInteraction(p *pending, r proto.Resolution, a *
 }
 
 // Explicit task limits are narrower than a standing grant. Unclear prohibitions keep approval manual.
-var standingTaskReadonly = regexp.MustCompile(`(?i)read[- ]only|只读|読み取り専用`)                             // i18n-ignore: task constraints
-var standingTaskNegation = regexp.MustCompile(`(?i)\b(?:no|not|never|don't|without)\b|不|别|勿|禁止|しない|せず`) // i18n-ignore: task constraints
-var standingStopAtPR = regexp.MustCompile(`(?i)stop at (?:a |the )?pr|停在.*pr|只.*pr`)                    // i18n-ignore: task constraints
-var standingTaskClauses = regexp.MustCompile(`[.;!?\n。；！？]`)                                            // i18n-ignore: clause punctuation
-var standingNoConflicts = regexp.MustCompile(`(?i)no (?:merge )?conflicts|without (?:asking|confirmation|further review)`)
+var standingTaskReadonly = lazyre.New(`(?i)read[- ]only|只读|読み取り専用`)                             // i18n-ignore: task constraints
+var standingTaskNegation = lazyre.New(`(?i)\b(?:no|not|never|don't|without)\b|不|别|勿|禁止|しない|せず`) // i18n-ignore: task constraints
+var standingStopAtPR = lazyre.New(`(?i)stop at (?:a |the )?pr|停在.*pr|只.*pr`)                    // i18n-ignore: task constraints
+var standingTaskClauses = lazyre.New(`[.;!?\n。；！？]`)                                            // i18n-ignore: clause punctuation
+var standingNoConflicts = lazyre.New(`(?i)no (?:merge )?conflicts|without (?:asking|confirmation|further review)`)
 
 func standingTaskForbids(text, action string) bool {
 	if standingTaskReadonly.MatchString(text) || action != "push" && standingStopAtPR.MatchString(text) {

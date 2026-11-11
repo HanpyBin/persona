@@ -25,7 +25,7 @@ func TestGitIdentityAcrossWorktreesAndClones(t *testing.T) {
 			t.Fatal(err)
 		}
 		identity, ok := out.(proto.RepositoryIdentity)
-		if !ok || identity.Version != 1 || !identity.IsRepo {
+		if !ok || identity.Version != 1 || !identity.PathResolved || !identity.IsRepo {
 			t.Fatalf("identity-only response: %#v", out)
 		}
 		return identity
@@ -75,5 +75,23 @@ func TestGitIdentityCanonicalOrigin(t *testing.T) {
 	}
 	if a, b := canonicalGitOrigin("origin.git", root), canonicalGitOrigin("file://"+remote, root); a != b {
 		t.Fatalf("local origins differ: %q %q", a, b)
+	}
+}
+
+func TestGitIdentityResolvesSymlinkBeforeParent(t *testing.T) {
+	f := newPullFixture(t)
+	outside := t.TempDir()
+	if err := os.Mkdir(filepath.Join(outside, "child"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "child"), filepath.Join(f.local, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	identity, err := f.node.gitIdentity(t.Context(), f.local+"/escape/..")
+	if err != nil || identity.Cwd != realPath(outside) || identity.IsRepo {
+		t.Fatalf("link/.. identity: %+v %v", identity, err)
+	}
+	if _, err := f.node.gitIdentity(t.Context(), filepath.Join(f.local, "missing")); err == nil {
+		t.Fatal("missing path returned a usable identity")
 	}
 }

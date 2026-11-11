@@ -288,10 +288,20 @@ also pushes, deploys or deletes. Failed, incomplete or ambiguous classification 
 wait/cancel/defer or runtime-action options are rejected; an unselected defer option does not block a valid answer.
 Forms, passwords, assistant `ask_user`, runtime-local dialogs and extra tool-input fields keep their existing route.
 The judge uses the model configuration for `agent.delegate`, including its selected managed provider and model;
-it never starts an unconfigured CLI. If that model is unavailable, the card follows the existing supervisor/user
+it never starts an unconfigured CLI. The synchronous authorization attempt has a five-second classification and evidence-read context budget
+(including classification and scope/evidence reads), reduced from sixty seconds so a slow model promptly falls back
+to the normal card route. This favors manual confirmation over waiting for a slow automatic answer; it does not
+introduce background approval or change resolution persistence. If that model is unavailable, the card follows the existing supervisor/user
 route, and counts as a user confirmation only when that route actually notifies the user.
 A conservative code scan adds sensitive effects even if classification misses them; unspecified deployments remain
-production-sensitive. Explicit absolute paths are independently checked against repository scope. The model's output never grants tool permissions or replaces condition evidence.
+production-sensitive. Every explicit card path is independently resolved and checked against repository scope, including relative paths
+(`../other`, `./server`, `server/internal`), `~`, `$HOME` and `$PWD` (including braced forms). Relative paths use the
+node's session directory; home expansion and physical Git identity come from that node. Unknown session variables,
+shell substitutions, globs, ambiguous quoting and failed identity reads keep confirmation manual. Paths are kept literally, including trailing dots and parent segments;
+sentence punctuation on an unquoted path may therefore require manual confirmation. A node must advertise
+`path_resolved: true`, proving it resolves symlinks before parent segments; older nodes keep path cards manual.
+Resolution persistence has its own timeout and is outside the five-second classification budget. The judge's
+`within_task` can veto a card but cannot prove that a path is authorized. The model's output never grants tool permissions or replaces condition evidence.
 
 Tool `permission` cards are never approved by standing authorization. Production deployment, external sending,
 deletion (including force-pushing or replacing remote history) and spending each require their own explicit action and `reversible: true`; task notes alone still cannot

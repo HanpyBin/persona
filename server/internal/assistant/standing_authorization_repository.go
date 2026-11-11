@@ -13,7 +13,7 @@ func standingDirectoryContains(scope, cwd string) bool {
 }
 
 // standingScopeMatches uses the node's local Git metadata, never a card's repository name or path basename.
-// Repository subdirectory grants retain that relative boundary in another worktree or clone.
+// Repository subdirectory grants retain that relative boundary in another linked worktree. Independent clones require separate grants.
 func (s *Service) standingScopeMatches(ctx context.Context, machine, directory, cwd string) (bool, error) {
 	if !validStandingDirectory(directory) || !path.IsAbs(cwd) || strings.Contains(cwd, "\\") {
 		return false, nil
@@ -37,7 +37,7 @@ func (s *Service) standingScopeMatches(ctx context.Context, machine, directory, 
 	if !task.IsRepo || !path.IsAbs(grant.Root) || !path.IsAbs(task.Root) {
 		return false, nil
 	}
-	same := grant.CommonDir != "" && grant.CommonDir == task.CommonDir || grant.Origin != "" && grant.Origin == task.Origin
+	same := grant.CommonDir != "" && grant.CommonDir == task.CommonDir
 	if !same {
 		return false, nil
 	}

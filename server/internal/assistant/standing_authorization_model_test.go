@@ -1,6 +1,7 @@
 package assistant
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -92,7 +93,7 @@ func TestStandingAuthorizationConfiguredModelAndFallback(t *testing.T) {
 }
 
 func TestStandingAuthorizationForcePushNeedsDeletionGrant(t *testing.T) {
-	for _, plan := range []string{"Force-push the rebased branch to replace the remote history.", "git push --force-with-lease origin feature", "强推变基后的分支覆盖远端历史。"} { // i18n-ignore: synthetic card
+	for _, plan := range []string{"Force-push the rebased branch to replace the remote history.", "force push the branch", "Rewrite history, then push the branch.", "git reset --hard HEAD~1 then push", "改写历史并覆盖远端。", "git push --force-with-lease origin feature", "强推变基后的分支覆盖远端历史。"} { // i18n-ignore: synthetic card
 		ix := proto.Interaction{Kind: proto.IxPlan, Plan: plan}
 		m := &standingJudgeTestModel{reply: standingJudgeReply(t, []string{"push"}, nil)}
 		a, err := assessStandingWith(t.Context(), m, ix, "Update the task branch.", "/code/app")
@@ -113,5 +114,45 @@ func TestStandingAuthorizationForcePushNeedsDeletionGrant(t *testing.T) {
 		if !standingAssessmentAllowed(grant, a, ix) {
 			t.Fatal("explicit reversible history replacement was rejected")
 		}
+	}
+}
+
+type standingTimeoutModel struct{ calls int }
+
+func (m *standingTimeoutModel) JSON(ctx context.Context, _, _ string, _ any) error {
+	m.calls++
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestStandingAuthorizationSlowJudgeReturnsManualCard(t *testing.T) {
+	database := taskRecoveryDatabase(t)
+	e := newRouteEnv(t, database, false)
+	t.Cleanup(func() { settleService(t, e.s) })
+	saveDispatchAuthorizations(t, database, routeStandingGrant())
+	m := &standingTimeoutModel{}
+	e.s.standingJudgeModel = m
+	ix := proto.Interaction{ID: "slow-judge-card", MachineID: "mac", SessionID: "worker-1", Kind: proto.IxPlan,
+		ToolName: "ExitPlanMode", Plan: "Merge the current pull request and verify locally.", CreatedAt: decisionNow(), ExpiresAt: time.Now().Add(time.Hour)}
+	p := &pending{ix: ix, done: make(chan proto.Resolution, 1)}
+	putPending(e.s, p)
+	e.s.record(ix)
+	start := time.Now()
+	e.s.announce(ix)
+	elapsed := time.Since(start)
+	if m.calls != 1 || elapsed > 8*time.Second {
+		t.Fatalf("slow judge blocked manual routing: calls=%d elapsed=%s", m.calls, elapsed)
+	}
+	t.Logf("Slow judge returned to manual routing after %s", elapsed)
+	select {
+	case <-p.done:
+		t.Fatal("timed-out judge answered the card")
+	default:
+	}
+	e.s.askTick(time.Now().Add(2 * askHoldFor))
+	waitFor(t, "timeout manual fallback notification", func() bool { return e.pushesOf(ix.ID) == 1 })
+	counts := e.s.briefConfirmationsAt(t.Context(), time.Now().Add(time.Second), time.UTC)
+	if counts.UserNotified != 1 || counts.AutoAuthorized != 0 {
+		t.Fatalf("timeout confirmation counts: %+v", counts)
 	}
 }

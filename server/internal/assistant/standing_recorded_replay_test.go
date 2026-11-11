@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -187,8 +188,19 @@ func recordedReplayScopeMatches(ix proto.Interaction) bool {
 	if repository == "" {
 		return false
 	}
-	for _, match := range standingAbsolutePath.FindAllStringSubmatch(standingCardText(ix), -1) {
-		if strings.Trim(recordedRepositoryID.FindString(match[1]), "/") != repository {
+	paths, ok := standingCardPaths(ix)
+	if !ok {
+		return false
+	}
+	for _, candidate := range paths {
+		// Anonymized replay has no node environment; unresolved expansions stay manual.
+		if strings.ContainsAny(candidate, "~${}") {
+			return false
+		}
+		if !path.IsAbs(candidate) {
+			candidate = path.Join(ix.Cwd, candidate)
+		}
+		if strings.Trim(recordedRepositoryID.FindString(path.Clean(candidate)), "/") != repository {
 			return false
 		}
 	}

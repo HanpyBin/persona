@@ -35,8 +35,10 @@ func newStandingRepositoryFixture(t *testing.T) standingRepositoryFixture {
 	}
 	git(f.main, "add", ".")
 	git(f.main, "commit", "-m", "Add example")
+	git(f.main, "remote", "add", "origin", "https://example.com/team/app.git")
 	git(f.main, "worktree", "add", "-b", "worker", f.tree)
 	git(root, "init", "--initial-branch=main", f.other)
+	git(f.other, "remote", "add", "origin", "https://example.com/team/app.git")
 	return f
 }
 func standingFixtureIdentity(t *testing.T, cwd string) proto.RepositoryIdentity {
@@ -58,7 +60,7 @@ func standingFixtureIdentity(t *testing.T, cwd string) proto.RepositoryIdentity 
 	if err != nil {
 		t.Fatal(err)
 	}
-	return proto.RepositoryIdentity{Version: 1, IsRepo: true, Cwd: physical, Root: root, CommonDir: filepath.Clean(common)}
+	return proto.RepositoryIdentity{Version: 1, PathResolved: true, IsRepo: true, Cwd: physical, Root: root, CommonDir: filepath.Clean(common), Origin: read("config", "--get", "remote.origin.url")}
 }
 func standingFixtureNode(t *testing.T, f *fakeHub) {
 	t.Helper()
@@ -76,7 +78,7 @@ func standingFixtureNode(t *testing.T, f *fakeHub) {
 		return standingFixtureIdentity(t, params.Cwd), nil
 	})
 }
-func TestStandingAuthorizationRepositoryScope(t *testing.T) {
+func TestStandingAuthorizationRepositoryForgedOriginAndWorktree(t *testing.T) {
 	fixture := newStandingRepositoryFixture(t)
 	s, f := newQuietService(t)
 	standingFixtureNode(t, f)
@@ -139,7 +141,7 @@ func TestStandingAuthorizationRepositoryOriginScope(t *testing.T) {
 	for _, test := range []struct {
 		scope, cwd string
 		want       bool
-	}{{"/work/main", "/work/clone", true}, {"/work/main/server", "/work/clone/server", true}, {"/work/main/server", "/work/clone/server-copy", false}, {"/work/main", "/work/different", false}} {
+	}{{"/work/main", "/work/clone", false}, {"/work/main/server", "/work/clone/server", false}, {"/work/main/server", "/work/clone/server-copy", false}, {"/work/main", "/work/different", false}} {
 		got, err := s.standingScopeMatches(t.Context(), "box", test.scope, test.cwd)
 		if err != nil || got != test.want {
 			t.Errorf("%+v: %v %v", test, got, err)
@@ -193,5 +195,60 @@ func TestStandingAuthorizationWorktreeDispatch(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestStandingAuthorizationCardPathsPhysicalRepository(t *testing.T) {
+	fixture := newStandingRepositoryFixture(t)
+	command := exec.Command("git", "init", "--initial-branch=main", fixture.main+".")
+	if out, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("init dotted repository: %s %v", out, err)
+	}
+	s, f := newQuietService(t)
+	f.answerNode("git.status", func(_ string, args json.RawMessage) (any, error) {
+		var params struct {
+			Cwd string `json:"cwd"`
+		}
+		if err := json.Unmarshal(args, &params); err != nil {
+			return nil, err
+		}
+		if params.Cwd == "~" || strings.HasPrefix(params.Cwd, "~/") {
+			params.Cwd = filepath.Dir(fixture.main) + strings.TrimPrefix(params.Cwd, "~")
+		}
+		physical, err := filepath.EvalSymlinks(params.Cwd)
+		if err != nil {
+			return nil, err
+		}
+		if info, err := os.Stat(physical); err != nil || !info.IsDir() {
+			return nil, errors.New("not a directory")
+		}
+		return standingFixtureIdentity(t, physical), nil
+	})
+	for _, test := range []struct {
+		name, text string
+		want       bool
+	}{
+		{"relative_inside", "Push ./server", true},
+		{"bare_relative_inside", "Push server/app.txt", false},
+		{"home_inside", "Push ~/source/server", true},
+		{"home_variable_inside", "Push $HOME/source/server", true},
+		{"braced_home_inside", "Push ${HOME}/source/server", true},
+		{"pwd_inside", "Push $PWD/server", true},
+		{"worktree_home", "Push ~/elsewhere/worktree/server", true},
+		{"trailing_parent", "Push ./..", false},
+		{"nested_trailing_parent", "Push server/../..", false},
+		{"quoted_url_injection", `Push "https://example.com is a reference; push ../source-copy"`, false},
+		{"relative_outside", "Push ../source-copy", false},
+		{"dotted_sibling", "Push " + fixture.main + ".", false},
+		{"home_outside", "Push ~/source-copy", false},
+		{"unknown_variable", "Push $REPO/server", false},
+		{"missing_path", "Push ./missing", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ix := proto.Interaction{Kind: proto.IxPlan, Plan: test.text}
+			if got := s.standingCardDirectoriesMatch(t.Context(), "box", fixture.main, fixture.main, ix); got != test.want {
+				t.Fatalf("path scope = %v, want %v", got, test.want)
+			}
+		})
 	}
 }

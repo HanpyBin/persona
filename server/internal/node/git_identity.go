@@ -15,12 +15,21 @@ import (
 
 // gitIdentity reads only local metadata. Unlike full status, it never scans changed files or commit history.
 func (n *Node) gitIdentity(ctx context.Context, cwd string) (proto.RepositoryIdentity, error) {
-	dir, err := n.gitDir(cwd)
+	// Resolve before gitDir cleans dot segments: link/.. must follow the actual
+	// filesystem, rather than appear to stay inside an authorized checkout.
+	if cwd == "~" || strings.HasPrefix(cwd, "~/") {
+		cwd = n.home + strings.TrimPrefix(cwd, "~")
+	}
+	physical, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return proto.RepositoryIdentity{}, err
+	}
+	dir, err := n.gitDir(physical)
 	if err != nil {
 		return proto.RepositoryIdentity{}, err
 	}
 	dir = realPath(dir)
-	result := proto.RepositoryIdentity{Version: 1, Cwd: dir}
+	result := proto.RepositoryIdentity{Version: 1, Cwd: dir, PathResolved: true}
 	root, err := git(ctx, dir, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return result, nil
