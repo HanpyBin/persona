@@ -134,7 +134,7 @@ The theme (the title), when and where, attendees and speakers only when known, t
 
 ## Privacy
 
-Transcription stays on device, only text is uploaded, audio never leaves the phone, and recordings still expire after `recording_days` (default 14). A meeting recorded in hub mode (#3862, chosen per meeting) is the exception: "Privacy per mode" below.
+Transcription stays on device, only text is uploaded, audio never leaves the phone, and recordings still expire after `recording_days` (default 14). A meeting recorded in hub mode (#3862, chosen per meeting) is the exception: "Privacy per mode" below. In a meeting recorded in privacy mode, Talk sends the words the iPhone heard, not the audio (#3862, "Open items").
 
 Minutes are kept longer than their transcript (#3780). Past `recording_days` the hub **trims** a recording that has minutes instead of deleting it: its transcript (`segments.json`, `transcript.md`), the summary made from it, the live log and any undo journal are deleted, and only `meta.json` (now with `trimmed_at`), `minutes.json` and `minutes.md` stay, according to the assistant setting `minutes_days`: **forever by default** (unset or `0`), otherwise 1–3650 days after the meeting (#3862). A recording without minutes, or one past a finite `minutes_days`, is deleted entirely as before. With forever, retention never deletes trimmed minutes; the user’s delete still removes everything. `GET /api/v1/assistant` returns `0` for forever, otherwise `max(minutes_days, recording_days)`. `PUT` accepts `0` or an integer from 1–3650 (`400` otherwise). `assistant.minutes_days` in `persona_settings` accepts `0` or `"forever"`, shows the value in words, and confirms changes before applying them. A positive value below `recording_days` is saved as asked for, by both, and counts once `recording_days` is shorter. Transcripts still default to 14 days, configurable through `recording_days`. The trim writes `meta.json` first; files a trim cut short leaves (a crash, a failed removal) go on the next sweep, also once a longer `recording_days` covers the recording again.
 
@@ -353,11 +353,11 @@ Each phase ships on its own, behind its own flag ("Flags and compatibility").
 | Phase | Ships | Hub | Web | iPhone | Flag |
 | --- | --- | --- | --- | --- | --- |
 | 0 Retention | Minutes outlive their transcript | Done (#3936) | Done | Done | — |
-| 1 Meeting conversation | The room conversation and asking it, Just me, the private mark (and earlier meetings back for meetings that are not private), the follow-up conversation, one thread | The room (guest kind `meeting`, meeting tools, batches), `…/ask` answered by it, `…/just-me`, `…/private`, `…/followup`, two origins, the `meeting_live` event, deleting the room at the transcript cut | One thread on the recording detail, the private switch, the follow-up composer | The meeting page (thread, Ask, Just me, role, private), the Live Activity's answer | `meeting_conversation` |
+| 1 Meeting conversation | The room conversation and asking it, Just me, the private mark (and earlier meetings back for meetings that are not private), the follow-up conversation, one thread | The room (guest kind `meeting` without the owner's Claude Code setup, meeting tools, batches), `meeting.json`, `…/ask` answered by it, `…/just-me` with its turn mark, `…/private`, `…/followup`, two origins, the `meeting_live` event, deleting the room at the transcript cut | One thread on the recording detail, the private switch, the follow-up composer | The meeting page (thread, Ask, Just me, role, private), the Live Activity's answer and Turn off | `meeting_conversation` |
 | 2 Live view | Live transcript and topics | `lines` and `topics` on `GET …/live`, the topics tool | Topics and live lines on the detail while it records | 15-second segments; Topics and Live on the page; topic and latest line in the Live Activity | `meeting_live_view` |
-| 3 Photos | Photos as meeting material | `…/photos`, storage with the recording, forwarding to the room, notes, citations in the minutes, retention | Photos on the detail, photo citations in the minutes | Camera and library on the page, on-device text recognition, Photo in the Live Activity | `meeting_photos` |
-| 4 Realtime voice | Talk to Persona by voice during the meeting | Meeting mode in the built-in voice extension | — | A meeting call on the recorder's capture, Talk (hold in the app, tap in the Live Activity), echo | `meeting` in the voice extension's `features` |
-| 5 Hub transcription | Hub mode | The `transcription` extension point and its built-in adapter, the audio socket, gap uploads, the transcript of record, the 4× final pass | Mode and gaps on the detail | The uplink from the recorder's tap, gap uploads, the mode choice, privacy texts per mode | `meeting_transcription` |
+| 3 Photos | Photos as meeting material | `…/photos`, storage with the recording, forwarding to the room, notes, citations in the minutes, retention | Photos on the detail, photo citations in the minutes | Camera and library on the page, on-device text recognition | `meeting_photos` |
+| 4 Realtime voice | Talk to Persona by voice during the meeting | Meeting mode in the built-in voice extension | — | A meeting call on the recorder's capture, Talk (hold in the app, tap in the Live Activity; in privacy mode transcribed on the iPhone), echo | `meeting` in the voice extension's `features` |
+| 5 Hub transcription | Hub mode | The `transcription` extension point and its built-in adapter, the audio socket, the live log's fallback to the phone's text, gap uploads, the transcript of record, the 4× final pass | Mode and gaps on the detail | The uplink from the recorder's tap, gap uploads, the mode choice, privacy texts per mode | `meeting_transcription` |
 | 6 Talk about this meeting | The follow-up from any recording, by text and voice | The minutes push opens the meeting; `kind` on `GET /api/v1/kb-search` and on the voice `search_knowledge` | **Talk about this meeting** on the detail | The same on the detail and after Stop; a voice call bound to the follow-up | none (phase 1's route) |
 
 ### The parts
@@ -388,7 +388,7 @@ Each phase has a feature flag that the hub lists in WS `hello.features` and trus
 | #3746 | With `meeting_conversation` | The #2981 contract, unchanged: the attending session is fed and `…/ask` answers from meeting material. From phase 1 earlier meetings come back into those answers, but only meetings marked not private, which a #3746 phone never marks ("The private mark") |
 | New | With `meeting_attendance` only | The phone behaves as #3746 |
 | New | With `meeting_conversation` | This section |
-| New | An older manager after a rollback | An upload `200` without `room` for a recording that asked for one means an older manager: the phone uploads it again with `attendance: "off"` and sends no `…/live` or `…/ask` for it, since an older manager would feed the main chat instead |
+| New | An older manager after a rollback | An upload `200` without `room` means an older manager. It never reads the role inside `room`, so it stored the meeting with attending off and feeds nothing, neither on that upload nor when it restarts. The phone keeps uploading as usual, sends no `…/live` or `…/ask` for the recording and shows that Persona can't take part, until a `200` carries `room` again |
 
 - The web and Android from before list the room and follow-up conversations as ordinary auto chats (their origins are unknown, so **Other**). The watch is unchanged: watch recordings never attend (#2981).
 - A node that does not know guest conversations, or `assistant.guest_delete`, gives a room `unavailable` with `node_too_old` (asks fall back to meeting material), or a room that cannot be deleted yet ("The room conversation").
@@ -401,23 +401,27 @@ On `PUT /api/v1/recordings/{id}`, with `kind: "meeting"`:
 
 ```jsonc
 {
-  "attendance": "participant",   // as #2981
-  "room": true,                  // optional: the meeting's own room conversation attends; attending_session is ignored
-  "private": false               // optional: the meeting's private mark as it starts; taken only while the recording has none
+  "room": {"attendance": "participant"},   // optional: the meeting's own room conversation attends, in this role
+  "private": false                         // optional: the meeting's private mark as it starts; taken only while the recording has none
 }
 ```
 
-- `room: true` replaces `attending_session`: the hub opens one room conversation for the meeting and feeds it, and an `attending_session` beside it is ignored (stored as absent). A recording that once had `room` keeps it: a later upload without it changes nothing, so a meeting never moves from its room to another session. Absent on every upload: the #2981 behavior.
-- The `200` adds `room` (the object in "Fields on `GET …/live` and `detail.meta`") for every recording that asked for one. A problem with `room` or `private` never fails the upload, which carries the transcript.
+- `room` replaces the top-level `attendance` and `attending_session`: the hub opens one room conversation for the meeting and feeds it. `room.attendance` takes #2981's roles and rules: a value that is not one of the three is stored as `off` with `attendance_problem: "unknown_role"`, a role on a recording whose `kind` is not `meeting` as `off` with `"not_meeting"`. A `room` that is not an object counts as absent. Absent on every upload: the #2981 behavior.
+- With `meeting_conversation` the phone sends `room` on every upload of every meeting recording, whatever the role (`{"attendance": "off"}` included), and never the top-level `attendance` or `attending_session`; the hub ignores those two beside `room`. The role travels inside `room` so that an older manager after a rollback, which reads only the top-level `attendance`, sees a meeting that is off and feeds nothing ("Flags and compatibility").
+- A recording that once had `room` stays a room meeting: a later upload without it turns the role `off` and changes nothing else (its top-level `attendance` and `attending_session` stay ignored), so a meeting never moves from its room to another session.
+- The `200` carries the top-level `attendance` (the role in effect, as every #2981 `200` does) and `room` (the object in "Fields on `GET …/live` and `detail.meta`") for every room meeting, at least `{"state": "none"}`. Only a `200` without `room` means an older manager. A problem with `room` or `private` never fails the upload, which carries the transcript.
 - `private` is the start sheet's choice. The hub takes it only while the recording has no mark, so a later upload never undoes a change made with `…/private`; a value that is not a boolean is ignored. The phone sends it for every meeting recording, attended or not, since every meeting's minutes could be material later.
-- As in #2981, the phone sends no `…/live` or `…/ask` for a recording until an upload carrying its current `attendance` and `room` has returned `200`.
+- As in #2981, the phone sends no `…/live` or `…/ask` for a recording until an upload carrying its current `room` has returned a `200` with `room`.
+- **Where the manager keeps it.** A room meeting's role, the room's state and ids, `private`, the follow-up's ids and (phase 5) the transcription mode are kept in `recordings/<id>/meeting.json` beside `meta.json`, never in `meta.json`: an older manager rewrites `meta.json` without the fields it does not know, and when it starts resumes feeding every recording whose `meta.json` has an `attendance`. `detail.meta` and `…/live` still report `attendance`, read from `meeting.json`. Search skips `meeting.json`, and the trim keeps it (an older manager's trim removes it, which leaves the meeting with no mark, so private).
 
 #### The room conversation
 
-- **When.** The hub opens it once a recording with `room` has the role `listener` or `participant`, after the upload has been answered (never inside the upload request: the start needs the node). A meeting that starts `off` and turns attending on later gets it then. One per recording, never a second.
+- **When.** The hub opens it once a room meeting has the role `listener` or `participant`, after the upload has been answered (never inside the upload request: the start needs the node). Until then `room.state` is `none`; a meeting that starts `off` and turns attending on later gets its room then, and one that stays `off` never gets one. One per recording, never a second, and none after the meeting's end ("The meeting's end" below).
 - **What it is.** A guest conversation ([assistant.md](./assistant.md) "Guest conversations") of a new kind, `meeting`, on the assistant's computer:
   - Claude Code only, and every process it runs in has `--tools ""` and `--strict-mcp-config`. No live snapshot, none of the assistant's CLAUDE.md, memory or skills, never the warm spare process.
-  - Its own directory, prepared with `assistant.guest_prepare` like the extensions' guests but with a meeting CLAUDE.md (the owner's name, the language and the rules below), not the directory extension guests share.
+  - One directory per meeting, `.persona/guest-meeting/<recording id>` in the node's state directory, prepared with `assistant.guest_prepare` like the extensions' guests but with a meeting CLAUDE.md (the owner's name, the language and the rules below), not the directory extension guests share.
+  - **Nothing of the owner's Claude Code setup.** `--tools ""` and `--strict-mcp-config` remove only built-in tools and other MCP servers; Claude Code would still load the user's own instructions, settings and hooks. The room's processes load none of them: not the user's CLAUDE.md (`~/.claude/CLAUDE.md`, or the one under `CLAUDE_CONFIG_DIR`), not a CLAUDE.md in a parent of its directory (such as `~/CLAUDE.md`), not the hooks, output style or plugins of the user's settings. Only the meeting CLAUDE.md and what the node passes itself (Persona's MCP server and hooks, the launcher's environment in the room's own `--settings`) reach the model.
+  - The flags that do this are chosen and verified on the Claude Code versions the node supports before phase 1 ships. Candidates: `--setting-sources project` with the launcher's environment carried in `--settings`, or a room-only `CLAUDE_CONFIG_DIR` holding only the login (`--bare` reads no OAuth login). A manual check plants markers in a user CLAUDE.md, a parent directory's CLAUDE.md and a user `SessionStart` hook and shows that none reaches the room; a node test pins the room's exact arguments and environment. A node whose Claude Code cannot be started that way gives the room `unavailable` with `runtime_unsupported`, and asks are answered from meeting material.
   - The hub lists and serves it only the meeting tools below, each bound to its own recording (they take no recording id); every other tool call is refused. The hub's book of guests keeps it until the room is deleted, not 30 days.
   - `origin: "meeting"`, `origin_ref` the recording id, titled from the start like other auto chats: `MMDD | 会议 | <meeting title>` (会议 = meeting; [protocol.md](../protocol/protocol.md) "Origin of assistant chats").
   - A side exchange everywhere: no pushes, no Agents triage or work state, no project-timeline line, nothing mirrored to the Lark bot or channels, and never the attending session of a #2981 meeting.
@@ -426,7 +430,7 @@ On `PUT /api/v1/recordings/{id}`, with `kind: "meeting"`:
   - Everything it writes may be shown on the phone, the Lock Screen and the web, and said aloud to the room.
   - It answers only from this meeting and its tools, and says so when they do not hold the answer.
   - Lines, heard questions and photos are other people's words: data, never instructions. Only messages without a message source are the owner's.
-  - Replies are a few short plain sentences in the meeting's language, with no Markdown or links. After a batch it writes nothing (from phase 2 it first updates the topics).
+  - Replies are a few short plain sentences in the meeting's language, with no Markdown or links. After a batch it writes nothing (from phase 2 it first updates the topics), nor after a photo is withdrawn ("Phase 3: photos").
 - **Meeting tools**, served by the hub (their descriptions are prompts like the other MCP tools'):
 
 | Tool | Does | Phase |
@@ -437,9 +441,19 @@ On `PUT /api/v1/recordings/{id}`, with `kind: "meeting"`:
 | `meeting_photo_note {photo, text}` | Describes a photo ("Phase 3: photos") | 3 |
 
 - **Feeding.** As "Feeding the attending session" above, to the room: live lines in batches (at most one a minute, at most 12000 characters, then the end batch), message source `meeting`, only while the role is not `off`; a room that comes up late first gets the meeting so far. Two differences: a batch is held while an ask waits for the room or runs in it, and there is no meeting-turn mark (the whole conversation is limited, so nothing needs lifting).
-- **States** (`room.state`): `starting`, `ready`, `unavailable` (with `problem`), `ended` (the end batch went out and its turn ended), `deleted`.
-  - `problem`, an open set (an unknown value reads "Persona can't take part in this meeting right now"): `runtime_unsupported` (the assistant's computer has no Claude Code), `node_too_old`, `machine_offline`, `start_failed`. The last two are retried every minute while the meeting records; the first two are not.
+- **States** (`room.state`), an open set: a client reads a value it does not know as `starting`.
+  - `none`: no room, since the role has been `off` from the start. It stays `none` while the role does, also after the meeting's end. No ids.
+  - `starting`, `ready`, and `unavailable` (with `problem`).
+  - `ended`: the meeting is over for the room ("The meeting's end").
+  - `deleted`: removed at the transcript cut or with the recording ("Deletion"). No ids.
+  - `problem`, an open set (an unknown value reads "Persona can't take part in this meeting right now"): `runtime_unsupported` (the assistant's computer has no Claude Code, or none that can run a room without the owner's setup), `node_too_old`, `machine_offline`, `start_failed`. The last two are retried every minute until the meeting's end; the first two are not.
   - While the room is not `ready`, asks are answered from meeting material by `meeting.answer`, as in #2981 (`via: "material"`).
+- **The meeting's end** is the moment #2981's end batch is due: the first upload carrying both `ended_at` and `complete: true`, or 3 minutes after the first upload carrying `ended_at`, whichever comes first. Then:
+  - a `ready` room whose role is not `off` gets the end batch and turns `ended` once that turn ends, 3 minutes later at the latest (an end batch not delivered by then is dropped);
+  - any other `ready`, `starting` or `unavailable` room stops retrying and turns `ended` at once, keeping its ids if it had any;
+  - a `none` room stays `none`.
+
+  So every room is `none`, `ended` or `deleted` at most 6 minutes after the first upload carrying `ended_at`, whatever its role or its computer did.
 - **Messages from elsewhere.** A full device's `POST /api/v1/sessions/{mid}/{sid}/messages` into the room is the owner's question while the meeting records (an app that does not know rooms opened it); it is never spoken. Once the room is `ended` the manager refuses it, `409 meeting_ended`, and the apps write in the follow-up instead.
 - **Deletion.** At the transcript cut (the trim) and on the recording's delete, the hub deletes the room: the node's new `assistant.guest_delete {dir, session_id}` removes its transcript and any files saved for it, and the hub drops it from the session lists. A node that is offline, or too old for the method, is asked again at every retention pass; meanwhile `room.state` stays `ended`, and the detail says a copy is still on the assistant's computer.
 
@@ -447,8 +461,9 @@ On `PUT /api/v1/recordings/{id}`, with `kind: "meeting"`:
 
 `POST /api/v1/recordings/{id}/ask` keeps the request, response, idempotency, hold and errors of "Attendance fields". In a room meeting:
 
-- A **typed** question goes to the room as the owner's own message, the question's text only (`client_msg_id` `ask-<id>`). So does a **spoken** one: `spoken: true` in the request (with `question`) marks a question the phone transcribed from a Talk span ("Phase 4: realtime voice in the meeting"); its `question_source` is `spoken`.
+- A **typed** question goes to the room as the owner's own message, the question's text only. So does a **spoken** one: `spoken: true` in the request (with `question`) marks a question the phone transcribed from a Talk span ("Phase 4: realtime voice in the meeting"); its `question_source` is `spoken`.
 - A **heard** question (no `question`) goes as a message with source `meeting`: the lines of the 45 seconds before `at` in a context block (the same lines and `live_next` wait as #2981) and a line asking for the question just asked in the room. Its `question` stays `""`, and `heard` lists those lines.
+- **Attempts.** The message an ask sends has `client_msg_id` `ask-<id>-<k>`, `k` its attempt (1 for the first). The ask keeps each attempt, its message id and the room turn it started, with the asks in `live.json`. A repeated request while an attempt is pending observes that attempt and its turn. Asking a `failed` ask again ("Attendance fields") starts attempt `k+1` under the next id, so the send-once check of `client_msg_id` cannot swallow it. After a restart the manager first looks for attempt `k`'s message and turn in the room before it decides anything: a turn still running is awaited, a turn that ended settles the ask, and a message never delivered is sent again under the same id. The ask's own `id` never changes.
 - The answer is the room's reply to that message: the turn's answer with Markdown removed, cut at a sentence end to at most 400 characters (the thread keeps the whole reply). A turn that ends with no text is `failed` with `no_answer`. `sources` are the earlier meetings and projects `meeting_earlier` returned during that turn, at most 6.
 - Order: an ask waits for a batch turn that is running, then goes ahead of any held batch. One room answers one ask at a time; `429 ask_busy` still allows two in flight. `model_timeout` counts 3 minutes from the message's send.
 - While the room is `starting`, an ask waits for it within its own hold and retries; while it is `unavailable`, `meeting.answer` answers.
@@ -469,12 +484,17 @@ On `PUT /api/v1/recordings/{id}`, with `kind: "meeting"`:
 {"conversation": {"machine_id": "<machine id>", "session_id": "<main chat's session id>"}, "client_msg_id": "just-me-<id>"}
 ```
 
-- The hub sends one message to the main chat (starting one when there is none) as the owner's own: a collapsed context block naming the meeting (its title, the recording id and the time in the meeting), then the text and images. With the recording id the main chat can read the meeting with `kb_get`. A retry with the same `id` has the same `client_msg_id`, which sends already deduplicate.
-- That turn sends no completion push and is not mirrored to the Lark bot or channels: the answer is on the meeting page, and a notification would show on a phone lying on the table. Otherwise it is an ordinary turn of the main chat, with every tool.
+- The hub sends one message to the main chat (starting one when there is none) as the owner's own: a collapsed context block naming the meeting (its title, the recording id and the time in the meeting), then the text and images. The title and any calendar text go into the block through the prompts' context escaping and are labeled as the meeting's data, not the owner's words: a calendar invite's title is written by whoever organized the meeting. With the recording id the main chat can read the meeting with `kb_get`.
+- **Retries.** Each request leaves a durable receipt in `client_ops`, derived from the body's `id` as Lark sends derive theirs ([protocol.md](../protocol/protocol.md) "Operation receipts (client_ops)"). Its digest covers the recording and the whole body, and its result is the response, with the main chat the hub resolved. A repeat with the same `id` returns that result without sending again, naming the same conversation even when the main chat has changed since; another body or recording under it is `409 op_id_reused`. A definite failure is replayed too, and the phone asks again with a new `id`. The receipt holds the digest and the response, never the text, and follows the `client_ops` retention (30 days).
+- **The Just me turn** (the main chat's turn this message starts) carries a mark, kept with the main chat until the turn ends and for at most 3 hours, as a meeting turn's is ("Feeding the attending session"). While it stands, nothing of the turn reaches a screen other than the meeting page, since a phone lying on the table shows its notifications to the room:
+  - no completion push, and nothing mirrored to the Lark bot or channels;
+  - `notify_user` sends no push and no Lark or channel copy; its text stays in the conversation, which the meeting page shows;
+  - a card the turn raises (`ask_user`, a permission or a confirmation) is pushed only with content-free text, as a health-space card is, and never to Lark or channels; the Fleet Live Activity shows it without its text;
+  - otherwise it is an ordinary turn of the main chat, with every tool.
 - Nothing of it is stored with the recording: it is never meeting material, never in `asks`, the room or the follow-up's seed.
-- The phone shows the main chat's items after that message until its turn ends, only on the meeting page under **Just me**; never in the Live Activity, never spoken.
+- The phone shows the main chat's items after that message, and the turn's cards (answered there), until its turn ends, only on the meeting page under **Just me**; never in the Live Activity, never spoken.
 - `text` at most 8000 characters, at most 4 `images` of at most 3 MiB each, and at least one of the two.
-- Errors, checked in this order: `403 forbidden` (not full credentials), `503` as for the other recording routes, `413 too_large` (a body over 32 MiB), `410 recording_deleted`, `404 recording_not_found`, `400`, `409 not_meeting` (the recording's `kind` is not `meeting`), `409 meeting_ended` (the recording has `ended_at`), then the main chat's own send errors as `POST /api/v1/sessions/{mid}/{sid}/messages` gives them.
+- Errors, checked in this order: `403 forbidden` (not full credentials), `503` as for the other recording routes, `413 too_large` (a body over 32 MiB), `410 recording_deleted`, `404 recording_not_found`, `400`, a stored receipt for `id` (its result, or `409 op_id_reused`), `409 not_meeting` (the recording's `kind` is not `meeting`), `409 meeting_ended` (the recording has `ended_at`), then the main chat's own send errors as `POST /api/v1/sessions/{mid}/{sid}/messages` gives them. The receipt comes before `meeting_ended`, so a response lost before Stop is still recovered after it.
 
 #### The private mark
 
@@ -486,10 +506,10 @@ On `PUT /api/v1/recordings/{id}`, with `kind: "meeting"`:
 
 #### After the meeting: the follow-up
 
-`POST /api/v1/recordings/{id}/followup` makes the meeting's follow-up conversation once, and sends into it.
+`POST /api/v1/recordings/{id}/followup` sends the owner's message into the meeting's follow-up conversation, making it with that message the first time.
 
 ```jsonc
-{"id": "<UUID>", "text": "Draft the email to the vendor.", "images": []}  // all optional; id required with text or images
+{"id": "<UUID>", "text": "Draft the email to the vendor.", "images": []}  // id required; text or images required
 ```
 
 `200`:
@@ -498,14 +518,17 @@ On `PUT /api/v1/recordings/{id}`, with `kind: "meeting"`:
 {"followup": {"machine_id": "<machine id>", "session_id": "<session id>"}, "created": true, "client_msg_id": "followup-<id>"}
 ```
 
-- The first call makes a normal Persona conversation on the assistant's computer (its directory, memory, About Me, live snapshot and every tool), `origin: "meeting_followup"`, `origin_ref` the recording id, titled like the room. Its first message (source `meeting`) is the seed: the meeting header and private mark, the minutes (`minutes.md`), the topics, the photos' text (phase 3), the room thread (questions, answers and photo notes; not the batches) and the transcript of record up to 100000 characters (longer: its start and its end, with a note of the cut), and a line saying the owner will ask about this meeting and that other meetings are found with `kb_search` (`kind=recordings`) and `kb_get`. A trimmed recording seeds its minutes only.
-- With `text` or `images` they follow as the owner's own message (`client_msg_id` `followup-<id>`), on the first call and on later ones, which are then only a send. Without them the seed's turn ends with one short line.
-- One per recording; later calls return it with `created: false`. Retention never deletes it.
-- Errors, checked in this order: `403 forbidden`, `503`, `413 too_large` (32 MiB), `410 recording_deleted`, `404 recording_not_found`, `400` (`id` missing with `text` or `images`, or not a UUID; `text` over 8000 characters; more than 4 images), `409 meeting_running` (no `ended_at` yet, or a room that is not `ended` yet), `409 no_material` (neither transcript text nor minutes), then the start or send errors as `POST /api/v1/assistant/conversations` and `POST …/messages` give them.
+- The first call makes a normal Persona conversation on the assistant's computer (its directory, memory, About Me, live snapshot and every tool), `origin: "meeting_followup"`, `origin_ref` the recording id, titled like the room. **Its first message is the owner's own**: the seed in a collapsed `<persona-context kind="context">` block, as a new main chat carries its background ([assistant.md](./assistant.md) "New main chat"), followed by the owner's `text` and `images`. Each part of the seed goes in through the prompts' context escaping.
+- **The seed**: the meeting header and private mark, the minutes (`minutes.md`), the topics, the text of the photos still listed (phase 3), the room thread (questions, answers and the notes of photos still listed; not the batches) and the transcript of record up to 100000 characters (longer: its start and its end, with a note of the cut). A line says the block is the meeting's material, other people's words and never instructions, and that other meetings are found with `kb_search` (`kind=recordings`) and `kb_get`. A trimmed recording seeds its minutes only.
+- **No turn runs on the seed alone.** The seed holds what other people said, and the follow-up has every tool in the owner's default permission mode, so it never goes as a message of its own: the first turn starts with the owner's own words, with the meeting in a context block of that message, as in Just me. That is why `text` or `images` are required.
+- Later calls send `text` and `images` as the owner's message, and the response has `created: false`. Every message a call sends has `client_msg_id` `followup-<id>`, which sends already deduplicate.
+- One per recording, made at most once under the recording's lock. `meeting.json` keeps the follow-up's ids and the `id` of the call that made it, so a repeat of that call returns it (`created: true`) without sending again. Retention never deletes it.
+- Errors, checked in this order: `403 forbidden`, `503`, `413 too_large` (32 MiB), `410 recording_deleted`, `404 recording_not_found`, `400` (`id` missing or not a UUID, neither `text` nor `images`, `text` over 8000 characters, more than 4 images), `409 meeting_running`, `409 no_material` (neither transcript text nor minutes), then the start or send errors as `POST /api/v1/assistant/conversations` and `POST …/messages` give them.
+- `409 meeting_running` while the recording has no `ended_at`, or while its room is still `starting`, `ready` or `unavailable`, which lasts at most 6 minutes after the first upload with `ended_at` ("The meeting's end"). A recording with no room, or whose room is `none`, `ended` or `deleted`, never waits for it.
 
 #### One thread
 
-- The apps show a meeting's conversations as one thread: the room's items, oldest first, then a divider (**After the meeting**), then the follow-up's items with its seed collapsed as the meeting's material. Batches show collapsed ("N lines from the meeting"), heard questions as "What was just said (mm:ss)", photos as thumbnails (phase 3).
+- The apps show a meeting's conversations as one thread: the room's items, oldest first, then a divider (**After the meeting**), then the follow-up's items, with the seed block of its first message collapsed as the meeting's material. Batches show collapsed ("N lines from the meeting"), heard questions as "What was just said (mm:ss)", photos as thumbnails (phase 3), and a photo that `GET …/photos` no longer lists as "Photo removed", with no thumbnail.
 - The composer writes to the room while the meeting records (through `…/ask`, or `…/just-me` with **Just me** on), and to the follow-up afterwards (`…/followup` until it exists, then `POST /api/v1/sessions/{mid}/{sid}/messages`).
 - In the sidebar, apps that know the two origins show one row per meeting in Recent: the follow-up when there is one, else the room; it opens the thread. Apps that don't list both among their auto chats.
 - Once the room is deleted, the thread starts at the follow-up's seed, which holds the room thread's text. A meeting whose room never came up shows its `asks` instead, as #3746 does.
@@ -517,12 +540,14 @@ On `PUT /api/v1/recordings/{id}`, with `kind: "meeting"`:
 ```jsonc
 {
   "private": false,                    // absent until chosen
-  "room": {"state": "ready", "machine_id": "<machine id>", "session_id": "<session id>"},  // problem when unavailable; no ids while starting or once deleted
+  "room": {"state": "ready", "machine_id": "<machine id>", "session_id": "<session id>"},  // room meetings only; see "States"
   "followup": {"machine_id": "<machine id>", "session_id": "<session id>"}                  // once made
 }
 ```
 
-`detail.meta` of `GET /api/v1/kb/recordings/{id}` carries the same three. In a room meeting `attending_session` is absent, and the top-level `problem` keeps only `live_full`; the room's own problems are in `room.problem`.
+- `room` is present for every room meeting, `{"state": "none"}` before it has a room; the upload's `200` carries the same object. `state` is an open set ("States"); `problem` comes with `unavailable`; the ids come once the room has started, and never with `none` or `deleted`. The upload's `room` (`{"attendance"}`) and this one share a name, not a shape.
+- `detail.meta` of `GET /api/v1/kb/recordings/{id}` carries the same three. In a room meeting the top-level `attendance` is the room's role, `attending_session` is absent, and the top-level `problem` keeps only `live_full`; the room's own problems are in `room.problem`.
+- Later phases add more. Both `GET …/live` and `detail.meta` get `transcription` (phase 5). Only `GET …/live` gets `lines`, `more`, `topics`, `topics_at` (phase 2) and `interim` (phase 5): `detail.meta` never carries live lines, topics or captions, since extension tokens with `kb.read` reach `GET /api/v1/kb/recordings/{id}` and never `…/live`. Photos are listed by `GET …/photos` (phase 3), in neither.
 
 #### The `meeting_live` event
 
@@ -530,7 +555,7 @@ A manager's WebSocket event, content-free: `{"type": "meeting_live", "recording_
 
 #### What the phone and the web do
 
-- **iPhone.** With `meeting_conversation`, the start sheet offers the role and **Private meeting** (no attending-session picker); one-tap starts use the default role and not private. It uploads at once as #2981 does, with `room: true` and `private`; streams live lines with `…/live`; opens the meeting page ("The meeting card") and, once `room.state` is `ready`, subscribes to the room (WS `subscribe`, items paging); asks through `…/ask` and **Just me** through `…/just-me`; says answers with `speak` aloud as #3746 does; after the end writes into the follow-up.
+- **iPhone.** With `meeting_conversation`, the start sheet offers the role and **Private meeting** (no attending-session picker); one-tap starts use the default role and not private. It uploads every meeting at once, whatever the role, with `room` (the role inside it) and `private`, and after a `200` without `room` behaves as "Flags and compatibility" says; streams live lines with `…/live`; opens the meeting page ("The meeting card") and, once `room.state` is `ready`, subscribes to the room (WS `subscribe`, items paging); asks through `…/ask` and **Just me** through `…/just-me`; says answers with `speak` aloud as #3746 does; after the end writes into the follow-up.
 - **Web.** The recording detail gets a **Conversation** section (the one thread: read-only while the meeting records, the follow-up composer afterwards) and the private switch; the asks of #2981 meetings stay where they are.
 
 ### Phase 2: live view
@@ -563,11 +588,12 @@ A manager's WebSocket event, content-free: `{"type": "meeting_live", "recording_
 - An image is at most 1 MiB decoded and 4096 pixels on its long side; the phone sends the 1600-pixel JPEG its chat photos use. (The room's items keep inline images only up to 1.5 MiB of base64.) `at` outside the recording is clamped into it.
 - The same `id` returns the stored photo; another body with it is `409 op_id_reused`.
 - `GET /api/v1/recordings/{id}/photos` → `{"photos": [Photo]}`; `GET …/photos/{n}` → the image with its `Content-Type`; `DELETE …/photos/{n}` → `{"deleted": true|false}`. Both reads work on a read-only knowledge base; a trimmed recording lists and serves only its cited photos.
-- Errors of `POST`, checked in this order: `403 forbidden`, `503`, `413 too_large` (a body over 2 MiB), `410 recording_deleted`, `404 recording_not_found`, `400` (a bad `id`, `at` or `mime`, data that is not that image, over the sizes), `409 op_id_reused`, `403 kb_read_only`, `409 not_meeting`, `409 transcript_expired` (trimmed), `413 photos_full` (50 photos). `GET` and `DELETE`: `403 forbidden`, `503`, `410 recording_deleted`, `404 recording_not_found`, `404 photo_not_found` (no such `n`, or one a trim removed), and for `DELETE` then `403 kb_read_only` and `409 transcript_expired`.
+- Errors of `POST`, checked in this order: `403 forbidden`, `503`, `413 too_large` (a body over 2 MiB), `410 recording_deleted`, `404 recording_not_found`, `400` (a bad `id`, `at` or `mime`, data that is not that image, over the sizes), `409 op_id_reused`, `403 kb_read_only`, `409 not_meeting`, `409 transcript_expired` (trimmed), `413 photos_full` (50 photos). `GET` and `DELETE`: `403 forbidden`, `503`, `410 recording_deleted`, `404 recording_not_found`, `404 photo_not_found` (no such `n`, or one a trim removed), and for `DELETE` then `403 kb_read_only`.
+- **Deleting a photo** removes its file and entry, so the minutes (made again), `kb_get`, search, `meeting.answer` and a later follow-up's seed leave it out. What already saw it keeps what it saw: while the room is `ready` the hub sends it a line with source `meeting` saying photo N was withdrawn and must not be described or used again, and the room's own copy (the image inline in its conversation, its note) goes when the room is deleted. A follow-up made before keeps its copy of the note. The meeting page says so when a photo it deletes was sent to the room. On a trimmed recording a cited photo can be deleted too: the minutes are not made again, and their item shows "Photo removed".
 - **Into the room.** The hub forwards each new photo as a message with source `meeting`: the image inline, its time, caption and recognized text in a context block, and a request for `meeting_photo_note` (at most 1000 characters: what in it matters for the meeting). An ask goes ahead of it; batches wait for it. A photo added while the role is `off` or after the room ended is stored but not forwarded.
 - **Storage.** `recordings/<id>/attachments/p<n>.jpg` (or `.png`) and `photos.json` beside `meta.json`. Search skips `attachments/`; the photos' text in `photos.json` is searched with the recording, and `kb_get` prints it after the action items, before the transcript.
-- **Minutes.** The minutes input lists the photos as numbered lines of their own (`[P3] 14:32 photo: caption · text · note`). An item may cite a photo (`"photo": 3`) instead of a transcript line, and its `at` is then the photo's; the citation rule ("How the hub generates them") becomes "every item cites a line the model read or a known photo". `markdown` adds "(photo 3)". Adding or deleting a photo after the minutes were written makes them again, without a second push. The web and the iPhone show a cited photo's thumbnail with its item.
-- **Retention.** At the transcript cut the photos the current minutes cite stay (file and entry); the others go with the transcript, as does the room with its inline copies. Cited photos go with the minutes (`minutes_days`, or the delete).
+- **Minutes.** The minutes input lists the photos as numbered lines of their own (`[P3] 14:32 photo: caption · text · note`). An item may cite a photo (`"photo": 3`) instead of a transcript line, and its `at` is then the photo's; the citation rule ("How the hub generates them") becomes "every item cites a line the model read or a known photo". `markdown` adds "(photo 3)". Adding or deleting a photo after the minutes were written makes them again, without a second push (not on a trimmed recording, which has no transcript to make them from). The web and the iPhone show a cited photo's thumbnail with its item.
+- **Retention.** At the transcript cut the photos the current minutes cite stay (file and entry); the others go with the transcript, as does the room with its inline copies. The trim keeps only those files of `attachments/`. Cited photos go with the minutes (`minutes_days`, or the delete).
 - The hub's own models never see an image: the minutes and `meeting.answer` read the photos' text, and only the room's model sees the image itself.
 
 ### Phase 4: realtime voice in the meeting
@@ -580,10 +606,13 @@ A manager's WebSocket event, content-free: `{"type": "meeting_live", "recording_
 ```
 
   The extension checks with `GET /api/v1/recordings/{id}/live` that `target` is that recording's room and that it is `ready`; otherwise the fatal error `not_meeting_room`. `ready.features` include `meeting`.
-- **The fast layer in a meeting.** Its only tool is `delegate_task`, which hands work to the room; no `search_knowledge`, `list_agents` or other tool. Its opening snapshot is the room's own recent turns. Its instructions (a new prompt under `server/internal/prompts/voice/`): others hear it; it answers meeting questions only through the room and says nothing of its own about the meeting; answers are short. Runs it did not delegate (batches, asks, photos) are never spoken. It never suspends (decision 7).
-- **Hearing only Talk.** New app frames `{"type": "talk", "on": true}` and `{"type": "talk", "on": false}`. In a meeting call the app sends audio only between the two; between spans the extension feeds the upstream silence itself, so the session stays open and the model hears nothing. A `text` frame (a typed question while the call is live) works as today. Transcription, on the phone or the hub, hears everything from the same capture, Talk spans included.
+
+  A room takes only meeting calls: a protocol 2 `start` without `mode: "meeting"` whose target is a room (origin `meeting`) is the fatal error `meeting_room`. An ordinary call bound to a room (from an older app, the web, or an iPad that opened the room as a chat) would bring `search_knowledge` and `list_agents` in front of the room. Apps that know the origin show no voice button in a room.
+- **The fast layer in a meeting.** Its only tool is `delegate_task`, which hands work to the room; no `search_knowledge`, `list_agents` or other tool. Its opening snapshot is the room's own recent turns. Its instructions (a new prompt under `server/internal/prompts/voice/`): others hear it; it answers meeting questions only through the room and says nothing of its own about the meeting; answers are short. They take only the owner's name and the language: never the owner's voice notes (`Notes`, which every other call's instructions carry), and a resumed call's history only from its own captions. Runs it did not delegate (batches, asks, photos) are never spoken. It never suspends (decision 7).
+- **Hearing only Talk.** New app frames `{"type": "talk", "on": true}` and `{"type": "talk", "on": false}`. In a meeting call the app sends audio only between the two; between spans the extension feeds the upstream silence itself, so the session stays open and the model hears nothing. It does not trust the app for this: an audio frame that arrives outside a span is replaced by silence and logged, so a phone bug cannot stream the meeting to the voice service. A `text` frame (a typed question while the call is live) works as today. Transcription, on the phone or the hub, hears everything from the same capture, Talk spans included.
+- **Talk in privacy mode** sends words, not audio, until the owner answers Open item 2: the phone sends no audio to the call and no `talk` frames, cuts its segment at the span's start and end, transcribes the span on device and sends the words as a `text` frame, so the realtime voice still hands the question to the room and says the answer. Only a hub-mode meeting, whose audio leaves the phone anyway, sends Talk's audio to the call. In phase 4 alone, before hub mode exists, no audio leaves the phone and today's privacy texts stay true.
 - **Talk on the phone.** Press and hold **Talk** on the meeting page. On the Lock Screen and in the Island a tap opens a talk window (Live Activity buttons can't be held), which ends on another tap, on 2 seconds of silence after speech, after 20 seconds without speech, or after 60 seconds.
-- **One capture.** The recorder holds the microphone for the whole meeting, and the call never claims it ([recording.md](../apple/recording.md), `apple/Shared/Recording/RecordingMicrophone.swift`). The recorder's single input tap, already converted to 16 kHz, feeds the segment writer, the hub uplink (phase 5) and, during Talk, the call (PCM16 at the call's `input_rate`). The call's audio plays through a player on the recorder's engine, so the system's echo cancellation can remove it.
+- **One capture.** The recorder holds the microphone for the whole meeting, and the call never claims it ([recording.md](../apple/recording.md), `apple/Shared/Recording/RecordingMicrophone.swift`). The recorder's single input tap, already converted to 16 kHz, feeds the segment writer, the hub uplink (phase 5) and, during Talk in hub mode, the call (PCM16 at the call's `input_rate`). The call's audio plays through a player on the recorder's engine, so the system's echo cancellation can remove it.
 - **A meeting call is not a phone call.** It does not end in the background, after 10 idle minutes or on an interruption (it pauses and resumes with the recording), and it does not keep the screen on. It runs while the role is `participant`, from the start or from a later change, until Stop or another role. It reconnects as protocol 2 does (`resume`); after three failed attempts the phone tries again every 30 seconds while the meeting records, and Talk is transcribed on the phone meanwhile.
 - **Echo.** A meeting that starts as `participant` asks for the system's echo-cancelled input when recording starts and never switches it mid-recording; `start.echo_cancellation` says whether it is on. Either way a transcript sentence at least half inside a span when Persona spoke (plus half a second) is dropped: by the phone from its transcript and live log, as #2981 requires, and by the hub in hub mode, from the spans the phone reports ("Audio from the phone").
 - **Talk without a call** (a listener, no voice extension, or the call down): the phone cuts its segment at the span's start and end, transcribes the span on device and asks with `…/ask` (`question`, `spoken: true`); a participant hears the answer in the phone's on-device voice, as #3746 does.
@@ -593,9 +622,9 @@ A manager's WebSocket event, content-free: `{"type": "meeting_live", "recording_
 
 #### Choosing the mode
 
-- Upload, with `kind: "meeting"`: `"transcription": "device"` (the default) or `"hub"`, from the start sheet. The `200` adds `transcription` (the mode in effect) and, when it is not the one asked for, `transcription_problem`: `unavailable` (no ready transcription extension) or `not_meeting`. The hub takes the mode of the first upload that names one and ignores later values: the mode never changes mid-recording.
-- Assistant settings in `GET` / `PUT /api/v1/assistant`: `meeting_transcription_default` (`device` until changed, or `hub`; another value is `400`), `meeting_glossary` (at most 200 terms of at most 40 characters: names and words the transcription should spell right), and the read-only `meeting_transcription_ready` (a transcription extension is running with a usable upstream). `assistant.meeting_transcription_default` in `persona_settings` reads and changes it, confirming a change first.
-- The start sheet offers **On the hub** only with `meeting_transcription` and `meeting_transcription_ready`. One-tap starts use the default, or `device` while the hub is not ready.
+- Upload, with `kind: "meeting"`: `"transcription": "device"` (the default) or `"hub"`, from the start sheet. The `200` adds `transcription` (the mode in effect) and, when it is not the one asked for, `transcription_problem`: `unavailable` (the chosen transcription contribution is not ready, "The `transcription` extension point") or `not_meeting`. The hub takes the mode of the first upload that names one and ignores later values: the mode never changes mid-recording.
+- Assistant settings in `GET` / `PUT /api/v1/assistant`: `meeting_transcription_default` (`device` until changed, or `hub`; another value is `400`), `meeting_glossary` (at most 200 terms of at most 40 characters: names and words the transcription should spell right), `meeting_transcription_extension` (which contribution transcribes: `""`, the default, is the built-in voice extension's; otherwise `"<extension id>/<contribution id>"`; one that is not a `transcription` contribution is `400`), and the read-only `meeting_transcription_ready` (that contribution is enabled and running with a usable upstream). `assistant.meeting_transcription_default` in `persona_settings` reads and changes the default, confirming a change first; `meeting_transcription_extension` changes only through the API (the iPhone's and the web's settings), never through the assistant's tools.
+- The start sheet offers **On the hub** only with `meeting_transcription` and `meeting_transcription_ready`, and its privacy line names the extension when it is not the built-in one. One-tap starts use the default, or `device` while the hub is not ready.
 
 #### Audio from the phone
 
@@ -621,31 +650,43 @@ Hub → phone:
 | `{"type": "interim", "start": 328.1, "text": "…"}` | The caption being said now, replaced by the next one |
 | `{"type": "line", "n": 57, "start": 320.2, "end": 326.0, "text": "…"}` | A final sentence; `n` is its position in the live log |
 | `{"type": "problem", "code": "upstream_unavailable"}` | Transcription is degraded (an open set: `upstream_unavailable`, `upstream_failed`, `no_interim`); audio is still stored |
+| `{"type": "problem", "code": null}` | Transcription is back: the hub's `line` frames go on from the next position |
 | `{"type": "error", "code": "…", "fatal": true}` | The socket closes after a fatal one |
 
 - The phone keeps the last 60 seconds of audio in memory and resends from `ready.from` after a reconnect; older gaps it uploads after the meeting. The uplink belongs to the recording: it runs in the background, pauses with it and ends with it.
 - In hub mode the live log is the hub's: `POST …/live` is `409 hub_transcribes` (checked right after `409 not_attending`), and `…/ask` ignores `live_next` (the hub waits, at most 15 seconds, until its sentences up to `at` are final).
+- **When the hub has no sentences, the phone's text fills the live log.** The room, the topics, other devices and heard asks depend on the live log, and the phone keeps transcribing on device in hub mode, so a failing upstream must not leave them with nothing. The fallback starts when the audio socket has been down for 30 seconds, when the extension ends the job with a fatal `error`, or when a `problem` other than `no_interim` has stood for 30 seconds:
+  - the manager appends the upload's segments to the live log: each one that ends after the hub's last sentence and that no hub sentence covers more than half of, only if it ends while the role is `listener` or `participant` and is not at least half inside a span when Persona spoke (positions continue the hub's; `source: "device"` on `lines`);
+  - the phone in hub mode therefore keeps writing 15-second segments and uploading them, as phase 2 does;
+  - a heard ask waits, at most 15 seconds, for an upload whose segments reach `at`;
+  - after a fatal `error` the manager opens a new job every minute while the meeting records.
+
+  Once the hub's sentences come again it sends `{"type": "problem", "code": null}`, its `line` frames go on from the next position, and a hub sentence more than half inside a span already filled from the phone is left out of the live log (it still goes into the hub's transcript).
 
 #### Gaps and the final pass
 
 - `PUT /api/v1/recordings/{id}/audio?at=<seconds>` uploads audio the hub lacks: PCM16 16 kHz mono, at most 10 MiB (about 5 minutes) a request, which the phone decodes from its own segments. → `200 {"gaps": [[from, to]]}`, what is still missing; parts the hub already holds are ignored. Errors, checked in this order: `403 forbidden`, `503`, `413 too_large`, `410 recording_deleted`, `404 recording_not_found`, `400` (`at` missing or negative, a body that is not whole samples), `403 kb_read_only`, `409 not_hub`, `409 transcription_final`.
 - Once the recording is complete, the hub waits until no gap is left, or 30 minutes after the `complete: true` upload, then runs the final pass over the audio it holds ("The built-in adapter"). Gaps left keep the phone's text.
 - `transcription` on `GET …/live` and in `detail.meta`: `{"mode": "hub", "state": "live", "gaps": [[600.0, 642.5]]}`, `state` `live`, `finishing`, `final` or `failed` (the hub made nothing usable; the phone's text is the transcript). `meeting_live` adds `transcription`, and `GET …/live` adds `interim` while the meeting records.
-- The hub deletes its audio once the final pass stored its text (or failed), and at the transcript cut at the latest. The phone keeps its own audio as today, until `days`, and never deletes a hub-mode recording's audio while `state` is `live` or `finishing`.
+- **Where the hub keeps it.** The audio goes in `recordings/<id>/attachments/audio/` (PCM chunks and the index of the spans held), where knowledge-base backups ([knowledge.md](./knowledge.md) "Backups") and search never look, so no backup taken during a meeting outlives the deletion below; a test checks that a backup taken while hub audio exists holds none of it. The hub's own transcript is `hub_segments.json` beside `meta.json`, which search skips as it skips `segments.json` (`transcript.md`, written from the transcript of record, is the searched text).
+- The hub deletes its audio once the final pass stored its text (or failed), at the trim (with `hub_segments.json`) and with the recording, whichever comes first. The phone keeps its own audio as today, until `days`, and never deletes a hub-mode recording's audio while `state` is `live` or `finishing`.
 
 #### The transcript of record
 
 - Device mode: the upload's `segments`, as today.
 - Hub mode: the hub's sentences (the final pass's, else the live ones), with the phone's uploaded segments where the hub has none: a phone segment is used when no hub sentence covers more than half of it.
-- `detail.segments`, `transcript.md`, search, `kb_get`, the minutes and the follow-up's seed use it, and each segment gains `source` (`hub` or `device`; absent means `device`). The upload still owns `segments`, `complete` and `revision`; the hub keeps its text apart, in the recording's directory, with its own revision.
+- `detail.segments`, `transcript.md`, search, `kb_get`, the minutes and the follow-up's seed use it, and each segment gains `source` (`hub` or `device`; absent means `device`). The upload still owns `segments`, `complete` and `revision`; the hub keeps its text apart, in `hub_segments.json`, with its own revision.
 - In hub mode the minutes wait for `state` `final` or `failed`, at most 45 minutes after `complete`; a later final pass makes them again without a second push.
 
 #### The `transcription` extension point
 
-A new point, version 1, modeled on `voice`: `contributes.transcription: [{"id", "name"?}]`, needing `runtime.http`. The manager uses the first enabled, running one; the built-in voice extension contributes one that shares its upstream and key ("The built-in adapter"). The manager writes the live log and the hub's transcript; the extension stores nothing. Its row in [extensions.md](../extensions/extensions.md) "Extension points" and in the manifest schema comes with the code.
+A new point, version 1, modeled on `voice`: `contributes.transcription: [{"id", "name"?}]`, needing `runtime.http`. The built-in voice extension contributes one that shares its upstream and key ("The built-in adapter"). The manager writes the live log and the hub's transcript; the extension stores nothing. Its row in [extensions.md](../extensions/extensions.md) "Extension points" and in the manifest schema comes with the code.
 
-- `GET /info` → `{"protocol": 1, "features": ["live", "replay", "interim"], "setup"?: …}`: `interim` only when the upstream offers interim captions, `setup` as the voice extension's when no upstream is usable.
-- `GET /ws`: one job per connection.
+- **Which one transcribes.** Hub mode uses the built-in voice extension's contribution, and another extension's only when the owner names it in `meeting_transcription_extension` ("Choosing the mode"): installing an extension never sends it meeting audio. `meeting_transcription_ready` reports on the chosen one; while it is not ready hub mode is unavailable, with no fallback to another contribution.
+- **Endpoints**, on the extension's own socket under the contribution's id, so they never meet the voice point's `GET /info` and `GET /ws` (which stay as they are, with the voice protocol and its `features`):
+  - `GET /transcription/{cid}/info` → `{"protocol": 1, "features": ["live", "replay", "interim"], "setup"?: …}`: `interim` only when the upstream offers interim captions, `setup` as the voice extension's when no upstream is usable.
+  - `GET /transcription/{cid}/ws`: one job per connection.
+  - Only the manager dials them. The apps' forward to an extension (`/api/v1/extensions/<id>/…`) refuses paths under `/transcription/`.
 
 Manager → extension:
 
@@ -687,13 +728,13 @@ Part of the built-in voice extension, and it speaks only to a GPT-Live-compatibl
 
 - The uplink is a second consumer of the recorder's one input tap ("One capture" in phase 4), stamped with the writer's frame position.
 - On-device transcription keeps running in hub mode: it fills gaps and is the upload's `segments`.
-- The page and the Live Activity show the hub's `interim` and `line` frames while the socket is up, the phone's own lines otherwise, with a notice while transcription has fallen back.
+- The page and the Live Activity show the hub's `interim` and `line` frames while the socket is up and no `problem` other than `no_interim` stands, the phone's own lines otherwise, with a notice while transcription has fallen back.
 - The privacy texts change per mode ("Privacy per mode"): the microphone usage descriptions in `apple/project.yml`, the meeting intent's description in `apple/LiveActivity/RecordingIntents.swift`, the Recordings footer in `apple/Persona/Recording/RecordingsSection.swift`, the site's `site/public/privacy/index.html` and [recording.md](../apple/recording.md) "Why send only text", in every language.
 
 ### Phase 6: talk about this meeting
 
 - **Text.** **Talk about this meeting** on any recording's detail (iPhone and web) and on the meeting page after Stop opens the one thread and writes into the follow-up (`POST …/followup`), for any recording with text or minutes.
-- **Voice.** From the same places, a voice call bound to the follow-up: ordinary protocol 2 (`target` the follow-up, no meeting mode, since the owner is no longer in front of the room). The follow-up is made first when there is none.
+- **Voice.** From the same places, a voice call bound to the follow-up: ordinary protocol 2 (`target` the follow-up, no meeting mode, since the owner is no longer in front of the room). With no follow-up yet, the owner's first request is dictated on the iPhone and makes it through `…/followup` (as `text`, so no turn runs on the seed alone); the call then binds to it and says the answer to that request as it does for a turn already running when a call opens (its `followup-` message counts as the owner's own).
 - **Other meetings by voice.** The voice `search_knowledge` tool gets an optional `kind` (`recordings` for meetings), and `GET /api/v1/kb-search` takes `kind` to search one kind as `kb_search` does.
 - **The minutes push** carries the recording id (a new optional field); apps that know it open the meeting's thread, others the main chat as today.
 
@@ -752,12 +793,12 @@ After Stop, the same page continues as the thread:
 | Ask (composer) | Page | A typed question to the room: `…/ask`, or a `text` frame while the call is live | 1 |
 | What was just said | Page (the + menu), Lock Screen until phase 4 | A heard ask (`…/ask` with `at`) | 1 |
 | Just me | Page (switch) | The composer goes to `…/just-me` | 1 |
-| Role | Page (menu, and the subtitle) | Listen, Take part or Off: an upload with the new `attendance` | 1 |
+| Role | Page (menu, and the subtitle) | Listen, Take part or Off: an upload with the new `room.attendance` | 1 |
 | Private meeting | Page (menu), recording detail | `PUT …/private` | 1 |
-| Photo | Page (the + menu: camera, library), Lock Screen (a link to the camera; unlocks the phone) | `…/photos` | 3 |
+| Photo | Page (the + menu: camera, library) | `…/photos` | 3 |
 | Talk | Page (hold), Lock Screen and Island (a tap opens a talk window) | The meeting call, or a spoken ask without one | 4 |
-| Bookmark, Pause, Stop | Page; Bookmark and Stop on the Lock Screen too | As today | — |
-| Turn Persona off | Page (menu) | The role `off` | — |
+| Bookmark, Pause, Stop | Page; Bookmark and Stop on the Lock Screen and in the Island too | As today | — |
+| Turn Persona off | Page (menu); Lock Screen and Island while Persona attends, without unlocking (as #3375) | The role `off` | 1 |
 
 The Lock Screen keeps within its height of about 160 pt ([live-activity.md](../apple/live-activity.md) "Pitfalls"): three short text lines and one row of at most four buttons, only the first with words.
 
@@ -766,24 +807,24 @@ The Lock Screen keeps within its height of about 160 pt ([live-activity.md](../a
 | (*) Design review                               23:41  |
 |     Now: Pricing . Persona takes part                  |
 |     Persona: On Nov 3 you kept them through Q3.        |
-|  [ Talk ]        [photo]      [bookmark]      [stop]   |
+|  [ Talk ]      [bookmark]     [turn off]      [stop]   |
 +--------------------------------------------------------+
 ```
 
 - The third line is the latest answer for 60 seconds after it came, otherwise the latest live line, and "Listening to you..." while a talk window is open. Just me never appears there.
-- Before phase 4 the first button is **Ask** (what was just said); before phase 3 there is no Photo; with the role `off`, only Bookmark and Stop.
-- Dynamic Island: compact shows the recording mark and the time (a talk mark instead while a talk window is open; no repeating animation); minimal the mark; expanded the title and time, `Now: <topic>`, the third line above, and **Talk** and Stop.
+- Before phase 4 the first button is **Ask** (what was just said); with the role `off`, only Bookmark and Stop. **Turn off** stays on the Lock Screen while Persona attends, as #3375 promised for one-tap starts: the owner silences Persona without unlocking the phone. Photo is on the page only, since opening the camera needs the phone unlocked anyway.
+- Dynamic Island: compact shows the recording mark and the time (a talk mark instead while a talk window is open; no repeating animation); minimal the mark; expanded the title and time, `Now: <topic>`, the third line above, and the Lock Screen's buttons.
 
 ```
 compact:   (*) ......................... 23:41
 expanded:  Design review                        23:41
            Now: Pricing
            Persona: On Nov 3 you kept them through Q3.
-           [ Talk ]                              [stop]
+           [ Talk ]     [bookmark]   [turn off]    [stop]
 ```
 
 - `ContentState` gains `topic` (the current topic's title, at most 60 characters), `line` (the latest live line, at most 120) and `talking` (a talk window is open), beside `persona` and `answer`; the whole stays far under the 4 KB limit. The app updates the activity at once for an answer, a talk window or a change of phase, and at most every 5 seconds for a new line or topic. It stays local (`pushType: nil`).
-- Talk is a `LiveActivityIntent` that runs in the app, like Ask today; Photo is a link, since opening the camera needs the phone unlocked. `persona://record/<id>` opens the meeting page and `persona://record/<id>/photo` its camera. The watch's Smart Stack stays as it is.
+- Talk is a `LiveActivityIntent` that runs in the app, like Ask today; Turn off stays `TurnOffMeetingAttendanceIntent`. Both are `.alwaysAllowed`, as Stop is. `persona://record/<id>` opens the meeting page. The watch's Smart Stack stays as it is.
 
 ### Privacy per mode
 
@@ -791,8 +832,8 @@ What leaves the iPhone:
 
 | | Privacy mode (`device`) | Hub mode (`hub`) |
 | --- | --- | --- |
-| The meeting's audio | Never | To the hub, which sends it to the transcription service set up in the voice extension (GPT-Live-compatible) |
-| Talk (phase 4) | Only the Talk spans, to the realtime voice service, while the meeting call runs; without a call nothing (transcribed on the iPhone) | The same |
+| The meeting's audio | Never | To the hub, which sends it to the transcription service set up in the voice extension (GPT-Live-compatible), or to the extension the owner chose (`meeting_transcription_extension`) |
+| Talk (phase 4) | Its words, transcribed on the iPhone, to the realtime voice service and the room; never its audio (until Open item 2 is answered otherwise) | The Talk spans' audio to the realtime voice service while the meeting call runs; without a call, its words through `…/ask` |
 | The transcript | Made on the iPhone; text to the hub | Made by the service; the iPhone's text fills gaps |
 | Questions and Just me | Text (and Just me's images) to the hub, and to the room's or the main chat's model | The same |
 | Photos | To the hub and the room's model | The same |
@@ -808,21 +849,21 @@ Where things are kept, and for how long:
 | Other photos | The hub | With the transcript |
 | The room conversation (lines, inline photos, questions, answers) | The assistant's computer | Deleted at the transcript cut or with the recording |
 | The follow-up conversation | The assistant's computer | Like any conversation (archiving keeps it): it holds a copy of the transcript and the room thread |
-| Just me | The main chat | Like the main chat |
+| Just me | The main chat; a receipt (digest and response, no text) in `client_ops` | Like the main chat; the receipt 30 days |
 | Audio on the iPhone | The iPhone | Until `days`, as today; in hub mode never before the hub's final pass |
-| Audio on the hub | The recording's directory | Until the final pass stored its text; at most `recording_days` |
+| Audio on the hub | `recordings/<id>/attachments/audio/`, never in knowledge-base backups | Until the final pass stored its text; at most `recording_days` |
 | What the services received | The transcription and voice services | Under their own terms |
 
-**What may be said aloud** or shown on the Lock Screen is only what the room may know: this meeting's header, its lines said while Persona attended, its photos and their notes, its topics, its earlier questions and answers, and, for meetings marked not private, earlier meetings' minutes with their projects' status and their action items' to-do states. Never Just me, the follow-up, the main chat, memory, About Me, or anything the room's tools do not return.
+**What may be said aloud** or shown on the Lock Screen is only what the room may know: this meeting's header, its lines said while Persona attended, its photos and their notes, its topics, its earlier questions and answers, and, for meetings marked not private, earlier meetings' minutes with their projects' status and their action items' to-do states. Never Just me, the follow-up, the main chat, memory, About Me, the owner's own Claude Code instructions, or anything the room's tools do not return.
 
-**Wording.** Privacy mode keeps today's "Audio stays on this iPhone", adding that Talk sends what is said while holding it to the voice service. Hub mode says that this meeting's audio goes through your hub to the speech service it is set up with, and that the hub deletes it once the transcript is final.
+**Wording.** Privacy mode keeps today's "Audio stays on this iPhone": Talk sends the words the iPhone heard, not the audio. Hub mode says that this meeting's audio, Talk included, goes through your hub to the speech service it is set up with (named when the owner chose another extension), and that the hub deletes it once the transcript is final. If Open item 2 is answered for sending Talk's audio in privacy mode, the PR that does it changes these texts in every language first.
 
 ### Open items
 
 Questions the owner's decisions leave open; the contract takes the stated side until they are answered.
 
 1. **Meetings recorded before the mark.** The contract counts a meeting with no mark as private, so nothing recorded before phase 1 (or by a #3746 phone, the watch or the Mac) is said aloud until the owner marks it not private. The other reading of decision 2: every meeting not marked private, older ones included.
-2. **Talk in privacy mode.** The contract sends Talk spans to the realtime voice service in both modes, an explicit act that the page labels. The stricter reading of decision 5: in privacy mode no audio at all leaves the phone, and Talk is always transcribed on the iPhone and answered in its on-device voice.
+2. **Talk in privacy mode.** Until the owner answers, the contract takes the stricter reading of decision 5: in privacy mode no audio leaves the phone, so Talk is transcribed on the iPhone and only its words go to the meeting call (or `…/ask`), and the realtime voice still says the answer (decision 7). The other reading: send the Talk spans' audio to the realtime voice service in both modes, an explicit act that the page labels; it ships only after this answer, with the privacy texts changed first.
 3. **Agents attending.** New phones no longer offer an attending session: the room attends, and an Agent gets the meeting through the follow-up. #3746 phones keep choosing one.
 4. **Hub mode on cellular data.** About 115 MB an hour up (PCM16 at 16 kHz; the hub has no compressed codec today). Allowed on cellular, or Wi-Fi only with the iPhone's text meanwhile?
 5. **The hub's audio after the final pass.** The contract deletes it then. Keeping it until `recording_days` would allow a rerun (a corrected glossary, a better model) for about 115 MB of disk an hour.
