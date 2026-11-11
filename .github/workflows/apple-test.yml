@@ -54,7 +54,9 @@ jobs:
       - name: Apple checks
         env:
           CI_APPLE_DIAGNOSTICS: ${{ runner.temp }}/persona-apple-diagnostics-${{ inputs.lane }}-${{ github.run_id }}-${{ github.run_attempt }}
-        run: scripts/ci/apple.sh "$APPLE_CI_LANE" 2>&1 | tee "${{ runner.temp }}/metrics-apple-checks.log"
+        run: |
+          set -euo pipefail
+          scripts/ci/apple.sh "$APPLE_CI_LANE" 2>&1 | tee "${{ runner.temp }}/metrics-apple-checks.log"
       - name: Capture Machines screens after complete native checks
         if: success() && inputs.lane == 'ios'
         run: python3 scripts/ci/metrics_screenshots.py "${{ runner.temp }}/metrics-apple-checks.log"
