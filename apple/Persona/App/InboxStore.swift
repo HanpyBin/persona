@@ -200,7 +200,7 @@ final class InboxStore {
     var actionCount: Int { scopedItems.filter { !$0.isDone && $0.triage == .action }.count }
 
     /// Unread open items in Needs you.
-    var unreadCount: Int { items.filter(\.isUnreadAction).count }
+    var unreadCount: Int { scopedItems.filter(\.isUnreadAction).count }
 
     /// Pulls the list (bursts of `inbox` events collapse into one request).
     func reload() {
