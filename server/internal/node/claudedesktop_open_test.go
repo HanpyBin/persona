@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -39,6 +40,81 @@ func sendWithin(ctx context.Context, n *Node, id, text string) <-chan error {
 		done <- err
 	}()
 	return done
+}
+
+// desktopSend cancels and joins the send before test fixtures and global hooks are restored, even on failure.
+func desktopSend(t *testing.T, n *Node, id, text string) <-chan error {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		b, _ := json.Marshal(map[string]any{"session_id": id, "text": text, "client_msg_id": newUUID()})
+		_, err := n.handle(ctx, "session.send", b)
+		done <- err
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-finished:
+		case <-time.After(15 * time.Second):
+			t.Error("the cancelled send did not end")
+		}
+	})
+	return done
+}
+
+// desktopScans reports index reads after the opener has been called. Consecutive reads show that the send has
+// completed a polling iteration while the app's process or inbox is still unavailable.
+func desktopScans(t *testing.T, opened <-chan struct{}) <-chan struct{} {
+	t.Helper()
+	scans := make(chan struct{}, 1)
+	old := claudeDesktopDirs
+	claudeDesktopDirs = func(home string) []string {
+		select {
+		case <-opened:
+			select {
+			case scans <- struct{}{}:
+			default:
+			}
+		default:
+		}
+		return old(home)
+	}
+	t.Cleanup(func() { claudeDesktopDirs = old })
+	return scans
+}
+
+func waitDesktopOpen(t *testing.T, opened <-chan struct{}, done <-chan error) {
+	t.Helper()
+	select {
+	case <-opened:
+	case err := <-done:
+		t.Fatalf("sent without opening the app: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the app was not asked to open the session")
+	}
+}
+
+func waitDesktopScans(t *testing.T, scans <-chan struct{}, done <-chan error, count int) {
+	t.Helper()
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	for i := 0; i < count; i++ {
+		select {
+		case <-scans:
+		case err := <-done:
+			t.Fatalf("send ended before the app was ready: %v", err)
+		case <-timer.C:
+			t.Fatal("the send did not keep checking the desktop index")
+		}
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("send ended before the app was ready: %v", err)
+	default:
+	}
 }
 
 func waitSend(t *testing.T, done <-chan error) error {
@@ -85,17 +161,13 @@ func TestADesktopSessionNothingRunsIsOpenedInTheApp(t *testing.T) {
 		writeDesktopEntry(t, dir, desktopLocal, sidA, false, nil, "")
 		inbox := newFakeInbox(t, p)
 		started := make(chan struct{})
-		links := recordDesktopLinks(t, nil, func() { time.Sleep(300 * time.Millisecond); close(started) })
+		links := recordDesktopLinks(t, nil, func() { close(started) })
+		scans := desktopScans(t, started)
 		f.reply("session.snapshot", snapshot(nil, nil, nil, nil))
 		f.reset()
-		done := sendWithin(context.Background(), n, sidA, "go on with the plan")
-		select {
-		case <-started: // the app starts the session's claude
-		case err := <-done:
-			t.Fatalf("sent without opening the app: %v", err)
-		case <-time.After(5 * time.Second):
-			t.Fatal("the app was not asked to open the session")
-		}
+		done := desktopSend(t, n, sidA, "go on with the plan")
+		waitDesktopOpen(t, started, done)
+		waitDesktopScans(t, scans, done, 2)
 		writeOutsideClaude(t, home, sidA, "claude-desktop-3p", "idle", inbox, nil)
 		if err := waitSend(t, done); err != nil {
 			t.Fatalf("send: %v", err)
@@ -132,15 +204,30 @@ func TestADesktopSessionThatGoesOnInANewTranscriptIsFollowed(t *testing.T) {
 	first, _ := useDesktopDirs(t)
 	bgTranscript(t, home, home, sidA, "plan")
 	pb := bgTranscript(t, home, home, sidB, "plan")
-	writeDesktopEntry(t, first, desktopLocal, sidA, false, nil, "")
+	entry := writeDesktopEntry(t, first, desktopLocal, sidA, false, nil, "")
+	before, err := os.Stat(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
 	inbox := newFakeInbox(t, pb)
 	moved := make(chan struct{})
-	recordDesktopLinks(t, nil, func() { time.Sleep(200 * time.Millisecond); close(moved) })
+	recordDesktopLinks(t, nil, func() { close(moved) })
+	scans := desktopScans(t, moved)
 	f.reply("session.snapshot", snapshot(nil, nil, nil, nil))
-	done := sendWithin(context.Background(), n, sidA, "go on")
-	<-moved
-	time.Sleep(20 * time.Millisecond) // the entry's file must look changed for the index to read it again
-	writeDesktopEntry(t, first, desktopLocal, sidB, false, []string{sidA}, `,"title":"plan, again"`)
+	done := desktopSend(t, n, sidA, "go on")
+	waitDesktopOpen(t, moved, done)
+	waitDesktopScans(t, scans, done, 2)
+	replacement := writeDesktopEntry(t, t.TempDir(), desktopLocal, sidB, false, []string{sidA}, `,"title":"plan, again"`)
+	after, err := os.Stat(replacement)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Size() == before.Size() {
+		t.Fatal("the changed entry must have a different size so the index reads it again")
+	}
+	if err := os.Rename(replacement, entry); err != nil {
+		t.Fatal(err)
+	}
 	writeOutsideClaude(t, home, sidB, "claude-desktop-3p", "idle", inbox, nil)
 	if err := waitSend(t, done); err != nil {
 		t.Fatalf("send: %v", err)
@@ -159,13 +246,15 @@ func TestADesktopClaudeThatNamesItsInboxLateIsWaitedFor(t *testing.T) {
 	p := bgTranscript(t, home, home, sidA, "plan")
 	writeDesktopEntry(t, first, desktopLocal, sidA, false, nil, "")
 	inbox := newFakeInbox(t, p)
-	opened := make(chan struct{}, 1)
-	recordDesktopLinks(t, nil, func() { opened <- struct{}{} })
+	opened := make(chan struct{})
+	recordDesktopLinks(t, nil, func() { close(opened) })
+	scans := desktopScans(t, opened)
 	f.reply("session.snapshot", snapshot(nil, nil, nil, nil))
-	done := sendWithin(context.Background(), n, sidA, "go on")
-	<-opened
+	done := desktopSend(t, n, sidA, "go on")
+	waitDesktopOpen(t, opened, done)
 	writeOutsideClaude(t, home, sidA, "claude-desktop-3p", "busy", nil, nil) // starting: no inbox yet
-	time.Sleep(1200 * time.Millisecond)
+	// Allow an already queued scan, then require three more: at least two complete polls see the missing inbox.
+	waitDesktopScans(t, scans, done, 4)
 	writeOutsideClaude(t, home, sidA, "claude-desktop-3p", "idle", inbox, nil)
 	if err := waitSend(t, done); err != nil {
 		t.Fatalf("send: %v", err)
