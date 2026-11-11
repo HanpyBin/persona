@@ -135,14 +135,20 @@ for index, (origin, title, request) in enumerate([
         (args.out / "graphics.txt").write_text(adb("shell", "dumpsys", "SurfaceFlinger"))
         if args.smoke_only:
             adb("shell", "settings", "put", "system", "font_scale", "1.0")
-            launch("glass", "light", 0)
-            root = wait_for(lambda tree: has_text(tree, CASES[0][2]) and has_text(tree, "Finished."), CASES[0][2])
-            capture("app-ready-glass-light", root)
+            captures = []
+            for style in ("glass", "brief", "board"):
+                for theme in ("light", "dark"):
+                    adb("shell", "cmd", "uimode", "night", "yes" if theme == "dark" else "no")
+                    launch(style, theme, 0)
+                    root = wait_for(lambda tree: has_text(tree, CASES[0][2]) and has_text(tree, "Finished."), CASES[0][2])
+                    name = "app-ready-%s-%s" % (style, theme)
+                    capture(name, root)
+                    captures.append(name)
             (args.out / "smoke-evidence.json").write_text(json.dumps({
-                "kind": "app-ready diagnostic", "passed": True, "featureAcceptance": False,
+                "kind": "app-ready diagnostic", "passed": True, "featureAcceptance": False, "captures": captures,
                 "fontScale": float(adb("shell", "settings", "get", "system", "font_scale").strip()),
             }, indent=2) + "\n")
-            print("App-ready diagnostic: PASS; feature acceptance remains separate")
+            print("App-ready diagnostic: PASS (%d captures); feature acceptance remains separate" % len(captures))
             return
         for scale in (1.0, 2.0):
             adb("shell", "settings", "put", "system", "font_scale", str(scale))
