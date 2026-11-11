@@ -606,6 +606,9 @@ class CheckFastServerInputsTests(unittest.TestCase):
 
     def test_the_adapter_check_skips_when_bun_is_missing(self):
         (self.bin_dir / "bun").unlink()
+        self.env["PATH"] = os.pathsep.join(path for path in self.env["PATH"].split(os.pathsep)
+                                          if not (Path(path) / "bun").exists())
+        self.assertIsNone(shutil.which("bun", path=self.env["PATH"]), "the test must also exclude a host-installed Bun")
         self.write("sdk/ts/src/index.ts", "export {}\n")
         out, _ = self.check_fast()
         self.assertIn("SKIP     denohost trusted adapter: bun not found", out)
