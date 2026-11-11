@@ -6,6 +6,21 @@ A staged rename's source exists at HEAD under the original status path, while it
 
 A status refresh must reread versions without resetting the same file's slider or document scroll. A roster update that leaves the chosen assistant unchanged is not an ownership change. Fence authentication recovery itself to the request's still-current view and credential: ignoring a late component result is too late if the shared client has already signed out or reloaded. Current requests and unowned sign-in probes keep their existing recovery behavior.
 
+## Remembered task rules need their exact owner and retry context (#4418)
+
+A remembered task rule's key is opaque: encode the returned value as a query parameter, not a reconstruction from its
+computer and directory. A manager may flag a key as ambiguous; show its raw identifier as unresolved rather than
+presenting a guessed directory. A failed or unconfirmed removal can be omitted by a later list read, so keep the rule
+and its retry context in session memory scoped to the assistant and credential generation, including across unmounts.
+When a lost reply is followed by a not-remembered response, let the user dismiss the local warning without calling
+the removal confirmed; a later list can show the rule again. Include access type in each row action's spoken name.
+Synchronous admission prevents a second delete after reopening while the first is pending. Fence reads, confirmation,
+refresh and callbacks on manager changes (including a round trip), credential replacement and unmount. A retired
+request's 401 must not sign out a later view, even when it uses the same credential; a current request keeps the normal
+401 policy. A proxy login page or redirect can also reload the whole app: apply the same context and credential fence
+before that side effect, while retaining unowned pairing probes and validated 304 responses. A successful removal does not rule out a matching plan remembering it
+again, and an older manager's empty response is not proof that storage was read successfully.
+
 ## Dismiss a draft, not its source item (#3743)
 
 A task-progress reply card has its own feed id; its Inbox reference can be shared by later progress drafts. Persist
