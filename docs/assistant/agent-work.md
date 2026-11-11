@@ -297,7 +297,7 @@ A conservative code scan adds sensitive effects even if classification misses th
 production-sensitive. Every explicit card path is independently resolved and checked against repository scope, including relative paths
 (`../other`, `./server`, `server/internal`), `~`, `$HOME` and `$PWD` (including braced forms). Relative paths use the
 node's session directory; home expansion and physical Git identity come from that node. Unknown session variables,
-shell substitutions, globs, ambiguous quoting and failed identity reads keep confirmation manual. Paths are kept literally, including trailing dots and parent segments;
+shell substitutions, globs, quoted variable/home expansions, ambiguous quoting and failed identity reads keep confirmation manual. Paths are kept literally, including trailing dots and parent segments;
 sentence punctuation on an unquoted path may therefore require manual confirmation. A node must advertise
 `path_resolved: true`, proving it resolves symlinks before parent segments; older nodes keep path cards manual.
 Resolution persistence has its own timeout and is outside the five-second classification budget. The judge's

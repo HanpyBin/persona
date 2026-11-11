@@ -301,9 +301,12 @@ func standingCardPaths(ix proto.Interaction) ([]string, bool) {
 	var paths []string
 	for _, text := range texts {
 		for _, token := range standingPathToken.FindAllString(text, -1) {
+			if strings.ContainsAny(token[:1], "\"'`") && strings.ContainsAny(token, "~$") {
+				return nil, false
+			}
 			token = strings.Trim(token, "\"'`")
 			if strings.HasPrefix(token, "https://") || strings.HasPrefix(token, "http://") {
-				if strings.IndexFunc(token, unicode.IsSpace) >= 0 {
+				if strings.ContainsAny(token, "$;|&`\\*?[]<>(){}") || strings.IndexFunc(token, unicode.IsSpace) >= 0 {
 					return nil, false
 				}
 				continue

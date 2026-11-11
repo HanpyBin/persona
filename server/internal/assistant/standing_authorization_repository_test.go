@@ -47,18 +47,21 @@ func standingFixtureIdentity(t *testing.T, cwd string) proto.RepositoryIdentity 
 		command := exec.Command("git", append([]string{"-C", cwd}, args...)...)
 		out, err := command.Output()
 		if err != nil {
-			t.Fatalf("git metadata: %v", err)
+			return ""
 		}
 		return strings.TrimSpace(string(out))
-	}
-	root := read("rev-parse", "--show-toplevel")
-	common := read("rev-parse", "--git-common-dir")
-	if !filepath.IsAbs(common) {
-		common = filepath.Join(cwd, common)
 	}
 	physical, err := filepath.EvalSymlinks(cwd)
 	if err != nil {
 		t.Fatal(err)
+	}
+	root := read("rev-parse", "--show-toplevel")
+	if root == "" {
+		return proto.RepositoryIdentity{Version: 1, PathResolved: true, Cwd: physical}
+	}
+	common := read("rev-parse", "--git-common-dir")
+	if !filepath.IsAbs(common) {
+		common = filepath.Join(cwd, common)
 	}
 	return proto.RepositoryIdentity{Version: 1, PathResolved: true, IsRepo: true, Cwd: physical, Root: root, CommonDir: filepath.Clean(common), Origin: read("config", "--get", "remote.origin.url")}
 }
@@ -200,9 +203,14 @@ func TestStandingAuthorizationWorktreeDispatch(t *testing.T) {
 
 func TestStandingAuthorizationCardPathsPhysicalRepository(t *testing.T) {
 	fixture := newStandingRepositoryFixture(t)
-	command := exec.Command("git", "init", "--initial-branch=main", fixture.main+".")
-	if out, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("init dotted repository: %s %v", out, err)
+	for _, directory := range []string{fixture.main + ".", filepath.Join(fixture.main, "$HOME", "source"), filepath.Join(fixture.main, "~", "source")} {
+		if err := os.MkdirAll(directory, 0700); err != nil {
+			t.Fatal(err)
+		}
+		command := exec.Command("git", "init", "--initial-branch=main", directory)
+		if out, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("init independent repository: %s %v", out, err)
+		}
 	}
 	s, f := newQuietService(t)
 	f.answerNode("git.status", func(_ string, args json.RawMessage) (any, error) {
@@ -230,6 +238,9 @@ func TestStandingAuthorizationCardPathsPhysicalRepository(t *testing.T) {
 	}{
 		{"relative_inside", "Push ./server", true},
 		{"bare_relative_inside", "Push server/app.txt", false},
+		{"quoted_home_variable_literal", "Push '$HOME/source'", false},
+		{"quoted_tilde_literal", "Push '~/source'", false},
+		{"quoted_relative_inside", "Push 'server'", true},
 		{"home_inside", "Push ~/source/server", true},
 		{"home_variable_inside", "Push $HOME/source/server", true},
 		{"braced_home_inside", "Push ${HOME}/source/server", true},
