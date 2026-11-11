@@ -1,0 +1,11 @@
+{
+  "space": "space",
+  "nbsp": "non-breaking space",
+  "tab": "tab",
+  "newline": "line break",
+  "return": "carriage return",
+  "leading": "{name}, leading whitespace {marks}",
+  "trailing": "{name}, trailing whitespace {marks}",
+  "both": "{name}, leading whitespace {leading}, trailing whitespace {trailing}",
+  "only": "Whitespace-only name {marks}"
+}

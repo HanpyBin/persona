@@ -119,6 +119,9 @@ func TestWhitespacePathConsumersRPC(t *testing.T) {
 			if err != nil || workspace.Cwd != realDestination {
 				t.Fatalf("resolved workspace: %+v, %v", workspace, err)
 			}
+			if got := f.n.sessionWorkspaceCwd(filepath.Join(dir, "dest"+suffix)); got != realDestination {
+				t.Fatalf("session workspace %q, want %q", got, realDestination)
+			}
 			var read struct {
 				Text string `json:"text"`
 			}

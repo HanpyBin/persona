@@ -63,7 +63,7 @@ final class FolderEdits {
             }
             Haptics.tap()
             model.toast = Toast(paths.count == 1
-                ? String(localized: "Moved “\((paths[0] as NSString).lastPathComponent)” to \(Self.folderName(dir))")
+                ? String(localized: "Moved “\(FileNameDisplay.label((paths[0] as NSString).lastPathComponent))” to \(Self.folderName(dir))")
                 : String(localized: "Moved \(paths.count) items to \(Self.folderName(dir))"), style: .success)
             done()
         }
@@ -85,7 +85,7 @@ final class FolderEdits {
             changed()
             let ids = trashed.map(\.trashID)
             let message = paths.count == 1
-                ? String(localized: "Moved “\((paths[0] as NSString).lastPathComponent)” to the Trash")
+                ? String(localized: "Moved “\(FileNameDisplay.label((paths[0] as NSString).lastPathComponent))” to the Trash")
                 : String(localized: "Moved \(paths.count) items to the Trash")
             model.toast = Toast(message, style: .success, action: ids.isEmpty ? nil : Toast.Action(title: String(localized: "Undo")) {
                 Task { @MainActor in
@@ -113,7 +113,7 @@ final class FolderEdits {
     /// The last part of a folder as the browser shows it ("~" for the home).
     nonisolated static func folderName(_ dir: String) -> String {
         let d = dir.hasSuffix("/") && dir.count > 1 ? String(dir.dropLast()) : dir
-        return d == "~" || d == "/" ? d : (d as NSString).lastPathComponent
+        return d == "~" || d == "/" ? d : FileNameDisplay.label((d as NSString).lastPathComponent)
     }
 
     /// What to tell the user when a change did not happen.
@@ -200,7 +200,7 @@ private struct FolderPickerList: View {
 
     private var title: String {
         let name = (path as NSString).lastPathComponent
-        return name.isEmpty ? "/" : name
+        return name.isEmpty ? "/" : FileNameDisplay.label(name)
     }
 
     var body: some View {
@@ -219,7 +219,8 @@ private struct FolderPickerList: View {
                         HStack(spacing: Theme.Space.m) {
                             ThemedIcon(Theme.Icon.folderFilled).font(Theme.Font.body).foregroundStyle(Theme.accent)
                                 .scaledFrame(width: Theme.Size.icon)
-                            Text(f.name).font(Theme.Font.secondary).foregroundStyle(blocked ? Color.secondary : Color.primary).lineLimit(1)
+                            FileNameView(name: f.name).font(Theme.Font.secondary).foregroundStyle(blocked ? Color.secondary : Color.primary)
+                                .lineLimit(1).truncationMode(FileNameDisplay.needsMarker(f.name) ? .middle : .tail)
                             Spacer(minLength: Theme.Space.s)
                             ThemedIcon(Theme.Icon.disclosure).font(Theme.Font.labelStrong).foregroundStyle(.tertiary)
                         }

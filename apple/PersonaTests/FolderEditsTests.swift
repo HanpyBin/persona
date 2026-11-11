@@ -67,6 +67,23 @@ struct FolderEditsTests {
         }
     }
 
+    @Test func whitespaceNamesHaveVisibleAndSpokenBoundaries() throws {
+        let space = String(localized: "space [File Name Whitespace]")
+        let nbsp = String(localized: "non-breaking space [File Name Whitespace]")
+        #expect(FileNameDisplay.label("report") == "report")
+        #expect(FileNameDisplay.spoken("report") == "report")
+        #expect(FileNameDisplay.label("report ") == "report[\(space)]")
+        #expect(FileNameDisplay.label("report\u{a0}") == "report[\(nbsp)]")
+        #expect(FileNameDisplay.label("  report\t") == "[\(space) ×2]report[\(String(localized: "tab [File Name Whitespace]"))]")
+        #expect(FileNameDisplay.label(" \u{a0}") == "[\(space), \(nbsp)]")
+        #expect(FileNameDisplay.label("report\u{200b}") == "report[U+200B]")
+        #expect(FileNameDisplay.label("a b") == "a b")
+        let marked = try #require(FileNameDisplay.parts(" report "))
+        #expect(marked.body == "report" && !marked.leading.isEmpty && !marked.trailing.isEmpty)
+        #expect(FileNameDisplay.spoken("report ") != FileNameDisplay.spoken("report\u{a0}"))
+        #expect(FileNameDisplay.spoken("report ") != FileNameDisplay.spoken("report"))
+    }
+
     @Test func refusalsInTheUsersWords() {
         let readOnly = APIError(status: 409, message: "x is read-only", fields: ["code": "read_only"])
         #expect(FolderEdits.message(readOnly).contains("~/.persona"))

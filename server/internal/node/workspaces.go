@@ -30,7 +30,7 @@ type workspaceDirectoryCache struct {
 // transcripts and live sessions are listed every second, often sharing a cwd.
 func (n *Node) sessionWorkspaceCwd(cwd string) string {
 	path := n.resolvePath(cwd, "")
-	if path == "" || inICloud(path) {
+	if path == "" || checkNativePath(path) != nil || inICloud(path) {
 		return ""
 	}
 	c := &n.workspaceDirs
@@ -123,7 +123,7 @@ func (n *Node) listWorkspaces(ctx context.Context) (proto.WorkspacesResponse, er
 			}
 			seen[s.ID] = true
 			cwd := s.Cwd
-			if path := n.resolvePath(cwd, ""); path != "" && !inICloud(path) {
+			if path := n.resolvePath(cwd, ""); path != "" && checkNativePath(path) == nil && !inICloud(path) {
 				if real, err := filepath.EvalSymlinks(path); err == nil && !inICloud(real) {
 					cwd = real
 				}

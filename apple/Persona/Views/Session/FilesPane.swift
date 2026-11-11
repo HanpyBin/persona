@@ -139,7 +139,7 @@ struct FilesPane: View {
         } message: {
             Text("It goes to the computer’s Trash. You can undo right after, or put it back from the Trash there.")
         }
-        .alert(String(localized: "“\(edits.conflictName)” already exists"),
+        .alert(String(localized: "“\(FileNameDisplay.label(edits.conflictName))” already exists"),
                isPresented: Binding(get: { edits.conflict != nil }, set: { if !$0 { edits.answer(nil) } })) {
             Button("Replace") { edits.answer("replace") }
             Button("Keep Both") { edits.answer("keep") }
@@ -257,7 +257,7 @@ struct FilesPane: View {
     }
 
     private var trashTitle: String {
-        trashing.count == 1 ? String(localized: "Move “\(trashing[0])” to the Trash?") : String(localized: "Move \(trashing.count) items to the Trash?")
+        trashing.count == 1 ? String(localized: "Move “\(FileNameDisplay.label(trashing[0]))” to the Trash?") : String(localized: "Move \(trashing.count) items to the Trash?")
     }
 
     /// Under the list while selecting: what is picked, and Move / Move to Trash for all of it.
@@ -294,7 +294,7 @@ struct FilesPane: View {
             Haptics.tap()
             stack = Array(stack.prefix(level))
         } label: {
-            Text(name.isEmpty ? "/" : name)
+            Text(name.isEmpty ? "/" : FileNameDisplay.label(name))
                 .font(current ? Theme.Font.captionStrong : Theme.Font.caption)
                 .lineLimit(1)
                 .foregroundStyle(current ? Color.primary : Color.secondary)
@@ -338,7 +338,8 @@ struct FilesPane: View {
                 }
                 VStack(alignment: .leading, spacing: Theme.Space.xxs) {
                     HStack(spacing: Theme.Space.xs) {
-                        Text(e.name).font(Theme.Font.secondary).foregroundStyle(e.name.hasPrefix(".") ? Color.secondary : Color.primary).lineLimit(1)
+                        FileNameView(name: e.name).font(Theme.Font.secondary).foregroundStyle(e.name.hasPrefix(".") ? Color.secondary : Color.primary)
+                            .lineLimit(1).truncationMode(FileNameDisplay.needsMarker(e.name) ? .middle : .tail)
                         if e.symlink == true { ThemedIcon("arrow.turn.up.right").font(Theme.Font.label).foregroundStyle(.tertiary) }
                     }
                     HStack(spacing: Theme.Space.sm) {
