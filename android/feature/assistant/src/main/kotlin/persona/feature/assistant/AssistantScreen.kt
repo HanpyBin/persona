@@ -47,6 +47,8 @@ import persona.core.navigation.AppTab
 import persona.core.navigation.InboxRoute
 import persona.core.navigation.SettingsRoute
 import persona.core.navigation.ChatRoute
+import persona.core.navigation.ConversationKind
+import persona.core.navigation.TodoDetailRoute
 import persona.core.navigation.ModelPurposeRoute
 import persona.core.navigation.Navigator
 import persona.feature.assistant.proactive.AssistantProactiveScreen
@@ -624,6 +626,8 @@ fun AssistantScreen(
             onTodos = onTodos?.let { action -> { scope.launch { drawerOpen = false }; action() } },
             todoCount = todoCount,
             showTodos = showTodos,
+            onOpenTodo = { id -> scope.launch { drawerOpen = false }; navigator.navigate(TodoDetailRoute(id)) },
+            onOpenAgent = { key -> scope.launch { drawerOpen = false }; navigator.navigate(ChatRoute(key.machineId, key.sessionId, ConversationKind.Agent)) },
         )
     }
     val body: @Composable (Boolean) -> Unit = { wide ->
@@ -1019,6 +1023,8 @@ internal fun AssistantDrawer(
     onInbox: (() -> Unit)? = null, inboxCount: Int = 0,
     settingsCount: Int = 0, settingsDot: Boolean = false, settingsBadge: String? = null,
     pages: List<NavItem> = emptyList(), onPage: (String) -> Unit = {},
+    /** Opens a to-do's card / an Agent's session from a 常驻 lead's tree (#4352); null: those rows only fold. */
+    onOpenTodo: ((String) -> Unit)? = null, onOpenAgent: ((SessionKey) -> Unit)? = null,
     /** The sidebar's head with the assistant switcher (docs/assistant/managers.md "Clients"); none: the head as it was. */
     switcher: AssistantSwitcherSlot? = null,
 ) {
@@ -1087,13 +1093,18 @@ internal fun AssistantDrawer(
                 JSectionHeader(stringResource(R.string.assistant_directions), count = groups.directions.size)
             }
             itemsIndexed(groups.directions, key = { _, session -> "direction-" + session.key.path }) { index, session ->
-                ConversationRow(session, selected = session.key == active,
-                    position = GroupPosition.of(index, groups.directions.size),
-                    onOpen = { onOpen(session.key) }, onEnd = onEnd?.let { action -> { action(session) } },
-                    onCopy = { onCopy(session) }, onArchive = onArchive?.let { action -> { action(session) } },
-                    leader = true, onLeader = onLeader?.let { action -> { action(session) } },
-                    counts = leaderCountsLabel(groups.counts[session.sessionId], resources),
-                    named = groups.names[session.sessionId])
+                // With the hub's direction tree a lead folds open to its to-dos and their Agents (#4352, DirectionRows.kt).
+                DirectionLeadRows(groups.tree?.direction(session.sessionId)?.takeUnless { it.secretary },
+                    groups.names[session.sessionId] ?: session.conversationTitle(conversationWords()),
+                    GroupPosition.of(index, groups.directions.size), onOpenTodo, onOpenAgent) { position, disclosure ->
+                    ConversationRow(session, selected = session.key == active,
+                        position = position,
+                        onOpen = { onOpen(session.key) }, onEnd = onEnd?.let { action -> { action(session) } },
+                        onCopy = { onCopy(session) }, onArchive = onArchive?.let { action -> { action(session) } },
+                        leader = true, onLeader = onLeader?.let { action -> { action(session) } },
+                        counts = leaderCountsLabel(groups.counts[session.sessionId], resources),
+                        named = groups.names[session.sessionId], disclosure = disclosure)
+                }
             }
             // Every other chat is under one "All chats" row, which opens the list in place (a search lists what it finds
             // at once instead; the drawer's search finds every conversation either way).
@@ -1144,6 +1155,8 @@ private fun ConversationRow(
     modifier: Modifier = Modifier, position: GroupPosition = GroupPosition.Single,
     leader: Boolean = false, onLeader: (() -> Unit)? = null, onCopy: () -> Unit = {}, onArchive: (() -> Unit)? = null,
     counts: String? = null, named: String? = null,
+    /** A 常驻 lead's caret that folds its to-dos open (#4352, DirectionRows.kt), before its ⋯; null: none. */
+    disclosure: (@Composable () -> Unit)? = null,
 ) {
     var menu by remember { mutableStateOf(false) }
     // The channel its latest message came in from (WeChat, the Feishu bot…), as a small mark after the title.
@@ -1154,7 +1167,7 @@ private fun ConversationRow(
     if (LocalHomeDrawer.current) {
         JSidebarHistoryRow(title, session.conversationStatus(), selected, onOpen, { menu = true },
             stringResource(R.string.assistant_conversation_actions), hint = counts,
-            titleAccessory = channel?.let { c -> { JChannelMark(c, size = MarkSize.Inline) } })
+            titleAccessory = channel?.let { c -> { JChannelMark(c, size = MarkSize.Inline) } }, trailingAccessory = disclosure)
     } else JGroupItem(position, modifier) {
         // The time goes on the line under the title, with the state: beside the title it left the title two or three
         // characters in the wide window's 300dp list (2026-11-02), and a narrow drawer cut it short too.
@@ -1163,7 +1176,10 @@ private fun ConversationRow(
             subtitle = session.lastText?.takeIf { it.isNotBlank() },
             leading = { JIcon(if (selected) PhIcons.CheckCircle else PhIcons.ChatCircle, null,
                 selected = selected, tint = if (selected) PersonaTheme.palette.accent else PersonaTheme.palette.ink2) },
-            trailing = { JIconButton(PhIcons.DotsThree, stringResource(R.string.assistant_conversation_actions), { menu = true }) }, chevron = false)
+            trailing = {
+                disclosure?.invoke()
+                JIconButton(PhIcons.DotsThree, stringResource(R.string.assistant_conversation_actions), { menu = true })
+            }, chevron = false)
         // Under the title, not the icon: a fixed 16dp put it under the icon in glass and board and past it in brief.
         Row(Modifier.padding(start = rowTitleStart, end = rowPadding, bottom = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(Tokens.Space.s), verticalAlignment = Alignment.CenterVertically) {

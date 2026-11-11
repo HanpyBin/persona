@@ -113,6 +113,12 @@
     </plurals>
     <string name="designsystem_core_list_separator">、</string>
     <string name="designsystem_core_repo_other">その他</string>
+    <string name="designsystem_core_direction_doing">作業中</string>
+    <string name="designsystem_core_direction_needs_you">あなた待ち</string>
+    <string name="designsystem_core_direction_stuck">停滞中</string>
+    <string name="designsystem_core_direction_review">検収待ち</string>
+    <string name="designsystem_core_direction_secretary">書記官</string>
+    <string name="designsystem_core_direction_counts">作業中 %1$d · あなた待ち %2$d</string>
     <string name="designsystem_core_inbox_action">要対応</string>
     <string name="designsystem_core_inbox_fyi">参考</string>
     <string name="designsystem_core_inbox_noise">折りたたみ済み</string>

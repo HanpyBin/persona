@@ -41,6 +41,9 @@ fun AssistantSidebarContent(
     pages: List<NavItem>,
     onPage: (String) -> Unit,
     onRetired: (SessionKey) -> Unit,
+    /** A to-do's card / an Agent's session, from the Directions tree (#4352); null: those rows only fold. */
+    onOpenTodo: ((String) -> Unit)? = null,
+    onOpenAgent: ((SessionKey) -> Unit)? = null,
     switcher: AssistantSwitcherSlot? = null,
 ) {
     val choice by AssistantManagerChoice.current.collectAsStateWithLifecycle()
@@ -118,7 +121,7 @@ fun AssistantSidebarContent(
                 onLeader = if (management != null && !demo) ({ session: Session -> setLeader(session) }) else null,
                 onTodos = onTodos, todoCount = todoCount, showTodos = showTodos,
                 settingsCount = settingsCount, settingsDot = settingsDot, settingsBadge = settingsBadge,
-                pages = pages, onPage = onPage, switcher = switcher)
+                pages = pages, onPage = onPage, onOpenTodo = onOpenTodo, onOpenAgent = onOpenAgent, switcher = switcher)
         }
     }
     ending?.let { (session, target) ->

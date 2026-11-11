@@ -33,6 +33,11 @@ import java.util.UUID
 internal data class ConversationGroups(
     val main: Session?, val directions: List<Session> = emptyList(), val others: List<Session> = emptyList(),
     val names: Map<String, String> = emptyMap(), val counts: Map<String, LeaderCounts> = emptyMap(),
+    /**
+     * The hub's direction tree (#4352), the same one [counts] is read from: each 常驻 lead folds open to its to-dos. Null
+     * from an older hub: the rows stay as they are.
+     */
+    val tree: persona.core.contracts.DirectionTree? = null,
 )
 
 internal fun conversationGroups(
@@ -56,7 +61,7 @@ internal fun conversationGroups(
     val others = matches.filter { it.key != snapshot.mainSession && it.key !in listed }
     return ConversationGroups(
         snapshot.conversations.firstOrNull { it.key == snapshot.mainSession && !it.archived },
-        directions, others, names, snapshot.leaderCounts,
+        directions, others, names, snapshot.leaderCounts, snapshot.directionTree,
     )
 }
 

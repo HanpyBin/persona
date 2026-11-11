@@ -136,6 +136,12 @@ private fun resourceOf(key: CoreText.Key): Int = when (key) {
     CoreText.Key.CountIdle -> -R.plurals.designsystem_core_count_idle
     CoreText.Key.ListSeparator -> R.string.designsystem_core_list_separator
     CoreText.Key.RepoOther -> R.string.designsystem_core_repo_other
+    CoreText.Key.DirectionDoing -> R.string.designsystem_core_direction_doing
+    CoreText.Key.DirectionNeedsYou -> R.string.designsystem_core_direction_needs_you
+    CoreText.Key.DirectionStuck -> R.string.designsystem_core_direction_stuck
+    CoreText.Key.DirectionReview -> R.string.designsystem_core_direction_review
+    CoreText.Key.DirectionSecretary -> R.string.designsystem_core_direction_secretary
+    CoreText.Key.DirectionCounts -> R.string.designsystem_core_direction_counts
     CoreText.Key.InboxAction -> R.string.designsystem_core_inbox_action
     CoreText.Key.InboxFyi -> R.string.designsystem_core_inbox_fyi
     CoreText.Key.InboxNoise -> R.string.designsystem_core_inbox_noise
