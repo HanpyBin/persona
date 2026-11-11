@@ -89,51 +89,71 @@ class ChatSearchTest {
         assertEquals(21, calls)
     }
 
-    @Test fun liveChunksUpdateOnlyTheirFrozenWindowHitsAndMatchACompleteSearch() = runTest {
-        val old = Item("old", 1, role = "assistant", kind = "text", text = "Settled needle text")
-        val reply = Item("reply", 2, role = "assistant", kind = "text", text = "No match yet")
-        val frozen = listOf(old, reply)
-        val ordered = orderedChatSearchItems(frozen)
-        val order = ordered.mapIndexed { index, item -> item.id to index }.toMap()
-        val before = searchChatInOrder(res, ordered, "needle")
-        val oldHit = before.hits.single()
+    @Test fun conflatedResetAndLiveDeltaKeepFrozenWindowAndExistingText() = runTest {
+        val old = Item("old", 1, role = "assistant", kind = "text", text = "Settled needle")
+        val reply = Item("reply", 2, role = "assistant", kind = "text", text = "Before search")
+        val holder = MutableStateFlow("Before search")
+        val live = ChatLiveItems()
+        live.reset(listOf(old, reply), mapOf(reply.id to holder))
+        val timeline = ChatTimeline()
+        timeline.freeze(live.current())
+        val projection = ChatSearchProjection()
+        val initial = live.revisions.value
+        val before = projection.update(initial, timeline.isFrozen()) {
+            timeline.searchItems(initial.current())
+        }!!
+        val beforeHits = searchChat(res, before, "needle")
 
-        val first = reply.copy(text = "A chunk now contains needle")
-        val firstResult = searchChatDelta(res, listOf(old, first), order, before, mapOf(first.id to first), "needle")
-        assertEquals(searchChat(res, listOf(old, first), "needle"), firstResult)
-        assertSame(oldHit, firstResult.hits.single { it.itemId == old.id })
-        assertEquals("reply", firstResult.hits.first().itemId)
+        // An ordinary delta in the same frozen structure has no search input to recompute.
+        live.update(reply.id, holder, "Ignored live needle")
+        val delta = live.revisions.value
+        assertNull(projection.update(delta, timeline.isFrozen()) { error("a frozen delta must not project") })
 
-        val second = reply.copy(text = "A later needle chunk changes the snippet and its highlights")
-        val secondResult = searchChatDelta(res, listOf(old, second), order, firstResult, mapOf(second.id to second), "needle")
-        assertEquals(searchChat(res, listOf(old, second), "needle"), secondResult)
-        assertSame(oldHit, secondResult.hits.single { it.itemId == old.id })
-        secondResult.hits.single { it.itemId == reply.id }.ranges.forEach {
-            assertEquals("needle", secondResult.hits.single { hit -> hit.itemId == reply.id }.snippet.substring(it))
-        }
+        // Only the latest nonstructural revision is collected after this reset and its immediate holder update.
+        val older = Item("older", 0, role = "assistant", kind = "text", text = "Older history")
+        val after = Item("after", 3, role = "assistant", kind = "text", text = "needle outside")
+        live.reset(listOf(older, old.copy(text = "Structurally changed needle"), reply.copy(text = "Reset"), after),
+            mapOf(reply.id to holder))
+        live.update(reply.id, holder, "Live needle")
+        val revision = live.revisions.value
+        assertFalse(revision.structural)
+        val actual = projection.update(revision, timeline.isFrozen()) {
+            timeline.searchItems(revision.current())
+        }!!
 
-        // A structural item outside the frozen search window cannot add itself to the existing results.
-        val outside = Item("new", 3, role = "assistant", kind = "text", text = "needle outside")
-        assertSame(secondResult, searchChatDelta(res, listOf(old, second, outside), order, secondResult,
-            mapOf(outside.id to outside), "needle"))
+        assertEquals(listOf("older", "old", "reply"), actual.map { it.id })
+        assertSame(old, actual.single { it.id == old.id })
+        assertSame(reply, actual.single { it.id == reply.id })
+        assertEquals("Before search", actual.single { it.id == reply.id }.text)
+        assertEquals(beforeHits, searchChat(res, actual, "needle"))
     }
 
-    @Test fun aTruncatedSearchIsRebuiltWhenALiveChangeCanRevealTheNextHit() = runTest {
-        val original = (1..101).map { Item("item-$it", it, role = "assistant", kind = "text", text = "needle") }
-        val ordered = orderedChatSearchItems(original)
-        val order = ordered.mapIndexed { index, item -> item.id to index }.toMap()
-        val before = searchChatInOrder(res, ordered, "needle")
-        assertTrue(before.truncated)
-        assertEquals(100, before.hits.size)
-        assertFalse(before.hits.any { it.itemId == "item-1" })
+    @Test fun unfrozenSearchReceivesCompleteCurrentTextForEveryLiveDelta() = runTest {
+        val old = Item("old", 1, role = "assistant", kind = "text", text = "Settled text")
+        val reply = Item("reply", 2, role = "assistant", kind = "text", text = "Before streaming")
+        val holder = MutableStateFlow("Before streaming")
+        val live = ChatLiveItems()
+        live.reset(listOf(old, reply), mapOf(reply.id to holder))
+        val timeline = ChatTimeline()
+        val projection = ChatSearchProjection()
 
-        val changed = original.last().copy(text = "the newest reply no longer matches")
-        val current = original.dropLast(1) + changed
-        val after = searchChatDelta(res, current, order, before, mapOf(changed.id to changed), "needle")
+        live.update(reply.id, holder, "Streaming needle")
+        val first = live.revisions.value
+        val firstItems = projection.update(first, timeline.isFrozen()) {
+            timeline.searchItems(first.current())
+        }
+        assertNotNull(firstItems)
+        assertEquals("Streaming needle", firstItems!!.single { it.id == reply.id }.text)
+        assertEquals(searchChat(res, listOf(old, reply.copy(text = "Streaming needle")), "needle"),
+            searchChat(res, firstItems, "needle"))
 
-        assertEquals(searchChat(res, current, "needle"), after)
-        assertEquals(100, after.hits.size)
-        assertFalse(after.truncated)
-        assertTrue(after.hits.any { it.itemId == "item-1" })
+        live.update(reply.id, holder, "Streaming needle and another chunk")
+        val second = live.revisions.value
+        val secondItems = projection.update(second, timeline.isFrozen()) {
+            timeline.searchItems(second.current())
+        }
+        assertNotNull(secondItems)
+        assertEquals("Streaming needle and another chunk", secondItems!!.single { it.id == reply.id }.text)
+        assertEquals(searchChat(res, second.current(), "needle"), searchChat(res, secondItems, "needle"))
     }
 }

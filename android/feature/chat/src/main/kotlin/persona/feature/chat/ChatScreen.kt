@@ -395,22 +395,16 @@ private fun ChatPage(
                 }
             }.asReversed()
     }
-    val searchableItems by produceState(ChatSearchItems(), liveItems, timelineVersion, search.visible) {
+    val searchableItems by produceState(emptyList<Item>(), liveItems, timelineVersion, search.visible) {
         if (!search.visible) return@produceState
-        var window: List<Item>? = null
-        var members = emptySet<String>()
+        val projection = ChatSearchProjection()
         liveItems.revisions.collect { revision ->
-            val structural = window == null || revision.structural
-            if (structural) {
-                // Opening search freezes its members, not the current text of a reply already inside that window.
-                val frozen = withContext(Dispatchers.Default) { timeline.searchItems(revision.current()) }
-                window = frozen
-                members = frozen.mapTo(mutableSetOf()) { it.id }
-                value = ChatSearchItems(frozen)
-            } else {
-                val changed = revision.changed.filterKeys { it in members }
-                if (changed.isNotEmpty()) value = ChatSearchItems(revision.overlay(window), structural = false, changed = changed)
+            val items = withContext(Dispatchers.Default) {
+                projection.update(revision, timeline.isFrozen()) {
+                    timeline.searchItems(revision.current())
+                }
             }
+            if (items != null) value = items
         }
     }
     // Photos sent just before a message go into that message's bubble instead of a row of their own.
@@ -645,11 +639,11 @@ private fun ChatPage(
         liveItems.revisions.collect { revision ->
             // Replies render each text part under "<item id>/<part index>" (MessageContent), so prewarm those keys, each with
             // the source its row parses there (MarkdownText.source): the same key and source, so the row finds the parse.
-            val items = revision.items
             val paths = currentMarkdownPaths
             val (latest, earlier) = withContext(Dispatchers.Default) {
-                val split = if (revision.lastTextOnly) markdownSplit.splitLast(items) else markdownSplit.split(items)
-                split.let { (latest, earlier) -> latest.map { it.key to it.source(paths) } to earlier.map { it.key to it.source(paths) } }
+                markdownSplit.split(revision).let { (latest, earlier) ->
+                    latest.map { it.key to it.source(paths) } to earlier.map { it.key to it.source(paths) }
+                }
             }
             markdownCache.keep(latest.map { it.first } + earlier.map { it.first })
             latest.forEach { (id, source) -> markdownCache.parse(id, source) }

@@ -22,15 +22,15 @@ internal class ChatLiveItems {
     internal class Revision internal constructor(
         val base: List<Item>,
         val values: Map<String, String>,
-        val changed: Map<String, Item>,
+        val changedItemId: String?,
         val structural: Boolean,
+        val structureGeneration: Long,
         val lastItemId: String?,
     ) {
-        val items: List<Item> = overlay(base)
+        val items: List<Item> = if (values.isEmpty()) base else LiveItemList(base, values)
         /** True only when the revision proves that the last item's text, and nothing else's structure, changed. */
-        val lastTextOnly: Boolean = !structural && changed.size == 1 && lastItemId == changed.keys.single()
+        val lastTextOnly: Boolean = !structural && lastItemId != null && lastItemId == changedItemId
 
-        fun overlay(items: List<Item>): List<Item> = if (values.isEmpty()) items else LiveItemList(items, values)
         fun current(): List<Item> = if (values.isEmpty()) base else items.toList()
     }
 
@@ -48,25 +48,28 @@ internal class ChatLiveItems {
 
     private var byId = emptyMap<String, Item>()
     private var holders = emptyMap<String, StateFlow<String>>()
-    private val mutableRevisions = MutableStateFlow(Revision(emptyList(), emptyMap(), emptyMap(), structural = true, lastItemId = null))
+    private var structureGeneration = 0L
+    private val mutableRevisions = MutableStateFlow(Revision(emptyList(), emptyMap(), changedItemId = null,
+        structural = true, structureGeneration = structureGeneration, lastItemId = null))
     val revisions: StateFlow<Revision> = mutableRevisions
 
     /** A structural snapshot is the only operation that indexes the conversation. */
     fun reset(items: List<Item>, liveText: Map<String, StateFlow<String>>) {
         byId = items.associateBy { it.id }
         holders = liveText
-        mutableRevisions.value = Revision(items, liveText.mapValues { it.value.value }, emptyMap(), structural = true,
-            lastItemId = items.lastOrNull()?.id)
+        structureGeneration++
+        mutableRevisions.value = Revision(items, liveText.mapValues { it.value.value }, changedItemId = null,
+            structural = true, structureGeneration = structureGeneration, lastItemId = items.lastOrNull()?.id)
     }
 
     /** Ignore a cancelled collector from an older holder for the same row. */
     fun update(id: String, holder: StateFlow<String>, text: String) {
         if (holders[id] !== holder) return
-        val item = byId[id] ?: return
+        if (id !in byId) return
         val previous = mutableRevisions.value
         if (previous.values[id] == text) return
-        mutableRevisions.value = Revision(previous.base, previous.values + (id to text),
-            mapOf(id to item.copy(text = text)), structural = false, lastItemId = previous.lastItemId)
+        mutableRevisions.value = Revision(previous.base, previous.values + (id to text), changedItemId = id,
+            structural = false, structureGeneration = previous.structureGeneration, lastItemId = previous.lastItemId)
     }
 
     /** User actions such as opening search or freezing the timeline read the current text on demand. */

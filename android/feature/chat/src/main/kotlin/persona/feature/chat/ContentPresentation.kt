@@ -143,6 +143,15 @@ internal class MarkdownPrewarm(private val limit: Int = 80) {
     /** Where the last item's texts are: at the end of [latest] (1), at the start of [earlier] (2), nowhere (0); and how many. */
     private var lastSide = 0
     private var lastCount = 0
+    private var structureGeneration = -1L
+
+    /** A conflated revision still proves whether its structural base was the one this consumer last processed. */
+    @Synchronized fun split(revision: ChatLiveItems.Revision): Pair<List<MarkdownText>, List<MarkdownText>> {
+        val result = if (revision.lastTextOnly && revision.structureGeneration == structureGeneration)
+            splitLast(revision.items) else split(revision.items)
+        structureGeneration = revision.structureGeneration
+        return result
+    }
 
     @Synchronized fun split(items: List<Item>): Pair<List<MarkdownText>, List<MarkdownText>> {
         val before = this.items

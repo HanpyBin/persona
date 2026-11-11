@@ -1,7 +1,9 @@
 package persona.feature.chat
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import persona.core.contracts.Item
 import kotlin.random.Random
@@ -89,5 +91,25 @@ class MarkdownPrewarmTest {
         // The fast path is only for the same last row. A structural change falls back to the general split.
         items = items.dropLast(1) + items.last().copy(role = "user")
         assertEquals(splitAfresh(items), prewarm.splitLast(items))
+    }
+
+    @Test fun conflatedStructuralResetAndLiveDeltaCannotReuseTheOldPrefix() {
+        val old = Item("old", 1, role = "assistant", kind = "text", text = "Old **prefix**")
+        val reply = Item("reply", 2, role = "assistant", kind = "text", text = "First")
+        val holder = kotlinx.coroutines.flow.MutableStateFlow("First")
+        val live = ChatLiveItems()
+        live.reset(listOf(old, reply), mapOf(reply.id to holder))
+        val prewarm = MarkdownPrewarm()
+        prewarm.split(live.revisions.value)
+
+        // A StateFlow collector can miss this reset and observe only the immediately following holder update.
+        live.reset(listOf(old.copy(text = "Structurally changed **prefix**"), reply.copy(text = "Reset")),
+            mapOf(reply.id to holder))
+        live.update(reply.id, holder, "Streamed")
+        val revision = live.revisions.value
+        assertFalse(revision.structural)
+        assertTrue(revision.lastTextOnly)
+
+        assertEquals(splitAfresh(revision.items), prewarm.split(revision))
     }
 }

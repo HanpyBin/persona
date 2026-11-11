@@ -27,7 +27,7 @@ import kotlinx.coroutines.withContext
 
 @Composable
 internal fun ChatSearchScreen(
-    state: ChatSearchState, searchItems: ChatSearchItems, rounds: Int, hasOlder: Boolean,
+    state: ChatSearchState, items: List<Item>, rounds: Int, hasOlder: Boolean,
     repository: ChatRepository, session: SessionKey, onClose: () -> Unit,
 ) {
     val palette = PersonaTheme.palette
@@ -38,33 +38,12 @@ internal fun ChatSearchScreen(
     var notice by remember { mutableStateOf<String?>(null) }
     var searching by remember { mutableStateOf(false) }
     val res = androidx.compose.ui.platform.LocalResources.current
-    val currentItems by rememberUpdatedState(searchItems)
-    val results by produceState(ChatSearchResults(), state.query) {
-        val query = state.query
-        // Typing debounces as before; chunks for the same query must not restart that delay or clear the visible hits.
+    val results by produceState(ChatSearchResults(), state.query, items) {
         searching = true
         value = ChatSearchResults()
         delay(200)
-        var order = emptyMap<String, Int>()
-        var initialized = false
-        snapshotFlow { currentItems }.collect { input ->
-            if (input.structural || !initialized) {
-                val (nextOrder, next) = withContext(Dispatchers.Default) {
-                    val ordered = orderedChatSearchItems(input.items)
-                    ordered.mapIndexed { index, item -> item.id to index }.toMap() to searchChatInOrder(res, ordered, query)
-                }
-                order = nextOrder
-                if (next != value) value = next
-                initialized = true
-            } else {
-                val before = value
-                val next = withContext(Dispatchers.Default) {
-                    searchChatDelta(res, input.items, order, before, input.changed, query)
-                }
-                if (next != value) value = next
-            }
-            searching = false
-        }
+        value = withContext(Dispatchers.Default) { searchChat(res, items, state.query) }
+        searching = false
     }
     val loadFailed = stringResource(R.string.chat_search_load_failed)
     JFullScreen(onClose) {

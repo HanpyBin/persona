@@ -23,6 +23,7 @@ class ChatLiveItemsTest {
         val live = ChatLiveItems()
         live.reset(base, mapOf("reply" to holder))
         val readsAfterReset = base.reads
+        val generation = live.revisions.value.structureGeneration
 
         live.update("reply", holder, "first and a new chunk")
 
@@ -30,7 +31,8 @@ class ChatLiveItemsTest {
         val revision = live.revisions.value
         assertFalse(revision.structural)
         assertTrue(revision.lastTextOnly)
-        assertEquals(setOf("reply"), revision.changed.keys)
+        assertEquals(generation, revision.structureGeneration)
+        assertEquals("reply", revision.changedItemId)
         assertSame(history.first(), revision.items.first())
         assertSame(history.last(), revision.items[199])
         assertEquals("first and a new chunk", revision.items.last().text)
@@ -38,20 +40,27 @@ class ChatLiveItemsTest {
         assertTrue("materializing for a user action reads the whole list", base.reads > readsAfterReset)
     }
 
-    @Test fun aFrozenWindowUsesCurrentTextWithoutChangingItsMembers() {
+    @Test fun aResetAdvancesStructureGenerationButAnOrdinaryDeltaDoesNot() {
         val old = Item("old", 1, role = "assistant", kind = "text", text = "settled")
-        val reply = Item("reply", 2, role = "assistant", kind = "text", text = "before search")
-        val holder = MutableStateFlow("before search")
+        val reply = Item("reply", 2, role = "assistant", kind = "text", text = "before streaming")
+        val holder = MutableStateFlow("before streaming")
         val live = ChatLiveItems()
         live.reset(listOf(old, reply), mapOf("reply" to holder))
-        val frozen = listOf(old, reply)
-        live.update("reply", holder, "a URL arrived https://example.com/stream")
+        val initial = live.revisions.value
 
-        val overlaid = live.revisions.value.overlay(frozen)
-        assertSame(old, overlaid.first())
-        assertEquals("a URL arrived https://example.com/stream", overlaid.last().text)
-        assertEquals(listOf("old", "reply"), overlaid.map { it.id })
-        assertEquals(listOf("old", "reply"), live.revisions.value.base.map { it.id })
+        live.update("reply", holder, "first chunk")
+        assertEquals(initial.structureGeneration, live.revisions.value.structureGeneration)
+
+        live.reset(listOf(old.copy(text = "changed prefix"), reply.copy(text = "reset")), mapOf("reply" to holder))
+        val reset = live.revisions.value
+        assertTrue(reset.structureGeneration > initial.structureGeneration)
+        assertTrue(reset.structural)
+
+        live.update("reply", holder, "next chunk")
+        val latest = live.revisions.value
+        assertEquals(reset.structureGeneration, latest.structureGeneration)
+        assertFalse(latest.structural)
+        assertTrue(latest.lastTextOnly)
     }
 
     @Test fun staleAndDuplicateHolderUpdatesCannotOverwriteTheCurrentRevision() {
