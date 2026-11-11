@@ -1,13 +1,14 @@
 package persona.android.di
 
-import com.sun.net.httpserver.HttpExchange
-import com.sun.net.httpserver.HttpServer
 import java.io.Closeable
-import java.net.InetSocketAddress
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
+import okhttp3.mockwebserver.Dispatcher
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import persona.core.hub.HttpMachineMetricsApi
@@ -38,31 +39,23 @@ private class MetricsHub(cpu: Int) : Closeable {
     val cpu = AtomicInteger(cpu)
     val refused = AtomicBoolean(false)
     private val client = OkHttpClient()
-    private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
-        createContext("/") { exchange ->
-            when (exchange.requestURI.path) {
-                "/api/v1/managers" -> reply(exchange, 200,
+    private val server = MockWebServer().apply {
+        dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when (request.requestUrl!!.encodedPath) {
+                "/api/v1/managers" -> MockResponse().setBody(
                     """{"default":"primary","managers":[{"id":"primary","name":"Primary","online":true}]}""")
-                "/api/v1/metrics" -> if (refused.get()) reply(exchange, 503, """{"error":"Unavailable"}""") else
-                    reply(exchange, 200, """{"machines":[{"machine_id":"same","online":true,"latest":{"t":1,"cpu":${this@MetricsHub.cpu.get()},"mem_used":111,"disk_used":10},"points":[]}],"step":60}""")
-                else -> reply(exchange, 404, """{"error":"Not found"}""")
+                "/api/v1/metrics" -> if (refused.get()) MockResponse().setResponseCode(503) else
+                    MockResponse().setBody("""{"machines":[{"machine_id":"same","online":true,"latest":{"t":1,"cpu":${this@MetricsHub.cpu.get()},"mem_used":111,"disk_used":10},"points":[]}],"step":60}""")
+                else -> MockResponse().setResponseCode(404)
             }
         }
-        start()
     }
 
     fun api(cache: HttpMachineMetricsApi.Cache) = HttpMachineMetricsApi(
-        "http://127.0.0.1:${server.address.port}/", "fixture-token", client, cache = cache)
-
-    private fun reply(exchange: HttpExchange, status: Int, body: String) {
-        val bytes = body.toByteArray(Charsets.UTF_8)
-        exchange.responseHeaders.set("Content-Type", "application/json")
-        exchange.sendResponseHeaders(status, bytes.size.toLong())
-        exchange.responseBody.use { it.write(bytes) }
-    }
+        server.url("/").toString(), "fixture-token", client, cache = cache)
 
     override fun close() {
-        server.stop(0)
+        server.close()
         client.dispatcher.executorService.shutdownNow()
         client.connectionPool.evictAll()
     }
