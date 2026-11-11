@@ -3334,6 +3334,31 @@ The normative text, with every rule and example, is [meeting-minutes.md](../assi
 - The answer is one model call (purpose `meeting.answer`) with no tools, whose input until the private-meeting mark exists (#3862 phase 1) contains only this meeting: its title, calendar hint, live lines and earlier asks. Earlier meetings, their projects and their action-item to-do states are disabled together; earlier-meeting material returns with the mark. See meeting-minutes.md "What the hub gives the answering model"; nothing else reaches it.
 - `…/live`, `…/ask` and changes to `meeting_attendance_default` take full credentials only (`403 forbidden` otherwise); they are not in `extwire.RouteScopes`.
 
+#### Meeting conversation (#3862)
+
+The normative text, with every rule, limit and error, is [meeting-minutes.md](../assistant/meeting-minutes.md) "Meeting conversation (#3862)"; this is the summary. It ships in phases, each behind a flag the hub lists, like `meeting_attendance`, only while the default manager names that capability in its `manager.hello`: `meeting_conversation` (phase 1), `meeting_live_view` (2), `meeting_photos` (3) and `meeting_transcription` (5); phase 4 is `meeting` in the built-in voice extension's `features`, and phase 6 needs no flag. A recording whose upload does not ask for a room keeps "Attending a meeting" above, so phones from before keep working. Every route below takes full credentials only and is not in `extwire.RouteScopes`.
+
+- **Upload fields** (with `kind: meeting`): `room: true` (the hub opens the meeting's own room conversation, which attends instead of `attending_session`; once set it stays), `private` (the meeting's private mark, taken only while the recording has none), `transcription` (`device` by default, or `hub`; the mode of the first upload that names one). The `200` adds `room` for a recording that asked for one (a `200` without it is an older manager: the phone uploads again with `attendance: "off"`), and `transcription` with `transcription_problem` (`unavailable`, `not_meeting`).
+- **`GET …/live` and `detail.meta`** add `private` (absent until chosen), `room` (`{state: starting|ready|unavailable|ended|deleted, machine_id?, session_id?, problem?}`; `problem` an open set: `runtime_unsupported`, `node_too_old`, `machine_offline`, `start_failed`) and `followup` (`{machine_id, session_id}`); from phase 2 `lines` (`?from=n`: `[{n, start, end, text}]`, at most 500, `more`), `topics` (`[{title, state: done|current|open, at?, note?}]`) and `topics_at`; from phase 3 `photos`; from phase 5 `transcription` (`{mode, state: live|finishing|final|failed, gaps}`) and `interim`.
+- **`…/ask` in a room meeting** is answered by the room conversation (a room that is not `ready` falls back to `meeting.answer`). The request may add `spoken: true` (a question transcribed from a Talk span); `Ask` adds `via` (`room`, `material`), `heard` (`[{start, end, text}]`), `question_source` `spoken` and `error` `no_answer`; `409 meeting_ended` after `409 not_attending` once the room has ended. In hub mode `POST …/live` is `409 hub_transcribes`.
+
+| Method | Path | Description |
+| --- | --- | --- |
+| PUT | `/api/v1/recordings/{id}/private` | `{"private": bool}` → `{"private"}`: the private mark (only meetings marked `false` are earlier-meeting material) |
+| POST | `/api/v1/recordings/{id}/just-me` | `{"id", "text"?, "images"?}` → `{"conversation", "client_msg_id"}`: the owner's private question to the main chat, with the meeting as context; no push, never stored with the recording |
+| POST | `/api/v1/recordings/{id}/followup` | `{"id"?, "text"?, "images"?}` → `{"followup", "created", "client_msg_id"?}`: the meeting's follow-up conversation, made once with the meeting as its seed |
+| POST / GET | `/api/v1/recordings/{id}/photos` | Phase 3: add a photo `{"id", "at", "mime", "data", "text"?, "caption"?}` → `{"photo"}`; list them → `{"photos"}` |
+| GET / DELETE | `/api/v1/recordings/{id}/photos/{n}` | Phase 3: the image; remove it → `{"deleted"}` |
+| GET (WebSocket) | `/api/v1/recordings/{id}/audio` | Phase 5: the meeting's audio from the phone in hub mode (PCM16, 16 kHz) with `start`, `seek`, `role`, `speaking`, `end`; the hub answers `ready`, `ack`, `interim`, `line`, `problem`, `error` |
+| PUT | `/api/v1/recordings/{id}/audio?at=` | Phase 5: audio for a gap, at most 10 MiB → `{"gaps"}` |
+
+- **Conversations**: the room is a guest conversation of kind `meeting` (Claude Code only, no runtime tools, meeting tools only), with `origin: "meeting"`; the follow-up is a normal Persona conversation with `origin: "meeting_followup"`; both have `origin_ref` the recording id. Message source `meeting` also marks the room's header, heard questions, forwarded photos and the follow-up's seed. A message sent into an ended room is `409 meeting_ended`.
+- **Event**: `meeting_live` `{recording_id, changed}`, content-free (clients read `GET …/live` again), at most one a second per recording.
+- **Settings** in `GET` / `PUT /api/v1/assistant` (phase 5): `meeting_transcription_default` (`device` or `hub`), `meeting_glossary`, and the read-only `meeting_transcription_ready`.
+- **Minutes** items may cite a photo (`photo`, phase 3); in hub mode `detail.segments` items carry `source` (`hub`, `device`).
+- **Voice** (phase 4): protocol 2 `start` with `mode: "meeting"`, `recording_id` and the room as `target`, and `talk` frames (`{"type": "talk", "on": bool}`); audio only between them. Phase 6 adds `kind` to `GET /api/v1/kb-search` and to the voice `search_knowledge` tool.
+- **Extension point** (phase 5): `transcription` (version 1, `runtime.http`), with `GET /info` and a `GET /ws` job socket; the built-in voice extension contributes one.
+
 ## Messaging source API (`/api/v1/messaging`)
 
 Sources from the `messaging` extension point (the first is Lark): `GET /api/v1/messaging` lists sources; `/api/v1/messaging/{source}/…` handles chats, messages, sending and so on. After authentication, the hub forwards to the extension and validates responses against the schema. Specification in [extension-messaging.md](../extensions/extension-messaging.md); `/api/v1/lark` below is the legacy API from before migration, kept until Mac, Android and web finish migrating (#2138).
