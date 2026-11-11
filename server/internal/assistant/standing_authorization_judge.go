@@ -119,10 +119,10 @@ var standingSensitiveWords = []struct {
 	action  string
 	pattern *regexp.Regexp
 }{
-	{"deploy-production", regexp.MustCompile(`(?i)\bproduction\b|\bprod\b|\brelease\b|testflight|app store|生产|线上|上线|发版`)}, // i18n-ignore: card action data
-	{"send", regexp.MustCompile(`(?i)\bsend\b|\breply\b|\bcomment\b|发送|发消息|发邮件|对外|回复|评论`)},                                // i18n-ignore: card action data
-	{"delete", regexp.MustCompile(`(?i)\bdelete\b|\bremove\b|\bdrop\b|删除|删掉|清空|削除`)},                                      // i18n-ignore: card action data
-	{"spend", regexp.MustCompile(`(?i)\bspend\b|\bpurchase\b|\bbuy\b|\bpay\b|购买|花钱|付费|续费|充值|購入|支払`)},                      // i18n-ignore: card action data
+	{"deploy-production", regexp.MustCompile(`(?i)\bproduction\b|\bprod\b|\brelease\b|testflight|app store|生产|线上|上线|发版`)},                           // i18n-ignore: card action data
+	{"send", regexp.MustCompile(`(?i)\bsend\b|\breply\b|\bcomment\b|发送|发消息|发邮件|对外|回复|评论`)},                                                          // i18n-ignore: card action data
+	{"delete", regexp.MustCompile(`(?i)\bdelete\b|\bremove\b|\bdrop\b|force[- ]push|force[- ]pushing|--force(?:-with-lease)?|强推|强制推送|删除|删掉|清空|削除`)}, // i18n-ignore: card action data
+	{"spend", regexp.MustCompile(`(?i)\bspend\b|\bpurchase\b|\bbuy\b|\bpay\b|购买|花钱|付费|续费|充值|購入|支払`)},                                                // i18n-ignore: card action data
 }
 var standingDeployWords = regexp.MustCompile(`(?i)\bdeploy(?:ment)?\b|部署|发布|デプロイ`)                                                                                                                                                                                                                                           // i18n-ignore: card action data
 var standingTestDeployment = regexp.MustCompile(`(?i)\bdeploy-test\b|\bdeploy(?:ment)?\s+[^.;,\n]{0,80}?\bto\s+(?:test(?:ing)?|staging|ppe|boe)\b|\bdeploy(?:ment)?(?:[- ]to)?\s+(?:to\s+)?(?:the\s+)?(?:test(?:ing)?(?:[- ]environment)?|staging|ppe|boe)\b|部署(?:到|至)?(?:测试|预发)|发布(?:到|至)(?:测试|预发)|テスト(?:環境)?(?:に|へ)?デプロイ`) // i18n-ignore: environment data

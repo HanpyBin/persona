@@ -294,7 +294,7 @@ A conservative code scan adds sensitive effects even if classification misses th
 production-sensitive. Explicit absolute paths are independently checked against repository scope. The model's output never grants tool permissions or replaces condition evidence.
 
 Tool `permission` cards are never approved by standing authorization. Production deployment, external sending,
-deletion and spending each require their own explicit action and `reversible: true`; task notes alone still cannot
+deletion (including force-pushing or replacing remote history) and spending each require their own explicit action and `reversible: true`; task notes alone still cannot
 authorize the `userOnlyWords` actions described above. A plan answer explicitly uses runtime mode `default`, so it
 does not grant bypass permissions. Existing per-session tool grants are separate and unchanged.
 
