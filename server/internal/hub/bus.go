@@ -281,6 +281,7 @@ func (h *Hub) serveBus(w http.ResponseWriter, r *http.Request) {
 	// A card the hub's own feature asks (fleet.ask) is withdrawn when that feature stops waiting (a tool call whose
 	// caller went away, #2597).
 	c.peer.Cancels = map[string]bool{assistantwire.MethodFleetAsk: true}
+	c.peer.CancelRequest = cancelDeviceRead
 	c.peer.OnRequest = func(ctx context.Context, method string, params json.RawMessage) (any, error) {
 		return h.busRequest(ctx, c, method, params)
 	}
@@ -684,4 +685,14 @@ func (h *Hub) busSeen(ctx context.Context, id string, where *db.BusIdentity) {
 		}
 	}
 	h.managersChanged()
+}
+
+// devices.call also carries mutations (session.start/send, etc.). Only history reads may be abandoned when the
+// HTTP request ends; the manager forwards that cancellation to the node on the next hop.
+func cancelDeviceRead(method string, params json.RawMessage) bool {
+	if method != devicewire.MethodCall {
+		return false
+	}
+	var call devicewire.NodeCall
+	return json.Unmarshal(params, &call) == nil && call.Method == "session.items"
 }

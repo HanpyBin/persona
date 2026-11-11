@@ -17,6 +17,7 @@ import (
 	"io"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 type Handler func(ctx context.Context, method string, params json.RawMessage) (any, error)
@@ -85,10 +86,15 @@ type Peer struct {
 	// event, and most calls are meant to finish on the other side anyway. A peer that does not know the event ignores
 	// it, as before: its handler runs on.
 	Cancels map[string]bool
+	// CancelRequest additionally selects cancellable calls by their serialized params, for envelopes that carry
+	// both reads and mutations. Like Cancels, set it before using the peer; nil preserves the default behavior.
+	CancelRequest func(method string, params json.RawMessage) bool
 
 	running map[string]context.CancelFunc // requests being handled, by id: what a cancelEvent ends
 	// Only bounded peers couple accepted work to closure; legacy peers retain their cancellation semantics.
 	runtimeCancel context.CancelFunc
+	cancelOnce    sync.Once
+	cancelQueue   chan string // bounded best-effort cancellation delivery, one worker per peer
 }
 
 // cancelEvent is sent for a request the caller no longer waits for: an approval the hub asks for on the phone stays
@@ -112,7 +118,7 @@ func ConnContext(ctx context.Context) context.Context {
 
 // New creates a peer. prefix distinguishes request ids by side ("h" for hub, "n" for node).
 func New(prefix string, w io.Writer) *Peer {
-	return &Peer{prefix: prefix, w: w, pending: map[string]chan message{}, running: map[string]context.CancelFunc{}, closed: make(chan struct{}), wsem: make(chan struct{}, 1)}
+	return &Peer{prefix: prefix, w: w, pending: map[string]chan message{}, running: map[string]context.CancelFunc{}, closed: make(chan struct{}), wsem: make(chan struct{}, 1), cancelQueue: make(chan string, 64)}
 }
 
 // Serve reads messages until r fails; it returns the read error.
@@ -205,6 +211,11 @@ func (p *Peer) handle(ctx context.Context, m message) {
 	} else {
 		res, err = p.OnRequest(ctx, m.Method, m.Params)
 	}
+	// A cancelled caller will never consume this result. In particular, do not marshal or queue a large history
+	// reply behind another write after its HTTP request has already timed out.
+	if ctx.Err() != nil {
+		return
+	}
 	out := message{ID: m.ID}
 	var coded *Error
 	if errors.As(err, &coded) {
@@ -219,17 +230,13 @@ func (p *Peer) handle(ctx context.Context, m message) {
 			out.Result = b
 		}
 	}
-	if err := p.write(out); errors.Is(err, errFrameBudget) {
+	if err := p.writeContext(ctx, out); errors.Is(err, errFrameBudget) {
 		// The request must get an error, not a permanently unresolved promise.
 		// If even the error cannot fit, disconnect so all pending calls fail.
-		if err := p.write(message{ID: m.ID, Error: &Error{Message: errFrameBudget.Error()}}); err != nil {
+		if err := p.writeContext(ctx, message{ID: m.ID, Error: &Error{Message: errFrameBudget.Error()}}); err != nil && ctx.Err() == nil {
 			p.Close(err)
 		}
 	}
-}
-
-func (p *Peer) write(m message) error {
-	return p.writeContext(context.Background(), m)
 }
 
 // encodeLine is marshal(m) and its newline, encoded into one buffer: the same bytes and errors without copying the
@@ -265,6 +272,9 @@ func plainEncoder(w io.Writer) *json.Encoder {
 }
 
 func (p *Peer) writeContext(ctx context.Context, m message) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	b, err := encodeLine(m)
 	if err != nil {
 		return err
@@ -332,9 +342,8 @@ func (p *Peer) Call(ctx context.Context, method string, params any, out any) err
 		}
 		return nil
 	case <-ctx.Done():
-		if p.Cancels[method] {
-			params, _ := json.Marshal(map[string]string{"id": id})
-			_ = p.write(message{Event: cancelEvent, Params: params})
+		if p.Cancels[method] || (p.CancelRequest != nil && p.CancelRequest(method, raw)) {
+			p.cancelCall(id)
 		}
 		return ctx.Err()
 	case <-p.closed:
@@ -342,11 +351,52 @@ func (p *Peer) Call(ctx context.Context, method string, params any, out any) err
 	}
 }
 
+// cancelCall is best effort: a stalled writer must not hold a caller past its deadline merely to say it left.
+// One worker and a fixed queue bound cancellation work even when many callers expire together. If the queue is
+// full, dropping a cancellation preserves the old peer's behavior (its handler runs on), without delaying callers.
+func (p *Peer) cancelCall(id string) {
+	select {
+	case <-p.closed:
+		return
+	default:
+	}
+	p.cancelOnce.Do(func() { go p.sendCancels() })
+	select {
+	case p.cancelQueue <- id:
+	default:
+	}
+}
+
+func (p *Peer) sendCancels() {
+	for {
+		select {
+		case <-p.closed:
+			return
+		case id := <-p.cancelQueue:
+			// Do not use the original, already cancelled request context. Queue waits expire, while a frame already
+			// being written must finish: an arbitrary io.Writer cannot safely interrupt it halfway through.
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			params, _ := json.Marshal(map[string]string{"id": id})
+			_ = p.writeContext(ctx, message{Event: cancelEvent, Params: params})
+			cancel()
+		}
+	}
+}
+
 // Notify sends a one-way event.
 func (p *Peer) Notify(event string, params any) error {
+	return p.NotifyContext(context.Background(), event, params)
+}
+
+// NotifyContext sends an event while ctx is live. It can abandon an event waiting for the writer; a write already
+// under way still finishes its frame. Notify keeps its connection-lifetime behavior for existing callers.
+func (p *Peer) NotifyContext(ctx context.Context, event string, params any) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if raw, ok := params.(Marshaled); ok {
 		if line, ok := marshaledLine(event, raw); ok {
-			return p.write(message{line: line})
+			return p.writeContext(ctx, message{line: line})
 		}
 		params = json.RawMessage(raw)
 	}
@@ -354,13 +404,13 @@ func (p *Peer) Notify(event string, params any) error {
 	// with the same errors, so the line is the same without encoding them twice (a computer's session list each time
 	// it changes). An empty one is what json.Marshal says it is (an error).
 	if raw, ok := params.(json.RawMessage); ok && len(raw) > 0 {
-		return p.write(message{Event: event, Params: raw})
+		return p.writeContext(ctx, message{Event: event, Params: raw})
 	}
 	raw, err := marshal(params)
 	if err != nil {
 		return err
 	}
-	return p.write(message{Event: event, Params: raw})
+	return p.writeContext(ctx, message{Event: event, Params: raw})
 }
 
 func (p *Peer) Close(err error) {

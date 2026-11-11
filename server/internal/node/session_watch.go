@@ -3,7 +3,6 @@ package node
 import (
 	"context"
 	"fmt"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -28,6 +27,12 @@ type watch struct {
 	live    liveWatch
 	// codex: a Codex thread's, whose transcript may come from the Codex App's database (codex_apphistory.go).
 	codex bool
+
+	// pending is the delivery frontier, not the file read cursor. A canceled page request can read new lines
+	// without finishing their push; the pump retries them even when the file no longer looks changed.
+	// pending is protected by pushLock; retry is also read by the pump.
+	pending transcript.Span
+	retry   atomic.Bool
 }
 
 // watchEvery is how often the pump reads the watched transcripts; every followEvery ticks it also follows the copy
@@ -62,6 +67,14 @@ func (n *Node) watch(id string, since int) error {
 // watchFor is watch for the hub connection that owns parent: the transcript loop ends with that connection, so a
 // resident node that opens a new Node per reconnect is not left with a reader per watch from the one before.
 func (n *Node) watchFor(parent context.Context, id string, since int) error {
+	return n.watchRequest(parent, parent, id, since)
+}
+
+// Initialization belongs to the request; a successfully armed stream belongs to the connection.
+func (n *Node) watchRequest(request, parent context.Context, id string, since int) (err error) {
+	if err := request.Err(); err != nil {
+		return err
+	}
 	f, err := n.file(id)
 	if err != nil {
 		if !n.startingSession(id) {
@@ -101,9 +114,16 @@ func (n *Node) watchFor(parent context.Context, id string, since int) error {
 					continue
 				}
 				mu := n.pushLock(id)
-				mu.Lock()
+				if err := mu.LockContext(wctx); err != nil {
+					return
+				}
 				if _, err := f.Refresh(); err == nil {
-					since = n.catchUp(id, f, since)
+					since, err = n.catchUp(wctx, id, f, since)
+					if err != nil {
+						mu.Unlock()
+						cancel()
+						return
+					}
 				}
 				mu.Unlock()
 				// Under wctx: an unwatch that comes before this goroutine is done still cancels the watch it installs.
@@ -134,60 +154,125 @@ func (n *Node) watchFor(parent context.Context, id string, since int) error {
 	n.mu.Unlock()
 	context.AfterFunc(ctx, func() { n.watchEnded(w) })
 
-	// Catch up on lines appended after the hub's last seen seq, then stream. Without a seq (the hub has not seen this
-	// session since it started) the lines this Refresh appends still go out — the watch pump only pushes what
-	// later Refreshes find — unless it is the first read of the file: that is the whole history, the subscriber's backlog.
+	defer func() {
+		if err != nil {
+			cancel()
+			n.watchEnded(w) // do not remove a newer watch with the same id
+		}
+	}()
+	// Unwatch/connection closure must also interrupt initialization, but ending the request after success must
+	// not cancel the stream (#3139).
+	initCtx, initCancel := context.WithCancel(request)
+	stop := context.AfterFunc(ctx, initCancel)
+	if ctx.Err() != nil {
+		initCancel()
+	}
+	defer func() { stop(); initCancel() }()
 	mu := n.pushLock(id)
-	mu.Lock()
+	if err = mu.LockContext(initCtx); err != nil {
+		return err
+	}
+	defer mu.Unlock()
 	readBefore := f.LastSeq() > 0
-	if fresh, span, err := f.RefreshSpan(); err == nil {
+	if _, span, refreshErr := f.RefreshSpan(); refreshErr == nil {
 		if since > 0 {
-			n.catchUp(id, f, since)
+			_, err = n.catchUp(initCtx, id, f, since)
 		} else if readBefore && span.To > span.From {
-			n.pushItems(id, fresh, span)
+			_, err = n.catchUp(initCtx, id, f, span.From)
 		}
 	}
-	n.liveRecheck(id) // a reply Claude is showing now, after what the transcript has (livereply.go)
-	mu.Unlock()
+	if err == nil {
+		err = initCtx.Err()
+	}
+	if err != nil {
+		return err
+	}
+	n.liveRecheckContext(initCtx, id)
+	if err = initCtx.Err(); err != nil {
+		return err
+	}
 	w.armed.Store(true)
 	return nil
 }
 
-// catchUp pushes every item after since, a page at a time (one page used to be all: after 500 the rest was lost), and
-// returns the last seq sent.
-func (n *Node) catchUp(id string, f *transcript.File, since int) int {
+// catchUp returns the last successfully delivered seq. Never advance it for an unsent page: another request or the
+// pump must be able to resume after cancellation. After keeps each transcript line whole, including call/result pairs.
+func (n *Node) catchUp(ctx context.Context, id string, f *transcript.File, since int) (int, error) {
 	for {
+		if err := ctx.Err(); err != nil {
+			return since, err
+		}
 		items, more, span := f.After(since, 500)
-		n.pushItems(id, f.WithImages(items), span) // the hub sends them to every subscriber, lazy or not
+		if err := ctx.Err(); err != nil {
+			return since, err
+		}
+		items = f.WithImages(items) // legacy subscribers still need inline images
+		if err := n.pushItemsContext(ctx, id, items, span); err != nil {
+			return since, err
+		}
 		since = span.To
 		if !more {
-			return since
+			return since, nil
 		}
 	}
 }
 
 func (n *Node) pushItems(id string, items []proto.Item, span transcript.Span) {
+	_ = n.pushItemsContext(context.Background(), id, items, span)
+}
+
+func (n *Node) pushItemsContext(ctx context.Context, id string, items []proto.Item, span transcript.Span) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if n.peer == nil {
-		return
+		return nil
 	}
 	n.mu.Lock()
 	f := n.files[id]
 	n.mu.Unlock()
 	items = n.echoed(id, f, items)
-	_ = n.peer.Notify("session.items", withSpan(map[string]any{"session_id": id, "items": nonNil(items)}, span, true))
-	n.liveRecheck(id) // the words these items brought replace their live copy, right after them (livereply.go)
+	if err := n.peer.NotifyContext(ctx, "session.items", withSpan(map[string]any{"session_id": id, "items": nonNil(items)}, span, true)); err != nil {
+		return err
+	}
+	// Delivery succeeded even if cancellation arrived just afterward; the caller must advance its frontier.
+	if ctx.Err() == nil {
+		n.liveRecheckContext(ctx, id)
+	}
+	return nil
 }
 
-// pushLock serializes reading a session's new lines with pushing them, so its batches reach the hub in order.
-func (n *Node) pushLock(id string) *sync.Mutex {
+// sessionPushLock serializes file reads and pushes without trapping canceled requests behind a slow subscriber.
+// Existing background writers can still use Lock; requests and the watch pump use LockContext.
+type sessionPushLock struct{ held chan struct{} }
+
+func (m *sessionPushLock) Lock()   { _ = m.LockContext(context.Background()) }
+func (m *sessionPushLock) Unlock() { <-m.held }
+func (m *sessionPushLock) LockContext(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case m.held <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			m.Unlock()
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (n *Node) pushLock(id string) *sessionPushLock {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	if n.pushLocks == nil {
-		n.pushLocks = map[string]*sync.Mutex{}
+		n.pushLocks = map[string]*sessionPushLock{}
 	}
 	mu := n.pushLocks[id]
 	if mu == nil {
-		mu = &sync.Mutex{}
+		mu = &sessionPushLock{held: make(chan struct{}, 1)}
 		n.pushLocks[id] = mu
 	}
 	return mu
@@ -212,20 +297,52 @@ func (n *Node) unwatch(id string) {
 // lines hold no items (titles, modes): the batch still tells clients they have everything up to its to_seq, so the
 // next one does not look like it skipped something.
 func (n *Node) refresh(id string, f *transcript.File) error {
+	return n.refreshContext(context.Background(), id, f)
+}
+
+func (n *Node) refreshContext(ctx context.Context, id string, f *transcript.File) error {
 	mu := n.pushLock(id)
-	mu.Lock()
+	if err := mu.LockContext(ctx); err != nil {
+		return err
+	}
 	defer mu.Unlock()
-	fresh, span, err := f.RefreshSpan()
-	if err != nil || span.To == span.From {
+	_, span, err := f.RefreshSpan()
+	if err != nil {
 		return err
 	}
 	n.mu.Lock()
-	_, watched := n.watches[id]
+	w := n.watches[id]
 	n.mu.Unlock()
-	if watched {
-		n.pushItems(id, fresh, span)
+	if w != nil {
+		if span.To != span.From || w.retry.Load() && w.pending.History != span.History {
+			if !w.retry.Load() || w.pending.History != span.History {
+				w.pending = span
+			}
+			w.retry.Store(true)
+		}
+		if w.retry.Load() {
+			// Unwatch ends this delivery too; a replacement watch has its own frontier and connection context.
+			delivery, cancel := context.WithCancel(ctx)
+			var stop func() bool
+			if w.ctx != nil { // direct test watches may have no context
+				stop = context.AfterFunc(w.ctx, cancel)
+				if w.ctx.Err() != nil {
+					cancel()
+				}
+			}
+			last, pushErr := n.catchUp(delivery, id, f, w.pending.From)
+			cancel()
+			if stop != nil {
+				stop()
+			}
+			w.pending.From = last
+			if pushErr != nil {
+				return pushErr
+			}
+			w.retry.Store(false)
+		}
 	}
-	return nil
+	return ctx.Err()
 }
 
 // watchPump reads every watched session on one ticker while any is watched, and ends when none is left. It used to be
@@ -279,7 +396,7 @@ func (n *Node) pumpWatch(w *watch, live int) {
 	// are written into its transcript in the reading goroutine (codex_apphistory.go), then read as any growth or followed
 	// to the new file.
 	appChat := follow && w.codex
-	if !w.f.Changed() && !appChat {
+	if !w.retry.Load() && !w.f.Changed() && !appChat {
 		if !follow || !n.followCopy(w.id, w.f) {
 			return // at rest
 		}
@@ -294,7 +411,7 @@ func (n *Node) pumpWatch(w *watch, live int) {
 		if follow {
 			n.followCopy(w.id, w.f)
 		}
-		_ = n.refresh(w.id, w.f)
+		_ = n.refreshContext(w.ctx, w.id, w.f)
 	}()
 }
 

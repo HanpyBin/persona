@@ -39,7 +39,10 @@ func (d *Devices) deployContext() context.Context {
 
 // Called with m.mu held: use the node protocol when SSH cannot reach the owner.
 func (m *Machine) rpcDeploymentLocked() bool {
-	return m.cfg.Kind == kindLink || m.cfg.Kind == kindService || m.derived || m.via == viaHub
+	// A capable resident tailcat node can use the same checked, idle-only update
+	// transaction without opening a second tunnel to its legacy upload listener.
+	return m.cfg.Kind == kindLink || m.cfg.Kind == kindService || m.derived || m.via == viaHub ||
+		(m.cfg.Kind == "tailcat" && nodeHas(m.info, nodeproto.NodeUpdate) && m.info.NodeUpdate)
 }
 
 // canDeployLocked: nil when the machine's node can be updated from here, else why not (an i18n.Message, but for

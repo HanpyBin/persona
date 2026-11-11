@@ -1,6 +1,7 @@
 package node
 
 import (
+	"context"
 	"encoding/json"
 	"slices"
 	"strings"
@@ -360,8 +361,12 @@ func (n *Node) liveTurnHook(in hookInput) {
 // liveRecheck is showLive for a session that has a message, after its new transcript lines were pushed: the caller
 // holds the session's pushLock.
 func (n *Node) liveRecheck(id string) {
-	if n.live.has(id) {
-		n.showLive(id)
+	n.liveRecheckContext(context.Background(), id)
+}
+
+func (n *Node) liveRecheckContext(ctx context.Context, id string) {
+	if ctx.Err() == nil && n.live.has(id) {
+		n.showLiveContext(ctx, id)
 	}
 }
 
@@ -383,6 +388,13 @@ func (n *Node) liveUnwatched(id string) {
 // or the transcript has all of it. The caller holds the session's pushLock, which orders it after the items that
 // replace it.
 func (n *Node) showLive(id string) {
+	n.showLiveContext(context.Background(), id)
+}
+
+func (n *Node) showLiveContext(ctx context.Context, id string) {
+	if ctx.Err() != nil {
+		return
+	}
 	want := ""
 	if v := n.live.view(id); v.text != "" {
 		f := n.watchedFile(id)
@@ -404,15 +416,26 @@ func (n *Node) showLive(id string) {
 			}
 		}
 	}
-	if !n.live.show(id, want) {
+	n.live.mu.Lock()
+	shown := ""
+	if r := n.live.m[id]; r != nil {
+		shown = r.shown
+	}
+	n.live.mu.Unlock()
+	if shown == want {
 		if want == "" {
 			n.live.forget(id)
 		}
 		return
 	}
 	if n.peer != nil {
-		_ = n.peer.Notify("session.delta", map[string]any{"session_id": id, "text": want})
+		if err := n.peer.NotifyContext(ctx, "session.delta", map[string]any{"session_id": id, "text": want}); err != nil {
+			// A canceled queue wait did not change what the hub shows. Retry through the existing live timer.
+			n.live.arm(id, func() { n.liveCheck(id) })
+			return
+		}
 	}
+	n.live.show(id, want)
 	if want != "" {
 		n.live.arm(id, func() { n.liveCheck(id) })
 	} else {

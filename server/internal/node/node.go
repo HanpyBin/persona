@@ -232,7 +232,7 @@ type Node struct {
 	workspaceDirs workspaceDirectoryCache
 
 	// pushLocks: one per session, held from reading its new lines to pushing them (pushLock).
-	pushLocks map[string]*sync.Mutex
+	pushLocks map[string]*sessionPushLock
 	// fileUse: when each parsed transcript in files was last asked for (a counter), to drop the least recently used.
 	fileUse map[string]uint64
 	useTick uint64
@@ -1274,7 +1274,7 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 			}
 			return nil, err
 		}
-		if err := n.refresh(p.SessionID, f); err != nil && p.UserInputs {
+		if err := n.refreshContext(ctx, p.SessionID, f); err != nil && (p.UserInputs || ctx.Err() != nil) {
 			return nil, err
 		}
 		if p.UserInputs {
@@ -1315,7 +1315,7 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 		return withSpan(map[string]any{"items": items(fold(page)), "has_more": more}, span, false), nil
 	case "session.watch":
 		// The stream outlives this request: it follows the connection (rpc.ConnContext), not the reply.
-		return ok(n.watchFor(rpc.ConnContext(ctx), p.SessionID, p.SinceSeq))
+		return ok(n.watchRequest(ctx, rpc.ConnContext(ctx), p.SessionID, p.SinceSeq))
 	case "session.unwatch":
 		n.unwatch(p.SessionID)
 		return ok(nil)

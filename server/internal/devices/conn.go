@@ -211,6 +211,8 @@ func (m *Machine) establishVia(ctx context.Context, p *nodePath, via string) (*n
 		return nil, err
 	}
 	peer := rpc.New("h", l.w)
+	// History reads are disposable when their caller leaves; starting/sending an agent task must keep running.
+	peer.Cancels = map[string]bool{"session.items": true}
 	// Every event goes on to the hub, the forwarded ports' bytes among them (the hub is their end, ports.go there).
 	peer.OnEvent = m.onEvent
 	peer.OnRequest = m.onRequest
