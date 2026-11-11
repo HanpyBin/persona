@@ -188,8 +188,8 @@ func (m *Machine) watchTailcat(ctx context.Context, peer *rpc.Peer, activity *ac
 			}
 			if misses++; misses >= 2 {
 				m.d.logf("[%s] tailcat: no answer to two pings, reconnecting", m.cfg.ID)
-				m.tailcatReset()
 				peer.Close(errTailcatUnresponsive)
+				m.tailcatReset()
 				if activity != nil {
 					_ = activity.Close() // what fails a write stuck on the dead connection (connectVia may be in one)
 				}
