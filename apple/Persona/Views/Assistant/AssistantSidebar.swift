@@ -1249,7 +1249,15 @@ struct AssistantSidebar: View {
         let directions = AssistantSidebarGroups.directions(all, leaders: model.assistantLeaders, main: main)
         if !directions.isEmpty {
             heading(String(localized: "Directions")) { EmptyView() }
-            ForEach(directions) { row($0, named: model.directionNames[$0.sessionID]) }
+            // Each folds open to its to-dos (#4352, AssistantSidebarDirections.swift). The secretary group has no row
+            // here: the main conversation's own row stands for it (#4331).
+            ForEach(directions) { s in
+                AssistantSidebarDirection(direction: model.directionTree?.leader(s.sessionID), id: s.sessionID,
+                                          name: model.directionNames[s.sessionID] ?? s.title, isShell: isShell, drawer: drawer,
+                                          selected: s.key == current, selectedFill: Self.selectedFill) { shades in
+                    row(s, named: model.directionNames[s.sessionID], drawsShade: shades)
+                }
+            }
         }
         allChatsRow
         archivedRow(archived)
@@ -1370,7 +1378,8 @@ struct AssistantSidebar: View {
 
     /// A conversation: a round mark (Persona's face for the main one), its title on one line, its state on the right.
     /// `named`: a direction's name, shown instead of its leader conversation's title.
-    private func row(_ s: Session, named: String? = nil) -> some View {
+    /// `drawsShade` false: a direction's row with its fold chevron beside it, which draws the shade across both (#4352).
+    private func row(_ s: Session, named: String? = nil, drawsShade: Bool = true) -> some View {
         let selected = s.key == current
         let isMain = s.key == model.assistantMain
         let title = isMain ? Self.mainTitle : named ?? (s.title.isEmpty || s.title == "Claude Code" ? String(localized: "New Chat [Quick Actions ea4b29]") : s.title)
@@ -1402,11 +1411,11 @@ struct AssistantSidebar: View {
             .padding(.vertical, Theme.Sidebar.rowPadding)
             .scaledFrame(minHeight: Theme.Sidebar.row)
             .background {
-                if selected {
+                if selected && drawsShade {
                     RoundedRectangle(cornerRadius: Theme.Sidebar.radius, style: .continuous).fill(Self.selectedFill)
                 }
             }
-            .macHoverShade(in: RoundedRectangle(cornerRadius: Theme.Sidebar.radius, style: .continuous))
+            .macHoverShade(in: RoundedRectangle(cornerRadius: Theme.Sidebar.radius, style: .continuous), isEnabled: drawsShade)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)

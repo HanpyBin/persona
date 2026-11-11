@@ -265,9 +265,18 @@ final class AppModel {
     /// The directions' names by leader conversation id (`GET /api/v1/assistant/leaders`): the sidebar's Directions group
     /// shows these instead of the conversations' titles. Read again with the assistant; empty without leaders.
     private(set) var directionNames: [String: String] = [:]
-    /// How much work each direction holds (`GET /api/v1/assistant/directions/tree`, read on its `directions` push and on
-    /// every (re)connect): the sidebar's "N working · N need you" under its name. Empty from a hub without the tree.
-    private(set) var directionCounts: [String: APIClient.DirectionCounts] = [:]
+    /// The hub's direction tree (#4352, `GET /api/v1/assistant/directions/tree`): the directions' open to-dos with their
+    /// state and Agents, for the sidebar's Pinned rows, the To-dos page and the Agents page. Read with the assistant, on
+    /// every connect and on the `directions` event; nil from a hub without it (404) or before it is read.
+    private(set) var directionTree: DirectionTree?
+    /// Numbers the tree reads in the order they were asked; `directionTreeLanded` is the newest one whose answer was
+    /// taken. An answer older than that is dropped; a read that fails moves neither, so it never makes an earlier
+    /// good answer count as stale.
+    @ObservationIgnored private var directionTreeAsk = 0
+    @ObservationIgnored private var directionTreeLanded = 0
+    /// How much work each direction holds, by leader conversation id: the tree's `counts` (the secretary group left
+    /// out), for the sidebar's "N working · N need you" under each name. Empty from a hub without the tree.
+    var directionCounts: [String: DirectionTree.Counts] { directionTree?.leaderCounts ?? [:] }
     @ObservationIgnored private var assistantRetryInFlight: Task<Void, Never>?
     /// The assistant conversation shown in the Chat tab (persisted across launches).
     ///
@@ -983,6 +992,8 @@ final class AppModel {
             guard showsPage(of: api) else { return }
             await refreshDirectionInfo(api, leaders: st.leaders ?? [])
             guard showsPage(of: api) else { return }
+            await refreshDirectionTree(api, followLeaders: false)
+            guard showsPage(of: api) else { return }
             // A hub that names no launcher gets the same retry state as a failed read (#4200): current hubs always
             // resolve one (their default), so an empty answer means an old hub — show Couldn't Load Settings instead of an
             // endless Reading or a made-up name.
@@ -998,7 +1009,6 @@ final class AppModel {
     private func refreshDirectionInfo(_ api: APIClient, leaders: [String]) async {
         guard !leaders.isEmpty else {
             if !directionNames.isEmpty { directionNames = [:] }
-            if !directionCounts.isEmpty { directionCounts = [:] }
             return
         }
         guard let list = try? await api.leaders(), showsPage(of: api) else { return }
@@ -1025,18 +1035,27 @@ final class AppModel {
         } catch { show(error) }
     }
 
-    /// The hub's direction tree (#4352): its current directions in order, their names and counts. Read on the hub's
-    /// `directions` push and on every (re)connect. The tree answers for the default manager alone, so another manager's
-    /// page keeps what `GET /api/v1/assistant/leaders` gave it; a hub older than the tree (404) changes nothing.
-    private func refreshDirectionTree(_ api: APIClient) async {
-        guard assistantShows(nil), showsPage(of: api) else { return }
-        guard let tree = try? await api.directionsTree(), assistantShows(nil), showsPage(of: api) else { return }
-        let directions = APIClient.directions(tree)
-        let names = APIClient.directionNames(tree)
-        let counts = APIClient.directionCounts(tree)
+    /// Reads the hub's direction tree again (#4352, `directionTree`, the one copy every page draws): on the hub's
+    /// `directions` push, on every (re)connect and with the assistant. It also carries the directions' order and names.
+    /// The tree answers for the default manager alone, so another manager's page keeps what
+    /// `GET /api/v1/assistant/leaders` gave it and holds no tree. A hub older than the tree (404) has none; another
+    /// failure (offline) keeps what is held. Only an answer newer than the last one taken applies, and a read that fails
+    /// moves neither number, so it never makes an earlier good answer count as stale.
+    /// `followLeaders` false (read from `refreshAssistant` itself): a direction the conversations do not list yet does
+    /// not read the assistant again.
+    func refreshDirectionTree(_ from: APIClient? = nil, followLeaders: Bool = true) async {
+        guard let api = from ?? api, assistantShows(nil), showsPage(of: api) else { return }
+        directionTreeAsk += 1
+        let ask = directionTreeAsk
+        let read: DirectionTree?
+        do { read = try await api.directionsTree() } catch { return }
+        guard ask > directionTreeLanded, assistantShows(nil), showsPage(of: api) else { return }
+        directionTreeLanded = ask
+        if read != directionTree { directionTree = read }
+        guard let tree = read else { return }
+        let names = tree.leaderNames
         if names != directionNames { directionNames = names }
-        if counts != directionCounts { directionCounts = counts }
-        let ids = directions.map(\.id)
+        let ids = tree.leaders.map(\.id)
         if ids != assistantLeaders, var cfg = assistantConfig {
             cfg.leaders = ids
             assistantConfig = cfg
@@ -1044,7 +1063,7 @@ final class AppModel {
         // A direction the page's conversations do not list yet: the whole settings are read, so its row appears
         // without a relaunch.
         let known = Set((assistantConfig?.conversations ?? []).map(\.sessionID))
-        if ids.contains(where: { !known.contains($0) }) { await refreshAssistant() }
+        if followLeaders, ids.contains(where: { !known.contains($0) }) { await refreshAssistant() }
     }
 
     /// The Couldn't Load Settings retry: the page flips back to Reading at once, and repeated taps share the one request (#4200).
@@ -3082,6 +3101,8 @@ final class AppModel {
         if let g = hub?.group {
             assistantConfig = heldAssistant(g)
         }
+        directionTree = nil // the other hub's to-dos and sessions; `refreshAssistant` below reads this one's
+        directionTreeLanded = directionTreeAsk // and a read already under way answers for the other one
         // The picked group's settings are read again: until that read finishes, the page shows its loading state.
         assistantConfigLoadFailed = false
         if let a = assistantCurrent, a.group != hub?.group { assistantCurrent = assistantMain }
@@ -3109,6 +3130,11 @@ final class AppModel {
     /// (`assistantSwitches`). Another assistant's conversation opened from a notification stays through a re-read.
     func assistantManagerChanged(switched: Bool = true) {
         assistantConfig = heldAssistant(hub?.group ?? "")
+        // The tree is the default manager's: kept through a re-read of it, dropped for any other.
+        if switched || !assistantShows(nil) {
+            directionTree = nil // the other manager's; `refreshAssistant` below reads this one's
+            directionTreeLanded = directionTreeAsk // and a read already under way answers for the other one
+        }
         assistantConfigLoadFailed = false
         readiness.forget()
         relistAssistant()

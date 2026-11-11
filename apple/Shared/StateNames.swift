@@ -45,6 +45,15 @@ nonisolated enum StateName: String, CaseIterable, Sendable {
         }
     }
 
+    /// A to-do's state in the hub's direction tree (#4352, `DirectionTree.TaskState`): the owner's own words for the
+    /// work a direction supervises (doing / needs you / stuck / to verify), on every platform; an Agent's state keeps
+    /// the names above.
+    static var taskDoing: String { interfaceText("Doing [State Names]") }
+    static var taskNeedsYou: String { interfaceText("Task Needs You [State Names]") }
+    static var taskStuck: String { interfaceText("Stuck [State Names]") }
+    /// The same words as a supervised task awaiting review (`ReviewState.pendingReview`).
+    static var taskToVerify: String { interfaceText("Awaiting review") }
+
     /// The button that marks every finished, unseen agent as seen, with how many when given.
     static func markAllSeen(_ n: Int? = nil) -> String {
         guard let n else { return interfaceText("Mark All as Seen [State Names]") }
