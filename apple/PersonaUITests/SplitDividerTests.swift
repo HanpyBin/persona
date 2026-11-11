@@ -43,10 +43,16 @@ final class SplitDividerTests: XCTestCase {
         XCTAssertTrue(wait(for: NSPredicate(format: "label == %@", "显示列表"), on: handle), "the list closed: \(handle.label)")
         XCTAssertLessThan(handle.frame.midX, 60, "the handle waits at the page's edge")
         shot(app, "split-agents-closed")
-        app.terminate()
-        let again = launch(agents: true, fresh: false)
-        let kept = try divider(again, "agents.list")
-        XCTAssertTrue(wait(for: NSPredicate(format: "label == %@", "显示列表"), on: kept), "closed is kept across launches: \(kept.label)")
+        // Upright on the open Duo the list lies over the page (#4852): its going away is not kept, so no relaunch there.
+        let window = app.windows.firstMatch.frame
+        var again = app
+        var kept = handle
+        if !(window.width < 800 && window.height > window.width) {
+            app.terminate()
+            again = launch(agents: true, fresh: false)
+            kept = try divider(again, "agents.list")
+            XCTAssertTrue(wait(for: NSPredicate(format: "label == %@", "显示列表"), on: kept), "closed is kept across launches: \(kept.label)")
+        }
         drag(kept, by: 160)
         XCTAssertTrue(wait(for: NSPredicate(format: "label == %@", "调整列表宽度"), on: kept), "the list came back: \(kept.label)")
         XCTAssertGreaterThan(listWidth(again), 200, "the list is back at its width")

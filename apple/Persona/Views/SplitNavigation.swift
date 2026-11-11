@@ -33,8 +33,9 @@ struct SplitNavigation<Sidebar: View, Empty: View, Destinations: ViewModifier>: 
     @State private var listEnd: CGFloat = 0
     @State private var pageStart: CGFloat = 0
     /// The list column slides in over the page instead of beside it: the system's choice where the page would be left too
-    /// narrow (the open iPhone Duo held upright, #4852). Read while the list is out, kept while it is away.
-    @State private var overlays = false
+    /// narrow (the open iPhone Duo held upright, #4852). Read while the list is out, kept while it is away; nil: not read
+    /// yet (the split's own first moves, out or away, are no one's choice).
+    @State private var overlays: Bool?
     #endif
 
     init(path: Binding<NavigationPath>, listKey: String? = nil, destinations: Destinations, home: AnyView? = nil,
@@ -127,6 +128,8 @@ struct SplitNavigation<Sidebar: View, Empty: View, Destinations: ViewModifier>: 
             .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minX } action: { splitStart = $0; notePosture() }
             // An agent picked, or anything else that changes the page: a list laid over the page goes (#4852).
             .onChange(of: path) { hideOverlay() }
+            // Laid over the page the list comes out with nothing else moving: read it once it is out.
+            .onChange(of: columns) { _, now in if now != .detailOnly { Task { notePosture() } } }
             #endif
             .modifier(SidebarTopFill(shown: columns != .detailOnly, color: topFillColor))
             .modifier(SplitDividerHandle(columns: $columns, key: listKey, overlays: overlaysNow))
@@ -159,7 +162,7 @@ struct SplitNavigation<Sidebar: View, Empty: View, Destinations: ViewModifier>: 
         #endif
     }
 
-    private var overlaysNow: Bool {
+    private var overlaysNow: Bool? {
         #if os(iOS)
         overlays
         #else
@@ -181,7 +184,7 @@ struct SplitNavigation<Sidebar: View, Empty: View, Destinations: ViewModifier>: 
     /// A pick in a list laid over the page (the open Duo upright) changed what the page shows: the list slides away, as
     /// the system's sidebar does on an iPad in portrait. Beside the page (on its side, the iPad) it stays.
     private func hideOverlay() {
-        guard overlays, columns != .detailOnly else { return }
+        guard overlays == true, columns != .detailOnly else { return }
         withAnimation(Theme.Motion.layout) { columns = .detailOnly }
     }
     #endif
@@ -352,8 +355,9 @@ struct SplitDividerHandle: ViewModifier {
     @Binding var columns: NavigationSplitViewVisibility
     let key: String?
     /// The list is laid over the page (the open iPhone Duo upright, #4852): its going away is a pick's, or a tap on the
-    /// page, not a choice to keep it closed.
-    var overlays = false
+    /// page, not a choice to keep it closed. nil: not known yet, nothing is kept until it is; once beside the page, the
+    /// state then is kept.
+    var overlays: Bool? = false
     /// The width dragged to; 0: never dragged (or given back), the system's.
     @StoredValue private var width: Double
     @StoredValue private var closed: Bool
@@ -371,7 +375,7 @@ struct SplitDividerHandle: ViewModifier {
         var closing: Bool
     }
 
-    init(columns: Binding<NavigationSplitViewVisibility>, key: String?, overlays: Bool = false) {
+    init(columns: Binding<NavigationSplitViewVisibility>, key: String?, overlays: Bool? = false) {
         _columns = columns
         self.key = key
         self.overlays = overlays
@@ -426,7 +430,8 @@ struct SplitDividerHandle: ViewModifier {
                         .ignoresSafeArea(.container, edges: .vertical)
                 }
                 .onAppear { if closed, shown { columns = .detailOnly } }
-                .onChange(of: columns) { _, now in if !overlays { closed = now == .detailOnly } }
+                .onChange(of: columns) { _, now in if overlays == false { closed = now == .detailOnly } }
+                .onChange(of: overlays) { _, now in if now == false { closed = !shown } }
         } else {
             content
         }

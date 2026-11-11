@@ -588,6 +588,7 @@ Apps built with older Xcode do not extend under the status bar and camera on Duo
   - Dragged more than 80 pt past the least, the list closes and the handle waits at the page's leading edge; dragged right from there, the list comes back.
   - Width and closing are remembered per list: `agents.list.width` / `.closed`, `assistant.list.width` / `.closed`. Until dragged, the column is the system's.
   - The column's own button closes and opens it too, remembered the same. A double tap on the handle gives the column back to the system.
+  - The split starts closed when the list was left closed (`SplitDividerHandle.startsClosed`). Only a list beside the page is remembered: laid over it (the open Duo upright, #4852) its going away is a pick's, and nothing is kept until the posture is read (`SplitNavigation.notePosture`, once the list is out at least `sidebarMinPhone` wide; the split's own first layout, a narrow list with the page sliding in, is not read).
   - VoiceOver: adjusting the handle resizes the list by 40 pt, Hide List / Show List close and open it.
   - `SplitDividerTests` (`-openSplitFresh YES` starts the lists at the system's width).
 - **Readable width**: chats and the Persona home page are at most 760pt wide (`ChatView.readableWidth`), centered when wider; the top bar still spans the full width.
