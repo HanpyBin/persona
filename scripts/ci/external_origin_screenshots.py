@@ -67,18 +67,27 @@ for index, (origin, title, request) in enumerate([
     log = (args.out / "mock-hub.log").open("w")
     server = subprocess.Popen([sys.executable, "-u", "-c", profile], stdout=log, stderr=subprocess.STDOUT,
                               env={**os.environ, "PORT": "0", "MOCK_FROZEN": FROZEN,
-                                   "MOCK_ORIGINS": "0", "MOCK_AUTO_CONVERSATIONS": "0", "MOCK_TASKS": "1"})
+                                   "MOCK_ORIGINS": "0", "MOCK_AUTO_CONVERSATIONS": "0", "MOCK_TASKS": "1",
+                                   "MOCK_TASKS_NO_ASKS": "1"})
     port = None
     evidence = []
 
     def dump():
-        adb("shell", "uiautomator", "dump", "--compressed", "/sdcard/external-origin.xml", timeout=45)
+        # A failed UI export can exit zero without writing a file; never read a previous window's tree.
+        adb("shell", "rm", "-f", "/sdcard/external-origin.xml")
+        output = adb("shell", "uiautomator dump --compressed /sdcard/external-origin.xml 2>&1", timeout=45)
+        with (args.out / "uiautomator.log").open("a") as report:
+            report.write(output + "\n")
+        if "UI hierchary dumped to: /sdcard/external-origin.xml" not in output:
+            return None
         return ET.fromstring(adb("shell", "cat", "/sdcard/external-origin.xml"))
 
     def wait_for(predicate, description):
         deadline = time.monotonic() + 75
         while time.monotonic() < deadline:
             root = dump()
+            if root is None:
+                continue
             if any(node.get("package") == "android" and "isn't responding" in node.get("text", "")
                    for node in root.iter("node")):
                 raise AssertionError("The owned emulator is showing an Android ANR dialog")
@@ -114,7 +123,9 @@ for index, (origin, title, request) in enumerate([
                    "--es", "debug.automation", "true", "--es", "debug.style", style,
                    "--es", "debug.theme", theme, "--es", "debug.openSession", machine + "/" + sid,
                    "--es", "debug.conversationKind", "assistant"]
-        adb(*command)
+        output = adb(*command)
+        with (args.out / "launches.jsonl").open("a") as report:
+            report.write(json.dumps({"style": style, "theme": theme, "session": sid, "result": output}) + "\n")
 
     try:
         deadline = time.monotonic() + 30
@@ -181,7 +192,11 @@ for index, (origin, title, request) in enumerate([
         (args.out / "evidence.json").write_text(json.dumps({"passed": True, "cases": evidence}, indent=2) + "\n")
         print("External-origin native emulator evidence: PASS (%d captures)" % len(evidence))
     except Exception:
-        capture("failure-ui", dump())
+        root = dump()
+        if root is not None:
+            capture("failure-ui", root)
+        else:
+            (args.out / "failure-ui.png").write_bytes(adb("exec-out", "screencap", "-p", binary=True))
         (args.out / "failure-logcat.log").write_text(adb("logcat", "-d", "-t", "1000"))
         adb("pull", "/data/anr", str(args.out / "anr"), timeout=45)
         raise
