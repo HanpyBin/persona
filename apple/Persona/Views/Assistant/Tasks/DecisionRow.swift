@@ -207,15 +207,27 @@ struct DecisionRow: View {
     /// An option and what choosing it leads to, the recommended one marked.
     private func leads(_ option: TodoAsk.Option, recommended: Bool) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.flush) {
-            HStack(alignment: .firstTextBaseline, spacing: Theme.Space.sm) {
-                Text(option.label).font(Theme.Font.captionStrong).lineLimit(2)
-                if recommended { RecommendedTag() }
+            // The tag beside the label while both fit on its line, under it when not: beside a long label or at the
+            // large text sizes the tag kept its width and squeezed the label to a character a line.
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline, spacing: Theme.Space.sm) {
+                    optionLabel(option)
+                    if recommended { RecommendedTag() }
+                }
+                VStack(alignment: .leading, spacing: Theme.Space.xxs) {
+                    optionLabel(option)
+                    if recommended { RecommendedTag() }
+                }
             }
             if let leadsTo = option.leadsTo, !leadsTo.isEmpty {
                 Text(leadsTo).font(Theme.Font.caption).foregroundStyle(.secondary).lineLimit(2)
             }
         }
         .accessibilityElement(children: .combine)
+    }
+
+    private func optionLabel(_ option: TodoAsk.Option) -> some View {
+        Text(option.label).font(Theme.Font.captionStrong).lineLimit(2).fixedSize(horizontal: false, vertical: true)
     }
 
     // MARK: Answers
@@ -231,10 +243,12 @@ struct DecisionRow: View {
                 // A fixed answer was given ("Tell Me the Background First"): the decision still waits, and can still
                 // be answered here.
                 if sentBack {
+                    // A line of words, not a button: it wraps at the large text sizes rather than losing its end.
                     Text("Sent back to Persona")
                         .font(Theme.Font.caption)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("decision.sent-back.\(todo.id)")
                 }
                 if typeSize.isAccessibilitySize {
@@ -261,7 +275,8 @@ struct DecisionRow: View {
         Text(text)
             .font(Theme.Font.captionMedium)
             .foregroundStyle(.secondary)
-            .lineLimit(1)
+            .lineLimit(2)
+            .fixedSize(horizontal: false, vertical: true)
             .accessibilityIdentifier("decision.outcome.\(todo.id)")
     }
 
