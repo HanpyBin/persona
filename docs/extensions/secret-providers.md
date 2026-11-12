@@ -222,12 +222,12 @@ holds every answer to it before it reaches the manager:
 - **iPhone** (`apple/Persona/Views/Interactions/SecretHandoffForm.swift`, `apple/Persona/Views/Settings/ExtensionsViews.swift`):
   the same card, extension secrets and provider page, an Always rule removed after a confirm.
 - **Model provider keys**, in both apps (`web/src/views/settings/ProviderFields.tsx` `KeyField`,
-  `apple/Persona/Views/Settings/ProviderKeyField.swift`): where the hub has `launcher_secret_references`, a provider's key, a
-  preset's key and each computer's own key offer **Use a reference**; a stored reference opens with it on and says
-  **From <provider>** with its item, as the provider's page does. A reference is never sent to the connection
-  test or the model list, which would hand its value to the address in the request: while one is typed, both wait for the
-  save (a stored one is probed by the provider's name, as a stored key is), and a preset's key given as a reference skips its
-  key test and is checked when it is saved.
+  `apple/Persona/Views/Settings/ProviderKeyField.swift`): where the hub has
+  `launcher_secret_references`, a provider's key, a preset's key and each computer's own key offer **Use a reference**; a
+  stored reference opens with it on and says **From <provider>** with its item, as the provider's page does. A reference
+  is never sent to the connection test or the model list, which would hand its value to the address in the request: while
+  one is typed, both wait for the save (a stored one is probed by the provider's name, as a stored key is), and a preset's
+  key given as a reference skips its key test and is checked when it is saved.
 
 ## What comes next (#3962)
 
