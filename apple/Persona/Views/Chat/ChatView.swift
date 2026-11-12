@@ -143,8 +143,6 @@ struct ChatView: View {
     private enum Entry: Equatable { case latestAnswer, line(String), message(String) }
     /// The line being landed on, measured while landing (only that one row watches its frame).
     @State private var landing: String?
-    /// The line a jump is about to glide to, measured first (`bringToMiddle`; only that one row watches its frame).
-    @State private var measuring: String?
 
     private var readKey: String { "chat.read.\(shownKey.machineID)/\(shownKey.sessionID)" }
     @State private var renaming: Session?
@@ -2193,32 +2191,32 @@ struct ChatView: View {
         }
     }
 
-    /// Brings a line to the middle of the list: the navigator's, a quote's and a call's jump. On the phone the list
-    /// itself moves (`ChatJumpRun`), on whole pixels: a line drawn now is measured and the list glides to it; one that is
-    /// not is landed on at once, as ↓ lands a screen short of the newest. SwiftUI's animated scroll there drew every text
-    /// on screen again on every frame, and in a long Chinese answer that was most of each frame (#5076).
+    /// Brings a line to the middle of the list: the navigator's, a quote's and a call's jump. On the phone the list itself
+    /// moves, as ↓ does (`ChatJumpRun`, on whole pixels): a line on screen or within a screen and a half is glided to; a
+    /// further one is put a screen away first, on the side the list comes from, and the last screen glides, so the jump
+    /// still shows which way it went and never draws the rows on the way. SwiftUI's animated scroll there drew every
+    /// text on screen again on every frame, and in a long Chinese answer that was most of each frame (#5076).
     private func bringToMiddle(_ id: String) {
         #if os(iOS) || os(visionOS)
-        if let list = pin.list, !Self.swiftUIJumps {
-            guard scratch.drawnLines.contains(id) else {
-                position.scrollTo(id: id, anchor: .center)
-                return
-            }
-            scratch.jumpFrame = nil
-            measuring = id
-            Task { @MainActor in
-                defer { if measuring == id { measuring = nil } }
-                for _ in 0..<6 { // its frame comes with the next layout
-                    try? await Task.sleep(for: .milliseconds(16))
-                    guard measuring == id, pin.list === list else { return }
-                    guard let f = scratch.jumpFrame, scratch.listFrame.height > 0 else { continue }
-                    if pin.holding { pin.release() }
-                    position = ScrollPosition(idType: String.self) // as ↓: SwiftUI would put the list back (#4788)
-                    // Upside down: a line below the middle comes up as the offset goes down, toward the newest.
-                    jumpRun.start(list, to: .offset(list.contentOffset.y + scratch.listFrame.midY - f.midY)) { _ in }
-                    return
-                }
-                position.scrollTo(id: id, anchor: .center)
+        if let list = pin.list, let window = list.window, !Self.swiftUIJumps {
+            if pin.holding { pin.release() }
+            jumpRun.cancel()
+            list.setContentOffset(list.contentOffset, animated: false) // a glide stops where it is
+            let from = list.contentOffset.y
+            // Where SwiftUI puts the line, worked out now, before this frame is drawn: a lazy list knows only once it
+            // has laid the line out.
+            position.scrollTo(id: id, anchor: .center)
+            window.layoutIfNeeded()
+            let to = list.contentOffset.y
+            // That request is replaced by a place, where the jump starts: kept to a line, SwiftUI would hold the list
+            // on it from the next frame on. Then forgotten, as ↓ forgets it (#4788).
+            let start = ChatJump.path(from: from, to: to, screen: list.bounds.height).start
+            position.scrollTo(point: CGPoint(x: scratch.offsetX, y: start - ChatJumpRun.newest(list)))
+            window.layoutIfNeeded()
+            position = ScrollPosition(idType: String.self)
+            jumpRun.start(list, to: .offset(to)) { arrived in
+                // Exactly where SwiftUI puts the line, as before: a row on the way may have been taller than guessed.
+                if arrived { position.scrollTo(id: id, anchor: .center) }
             }
             return
         }
@@ -2681,7 +2679,6 @@ struct ChatView: View {
                     if let openRecap, openRecap.line == line.id { recapInFlow(openRecap) } else { lineView(line) }
                 }
                     .background { if quoteFlash?.line == line.id { QuoteFlash().id(quoteFlash?.id) } }
-                    .background { if measuring == line.id { JumpMeasure(scratch: scratch) } }
                     .flippedBack()
                     .debugLineY(line.id, scratch)
                     .landingFrame(line.id == landing, scratch)
@@ -3937,6 +3934,9 @@ struct ChatView: View {
                     }
                 }
             }
+            #if os(iOS)
+            if UserDefaults.standard.bool(forKey: "showJumpPerf") { Task { await jumpPerf() } } // the four jumps, measured (#5076)
+            #endif
             if UserDefaults.standard.bool(forKey: "showAutoScroll") { // profiling: flicks through the history, frames counted
                 Task {
                     try? await Task.sleep(for: .seconds(12)) // the history loads (-loadAll) and the page settles
@@ -4140,6 +4140,55 @@ struct ChatView: View {
     #endif
 
     #if DEBUG && os(iOS)
+    /// `-showJumpPerf YES` (#5076): the chat's animated jumps through a long answer, three of each, every one measured
+    /// (Documents/frames-jump-<kind>-<n>.json): ↓ from 8000 pt into the history (`end`), a message sent from there
+    /// (`send`), from the newest end to a quote of the longest answer (its start, `quote`) and to the oldest tool call
+    /// (`call`). With `-showSwiftUIJumps YES` as before. Documents/jump-perf.txt says where each one left the list.
+    private func jumpPerf() async {
+        try? await Task.sleep(for: .seconds(12)) // the history loads and the page settles
+        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        var log: [String] = []
+        defer { try? log.joined(separator: "\n").write(to: dir.appending(path: "jump-perf.txt"), atomically: true, encoding: .utf8) }
+        let items = model.chat(shownKey).items
+        guard let list = pin.list,
+              let answer = items.filter({ $0.role == "assistant" && $0.kind == .text }).max(by: { ($0.text?.count ?? 0) < ($1.text?.count ?? 0) }),
+              let call = items.first(where: { $0.kind == .toolUse && $0.toolUseID != nil })?.toolUseID else {
+            return log.append("jump-perf: no list, answer or call")
+        }
+        func reading(at y: CGFloat) async { // as a finger leaves the list there
+            PagePerf.touchers[ObjectIdentifier(pin)]?(list, true)
+            list.setContentOffset(CGPoint(x: list.contentOffset.x, y: ChatJumpRun.newest(list) + y), animated: false)
+            try? await Task.sleep(for: .milliseconds(300))
+            PagePerf.touchers[ObjectIdentifier(pin)]?(list, false)
+            try? await Task.sleep(for: .seconds(2))
+        }
+        func atNewest() async {
+            setFollow { $0.follow() }
+            scrollToEnd()
+            try? await Task.sleep(for: .seconds(2))
+        }
+        func measure(_ kind: String, _ n: Int, _ act: () -> Void) async {
+            let y0 = list.contentOffset.y
+            FrameStats.shared.start()
+            act()
+            try? await Task.sleep(for: .seconds(1.5))
+            FrameStats.shared.stop(label: "jump-\(kind)-\(n)")
+            log.append("\(kind) \(n): from \(Int(y0 - ChatJumpRun.newest(list))) to \(Int(list.contentOffset.y - ChatJumpRun.newest(list))) pt from the newest end, at newest \(scratch.atNewest)")
+        }
+        for n in 1...3 {
+            await reading(at: 8000)
+            await measure("end", n) { jumpToEnd() }
+            await reading(at: 8000)
+            await measure("send", n) { log.append("sent \(model.sendNow(shownKey, text: "第 \(n) 次：再核对一遍"))") } // i18n-ignore
+            await atNewest()
+            await measure("quote", n) { _ = jumpToQuoted(ContextRef(kind: "quote", title: "", url: "", text: "", msg: answer.id)) }
+            await atNewest()
+            await measure("call", n) { jumpToCall(call) }
+            await atNewest()
+        }
+        try? Data().write(to: dir.appending(path: "jump-perf-done"))
+    }
+
     private func showEdgeScrub(_ n: Int) async {
         try? await Task.sleep(for: .seconds(4)) // the chat loaded and settled
         let marks = navigationMarks()
@@ -7027,8 +7076,6 @@ final class ChatScratch {
     var listFrame: CGRect = .zero
     /// The bottom on screen of the line being landed on (`ChatView.landing`).
     var landingMaxY: CGFloat?
-    /// The frame on screen of the line a jump measures before gliding to it (`ChatView.measuring`).
-    var jumpFrame: CGRect?
     /// The list's horizontal offset at rest (-16: the side margins are content margins). Vertical jumps keep it:
     /// `scrollTo(y:)` set it to 0 and the page lost its margins.
     var offsetX: CGFloat = 0
@@ -7054,16 +7101,6 @@ extension View {
         #else
         self
         #endif
-    }
-}
-
-/// Reports the frame on screen of the line a jump is about to glide to (`ChatView.bringToMiddle`). In the row's
-/// background, so the row itself is not built again when the jump starts measuring it.
-private struct JumpMeasure: View {
-    let scratch: ChatScratch
-
-    var body: some View {
-        Color.clear.onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { scratch.jumpFrame = $0 }
     }
 }
 
