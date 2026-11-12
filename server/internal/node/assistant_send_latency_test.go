@@ -89,6 +89,7 @@ func TestAssistantSendOverlapsContextAndAcknowledgedModes(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("send did not finish after both dependencies completed")
 	}
+	sdkWait(t, "the fake CLI to consume the delivered input", func() bool { return strings.Contains(f.file("stdin.jsonl"), "unique user prompt") })
 	input := f.file("stdin.jsonl")
 	if !strings.Contains(input, "snapshot") || !strings.Contains(input, "unique user prompt") {
 		t.Fatalf("context or original prompt lost: %s", input)
