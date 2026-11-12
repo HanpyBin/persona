@@ -693,7 +693,9 @@ sidebar. Code in `Persona/Views/OneSidebar.swift`; the column is the Agents list
   conversation over the window (`AutoConversationsView`), as every client lists Persona's chats (#4610: no Recent; the rows and counts are the drawer's,
   `AssistantSidebarGroups.directions` and the direction tree's `directionCounts`; a long press unpins); the Agents heading with the list's ⋯ and New Session, the
   grouping as segments under it (To-do, Machine, Repo, Project, Status: `AgentsGroupingSegments`, the same `dev.grouping` as the ⋯ menu, which still offers
-  Recently Used and By App, no segment lit then), then the Agents list. The foot holds New Chat and a capsule with Search (over the whole window, `AssistantFullSearch`, #3705) and Settings. New Chat shows its name while it fits and its icon alone when it does not (`ViewThatFits`): at the system's column width on the open Duo on its side the name was cut to "…".
+  Recently Used and By App, no segment lit then), then the Agents list. The foot holds New Chat and a capsule with Search (over the whole window, `AssistantFullSearch`, #3705) and Settings.
+  In a narrow column (the open Duo's, on its side and upright) three things give way instead of being cut to "…" (`ViewThatFits`): New Chat shows its icon
+  alone, a Pinned row puts its work under its name, and the segments become the grouping pill (`AgentsGroupingMenu`, which names the chosen grouping and offers the same ones).
 - **Beside it** the detail column shows the agent's chat while one is open, and otherwise its home (`SplitNavigation.home`, `OneSidebarHome`): Persona's page, or
   Messages while its row is the one picked (`selectedTab == .feishu`). Each has its own `NavigationStack`: the home is not a page of the column's stack, since
   stacks cannot nest. A Persona row closes the agent and shows its page there; opening an agent sets `selectedTab` to `.chats`, closing it back to `.assistant`.

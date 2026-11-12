@@ -256,10 +256,23 @@ struct OneSidebarSections: View {
         let title = model.directionNames[s.sessionID]
             ?? (s.title.isEmpty || s.title == "Claude Code" ? String(localized: "New Chat [Quick Actions ea4b29]") : s.title)
         let counts = model.directionCounts[s.sessionID].flatMap { DirectionCountsText.label(working: $0.working, needsYou: $0.needsYou) }
+        let name = Text(title).font(Theme.Font.body).foregroundStyle(Color.primary).lineLimit(1)
         return row(id: "sidebar-pinned", selected: selected, action: { open(s.key) }) {
-            Text(title).font(Theme.Font.body).foregroundStyle(Color.primary).lineLimit(1)
-            Spacer(minLength: Theme.Space.xs)
-            if let counts { Text(counts).font(Theme.Font.label).foregroundStyle(.secondary).lineLimit(1) }
+            if let counts {
+                let work = Text(counts).font(Theme.Font.label).foregroundStyle(.secondary).lineLimit(1)
+                // The work beside the name while both fit; under it in a narrow column (the open Duo's, a quarter of its
+                // screen on its side), where on one line both were cut to "…"; two lines get a little more room above
+                // and below, or the rows run into each other.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: Theme.Sidebar.gap) { name; Spacer(minLength: Theme.Space.xs); work }
+                    VStack(alignment: .leading, spacing: Theme.Space.xxs) { name; work }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, Theme.Space.xs)
+                }
+            } else {
+                name
+                Spacer(minLength: 0)
+            }
         }
         .accessibilityLabel([title, counts].compactMap { $0 }.joined(separator: String(localized: ", ", comment: "Separator between parts of an accessibility label")))
         .contextMenu {

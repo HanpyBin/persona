@@ -186,20 +186,27 @@ final class OneSidebarTests: XCTestCase {
     }
 
     /// The segments under the Agents heading pick the grouping, as the ⋯ menu does (`dev.grouping`): By Repository is
-    /// the one lit at launch, and Machine lights when tapped.
+    /// the one lit at launch, and Machine lights when tapped. In a column too narrow for the five (the open Duo on its
+    /// side) the phone's grouping menu stands in, saying By Repository.
     @MainActor func testTheSegmentsPickTheGrouping() throws {
         try launch()
-        let segments = element("agents.grouping.segments")
-        // On its side the column is short: the segments are under Pinned, below its first screen, and not built until
-        // scrolled to. A short drag, so the heading above them stays in.
+        let segments = element("agents.grouping.segments"), pill = element("agents.grouping")
+        // On its side the column is short: the grouping is under Pinned, below its first screen, and not built until
+        // scrolled to. A short drag, so the heading above it stays in.
         let column = app.collectionViews.firstMatch
-        for _ in 0..<3 where !segments.waitForExistence(timeout: 3) {
+        for _ in 0..<3 where !(segments.waitForExistence(timeout: 3) || pill.exists) {
             let from = column.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8))
             from.press(forDuration: 0.05, thenDragTo: from.withOffset(CGVector(dx: 0, dy: -200)))
         }
+        if pill.exists && !segments.exists {
+            XCTAssertGreaterThan(pill.frame.minY, element("sidebar-agents-heading").frame.minY, "the grouping is not under the heading")
+            XCTAssertTrue(pill.label.contains("按仓库"), "the grouping menu does not say By Repository: \(pill.label)")
+            shot("segments")
+            return
+        }
         XCTAssertTrue(segments.waitForExistence(timeout: 10), "no grouping segments:\n\(app.debugDescription)")
         XCTAssertGreaterThan(segments.frame.minY, element("sidebar-agents-heading").frame.minY, "the segments are not under the heading")
-        XCTAssertFalse(element("agents.grouping").exists, "the phone's grouping pill shows beside the segments")
+        XCTAssertFalse(pill.exists, "the phone's grouping pill shows beside the segments")
         let repo = segments.buttons["仓库"].firstMatch, machine = segments.buttons["机器"].firstMatch
         XCTAssertTrue(repo.exists && machine.exists, "no 仓库 / 机器 segment:\n\(segments.debugDescription)")
         XCTAssertTrue(repo.isSelected, "仓库 is not the one lit")
@@ -249,11 +256,21 @@ final class OneSidebarTests: XCTestCase {
         assertColumnStays("Needs You")
         all.tap()
         assertColumnStays("All")
-        let segments = element("agents.grouping.segments")
-        segments.buttons["机器"].firstMatch.tap()
-        assertColumnStays("a grouping segment")
-        segments.buttons["仓库"].firstMatch.tap()
-        assertColumnStays("a grouping segment")
+        // The segments, or the grouping menu standing in for them in a column too narrow for the five.
+        let segments = element("agents.grouping.segments"), pill = element("agents.grouping")
+        for (segment, item) in [("机器", "按机器"), ("仓库", "按仓库")] {
+            if segments.exists {
+                segments.buttons[segment].firstMatch.tap()
+            } else {
+                XCTAssertTrue(pill.waitForExistence(timeout: 10), "no grouping segments or menu:\n\(app.debugDescription)")
+                pill.tap()
+                let pick = app.buttons[item].firstMatch
+                XCTAssertTrue(pick.waitForExistence(timeout: 10), "the grouping menu has no \(item):\n\(app.debugDescription)")
+                pick.tap()
+                XCTAssertTrue(pick.waitForNonExistence(timeout: 10), "the grouping menu stayed open")
+            }
+            assertColumnStays("a grouping")
+        }
         shot("upright-filters")
 
         // A direction: its conversation on the page, the column away.

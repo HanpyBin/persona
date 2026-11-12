@@ -397,13 +397,19 @@ struct AgentsGroupingSegments: View {
         let todos = TodoStore.shared.isSupported
         let shown = DevGrouping.resolved(grouping, supportsTodos: todos)
         let segments = DevGrouping.segments(supportsTodos: todos)
-        SegmentedChoice(String(localized: "Group By [Agents Menus 399ee6]"), segments.map { (value: DevGrouping?.some($0), label: $0.segment) },
-                        selection: Binding(get: { segments.contains(shown) ? shown : nil }, set: { g in
-                            guard let g, g != shown else { return }
-                            Haptics.tap()
-                            withAnimation(Theme.Motion.layout) { grouping = g }
-                        }))
-            .accessibilityIdentifier("agents.grouping.segments")
+        // The five segments where they fit; in a narrower column (the open Duo's, a quarter of its screen on its side)
+        // they were cut to "…", so the phone's menu with the same choices stands in.
+        ViewThatFits(in: .horizontal) {
+            SegmentedChoice(String(localized: "Group By [Agents Menus 399ee6]"), segments.map { (value: DevGrouping?.some($0), label: $0.segment) },
+                            selection: Binding(get: { segments.contains(shown) ? shown : nil }, set: { g in
+                                guard let g, g != shown else { return }
+                                Haptics.tap()
+                                withAnimation(Theme.Motion.layout) { grouping = g }
+                            }))
+                .accessibilityIdentifier("agents.grouping.segments")
+            AgentsGroupingMenu()
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 }
 
