@@ -92,7 +92,7 @@ class AgentTabShotsTest {
                             is TreeTabEntry -> AgentTabEntryRow(entry, now, compact = false, onOpen = {}, onToggle = {})
                             is TreeRowEntry -> SlotRow(entry.row, "工作站", AgentRowMetadata(), now, false, false, false, depth = entry.depth,
                                 position = GroupPosition(entry.first, entry.last), located = entry.located, onOpen = {}, menuItems = { emptyList() },
-                                launcher = entry.launcher, branch = entry.branch)
+                                launcher = entry.launcher, branch = entry.branch, pane = entry.pane)
                             is TreeChildrenEntry -> error("Fixture has no Codex subtasks")
                             is TreeIdleEntry -> AgentIdleRow(entry.hidden, {}, depth = entry.depth)
                             is TreeIdleReposEntry -> error("Only Glass's By Repository on the page heads idle repositories")
