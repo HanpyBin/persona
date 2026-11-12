@@ -17,8 +17,13 @@ struct ScreenCommandAskBody: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             command
-            if let risk = ask.riskLine { warning(risk) }
-            if ask.deadlineAt != nil { ScreenCountdown(ask: ask) }
+            // Close together, so Deny / Allow stay in the panel's view under them.
+            if ask.riskLine != nil || ask.deadlineAt != nil {
+                VStack(alignment: .leading, spacing: Theme.Space.s) {
+                    if let risk = ask.riskLine { warning(risk) }
+                    if ask.deadlineAt != nil { ScreenCountdown(ask: ask) }
+                }
+            }
         }
     }
 
@@ -47,25 +52,28 @@ struct ScreenCommandAskBody: View {
         }
     }
 
-    /// The warning in plain words; Claude Code's own (and its countdown sentence) under Show Original.
+    /// The warning in plain words, Show Original at the end of its row (under it where the row has no room); Claude
+    /// Code's own warning and countdown sentence under that.
     private func warning(_ risk: String) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.xs) {
-            HStack(alignment: .firstTextBaseline, spacing: Theme.Space.s) {
+            let line = HStack(alignment: .firstTextBaseline, spacing: Theme.Space.s) {
                 ThemedIcon(Theme.Icon.errorFilled).font(Theme.Font.captionMedium)
                 Text(risk).font(Theme.Font.captionMedium).fixedSize(horizontal: false, vertical: true)
             }
             .foregroundStyle(Theme.cautionText)
             .accessibilityElement(children: .combine)
             if let original = ask.original {
-                Button {
-                    withAnimation(Theme.Motion.standard) { showsOriginal.toggle() }
-                } label: {
-                    Text(showsOriginal ? String(localized: "Hide Original") : String(localized: "Show Original")).lineLimit(1)
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .firstTextBaseline, spacing: Theme.Space.s) {
+                        line
+                        Spacer(minLength: Theme.Space.s)
+                        originalButton
+                    }
+                    VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                        line
+                        originalButton
+                    }
                 }
-                .font(Theme.Font.captionMedium)
-                .buttonStyle(.plain)
-                .foregroundStyle(Theme.accent)
-                .accessibilityIdentifier("screen-warning-original")
                 if showsOriginal {
                     Text(original)
                         .font(Theme.Font.caption)
@@ -74,8 +82,22 @@ struct ScreenCommandAskBody: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .transition(.opacity)
                 }
+            } else {
+                line
             }
         }
+    }
+
+    private var originalButton: some View {
+        Button {
+            withAnimation(Theme.Motion.standard) { showsOriginal.toggle() }
+        } label: {
+            Text(showsOriginal ? String(localized: "Hide Original") : String(localized: "Show Original")).lineLimit(1)
+        }
+        .font(Theme.Font.captionMedium)
+        .buttonStyle(.plain)
+        .foregroundStyle(Theme.accent)
+        .accessibilityIdentifier("screen-warning-original")
     }
 }
 

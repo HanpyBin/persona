@@ -20,8 +20,8 @@ nonisolated struct CommandAsk: Equatable, Sendable {
     /// Longer than `foldedLines` rows on a phone, by a rough count: the card folds it, with Show All.
     var isLong: Bool
 
-    /// The rows the card shows of a long command until Show All.
-    static let foldedLines = 4
+    /// The rows the card shows of a long command until Show All: few, so its answers stay in the panel's view.
+    static let foldedLines = 3
     /// About how many characters of code type fit a row of the card on a phone.
     private static let rowChars = 38
 
