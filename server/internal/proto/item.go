@@ -190,9 +190,11 @@ type Item struct {
 	Model string `json:"model,omitempty"`
 	// Usage: the tokens of the model requests this item stands for, one entry per model and speed (TokenUsage, #5426).
 	// Claude Code: a request's usage once, on the first item its lines made. Codex: the turn's total, on its
-	// turn_duration item. A finished subagent's result or completion notice: what its own transcript used (its nested
-	// subagents included), with ID "agent:<agent id>" so a subagent reported on two items counts once. Absent on
-	// anything else and from older nodes. A chat sums a turn's items (folds' Fold.Usage included) into the turn's usage.
+	// turn_duration item (on its interrupted notice when the user stopped it). A finished subagent's result or
+	// completion notice: what its own transcript used (its nested subagents included, in-process teammates never), with
+	// ID "agent:<agent id>" so a subagent reported on two items counts once. Absent on anything else and from older
+	// nodes. A chat sums a turn's items (folds' Fold.Usage included) into the turn's usage
+	// (docs/protocol/protocol.md "Token usage on items").
 	Usage []TokenUsage `json:"usage,omitempty"`
 }
 
