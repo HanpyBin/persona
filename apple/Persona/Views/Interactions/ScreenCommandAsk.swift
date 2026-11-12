@@ -80,31 +80,37 @@ struct ScreenCommandAskBody: View {
 }
 
 /// The countdown Claude Code runs before it answers the prompt itself ("Denied automatically in 1:44"): the time drawn
-/// by the system (`Text(timerInterval:)`, no timer of ours), and the words once it ran out, the view drawn again just
-/// then (`.explicit`, one date).
+/// by the system (`Text(timerInterval:)`, no timer of ours), and the words once it ran out, from one sleep until then
+/// (a `TimelineView(.explicit([end]))` drew its first frame at `end` already: "time's up" from the start).
 struct ScreenCountdown: View {
     var ask: CommandAsk
+    @State private var over = false
 
     var body: some View {
         if let end = ask.deadlineAt {
-            TimelineView(.explicit([end])) { context in
-                HStack(alignment: .firstTextBaseline, spacing: Theme.Space.s) {
-                    ThemedIcon(Theme.Icon.time)
-                    if context.date < end {
-                        let time = Text(timerInterval: context.date...end, countsDown: true)
-                        if ask.deadlineAllows {
-                            Text("Allowed automatically in \(time)")
-                        } else {
-                            Text("Denied automatically in \(time)")
-                        }
+            let now = Date.now
+            HStack(alignment: .firstTextBaseline, spacing: Theme.Space.s) {
+                ThemedIcon(Theme.Icon.time)
+                if over || now >= end {
+                    Text(ask.expiredLine)
+                } else {
+                    let time = Text(timerInterval: now...end, countsDown: true)
+                    if ask.deadlineAllows {
+                        Text("Allowed automatically in \(time)")
                     } else {
-                        Text(ask.expiredLine)
+                        Text("Denied automatically in \(time)")
                     }
                 }
-                .font(Theme.Font.captionMedium.monospacedDigit())
-                .foregroundStyle(.secondary)
-                .accessibilityElement(children: .combine)
-                .accessibilityIdentifier("screen-countdown")
+            }
+            .font(Theme.Font.captionMedium.monospacedDigit())
+            .foregroundStyle(.secondary)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("screen-countdown")
+            .task(id: end) {
+                over = false
+                let left = end.timeIntervalSinceNow
+                if left > 0 { try? await Task.sleep(for: .seconds(left)) }
+                if !Task.isCancelled { over = true }
             }
         }
     }
