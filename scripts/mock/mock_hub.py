@@ -11058,6 +11058,8 @@ def machine_launchers(mid=""):
         out += [{"name": "cc_main", "model": "opus"}, {"name": "cc_team", "model": "example-pro"}]
     if NEW_AGENT_PANEL and mid == "studio":
         out = [l for l in out if l["name"] != "codex"]
+    if mid and mid in os.environ.get("MOCK_NO_CODEX", "").split(","):  # computers without a Codex launcher (#5275)
+        out = [l for l in out if l["name"] != "codex"]
     if MOCK_PROVIDERS:
         out += [{k: l[k] for k in ("name", "display_name", "base_url", "model", "source") if l.get(k)}
                 for l in LAUNCHERS if l["source"] == "persona" and l.get("kind") != "api"]
