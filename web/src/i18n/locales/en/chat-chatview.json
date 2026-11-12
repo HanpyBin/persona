@@ -18,7 +18,6 @@
   "preparing": "Preparing",
   "loading_chat": "Loading chat",
   "retry": "Retry",
-  "delivering": "Delivering",
   "waiting_for_hub": "Waiting for the hub to come back",
   "view_only": "This session is view-only",
   "ask_placeholder": "What can {name} do for you today?",

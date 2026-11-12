@@ -88,9 +88,11 @@ vi.mock("../../ui/atoms", async (importOriginal) => ({
 const { ChatView } = await import("./ChatView");
 const { toast } = await import("../../ui/atoms");
 const { t } = await import("../../i18n");
-const { getState, setOutbox } = await import("../../lib/store");
+const { applyCompleteSessions, getSession, getState, onHubEvent, send, setOutbox, subscribe } = await import("../../lib/store");
 const { setRoute } = await import("../../lib/feed");
 const { keepOutgoing, outboxKey, resetOutboxClaimsForTests, resetRestoredForTests, SENT_GRACE_MS } = await import("../../lib/outbox");
+const { configureMessageFeedback, receiveMessageSend, resetMessageFeedback } = await import("../../lib/message-send");
+configureMessageFeedback({ getSession, send, onHubEvent, subscribe, receiptsAllowed: () => true }); // injected trusted transport
 const { SESSIONS_LOOKUP_FEATURE } = await import("../../lib/runtime-list");
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -104,6 +106,7 @@ const flush = async () => {
 
 beforeEach(() => {
   localStorage.clear();
+  resetMessageFeedback();
   resetRestoredForTests();
   for (const key of Object.keys(getState().outbox)) setOutbox(key, []);
   vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => Promise.resolve(String(input).endsWith("/messages") ? reply() : json({}))));
@@ -115,6 +118,50 @@ afterEach(() => {
   act(() => root.unmount());
   host.remove();
   vi.unstubAllGlobals();
+});
+
+describe("message feedback before runtime execution", () => {
+  it.each([false, true])("shows the receipt through delayed HTTP without manufacturing execution (assistant=%s)", async (assistant) => {
+    captured.session = { machine_id: "hub", session_id: "c1", title: "Conversation", cwd: "/code", state: "idle", status: "idle" } as Session;
+    let accept!: (r: Response) => void;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => String(input).endsWith("/messages") ? new Promise<Response>(resolve => { accept = resolve; }) : Promise.resolve(json({}))));
+    act(() => root.render(<ChatView mid="hub" sid="c1" assistant={assistant} />)); await flush();
+    let sent!: Promise<boolean>;
+    act(() => { sent = captured.onSend!({ text: "Synthetic receipt input", images: [] }); }); await flush();
+    expect(host.textContent).toContain(t("chat-segmentview.sending"));
+    const call = vi.mocked(fetch).mock.calls.find(([input]) => String(input).endsWith("/messages"))!;
+    const id = JSON.parse(String(call[1]?.body)).client_msg_id;
+    act(() => receiveMessageSend({ machine_id: "hub", session_id: "c1", client_msg_id: id, state: "processing", at: "2026-11-12T10:00:00Z" }));
+    expect(host.querySelector('[data-message-feedback="processing"]')).not.toBeNull();
+    expect(captured.session.state).toBe("idle");
+    expect(host.querySelector('[data-running-status="on"]')).toBeNull();
+    await act(async () => { accept(json({})); await sent; }); await flush();
+    expect(host.querySelector('[data-message-feedback="processing"]')).not.toBeNull();
+    expect(captured.session.state).toBe("idle");
+  });
+  it.each(["working", "done"] as const)("does not revive Processing when %s precedes the final HTTP without an echo", async (result) => {
+    captured.session = { machine_id: "hub", session_id: "c1", title: "Conversation", cwd: "/code", state: "idle", status: "idle" } as Session;
+    applyCompleteSessions([captured.session]);
+    let accept!: (r: Response) => void;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => String(input).endsWith("/messages") ? new Promise<Response>(resolve => { accept = resolve; }) : Promise.resolve(json({}))));
+    act(() => root.render(<ChatView mid="hub" sid="c1" />)); await flush();
+    let sent!: Promise<boolean>;
+    act(() => { sent = captured.onSend!({ text: "Legacy input without echo", images: [] }); }); await flush();
+    captured.session = { ...captured.session, ...(result === "working" ? { state: "working", state_since: "2026-11-12T10:00:01Z" } : { work: { phase: "done" } }) } as Session;
+    act(() => applyCompleteSessions([captured.session!])); await flush();
+    await act(async () => { accept(json({})); await sent; }); await flush();
+    expect(host.querySelector('[data-message-feedback="processing"]')).toBeNull();
+    expect(captured.session.state).toBe(result === "working" ? "working" : "idle");
+  });
+  it("shows a peer receipt without a local outbox and clears a peer failure", async () => {
+    captured.session = { machine_id: "hub", session_id: "c1", title: "Conversation", cwd: "/code", state: "idle", status: "idle" } as Session;
+    act(() => root.render(<ChatView mid="hub" sid="c1" />)); await flush();
+    act(() => receiveMessageSend({ machine_id: "hub", session_id: "c1", client_msg_id: "peer-input", state: "processing", at: "2026-11-12T10:00:00Z" }));
+    expect(host.querySelector('[data-message-feedback="processing"]')).not.toBeNull();
+    expect(host.querySelector("[data-outbox]")).toBeNull();
+    act(() => receiveMessageSend({ machine_id: "hub", session_id: "c1", client_msg_id: "peer-input", state: "failed", at: "2026-11-12T10:00:01Z" }));
+    expect(host.querySelector("[data-message-feedback]")).toBeNull();
+  });
 });
 
 describe("a refused send's card", () => {
