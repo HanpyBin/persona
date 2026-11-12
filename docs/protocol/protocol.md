@@ -2419,7 +2419,9 @@ Zero counts are left out. Where it rides:
   `failed`, `killed`, `stopped` or `ended` (a foreground Agent call's result, a background agent's completion notice or
   hand-back) carries what the sub-Agent's own transcript (`<session>/subagents/agent-<id>.jsonl`) used, its nested
   sub-Agents' included (their metas' `parentAgentId`), one entry per model and speed with `id: "agent:<id>"`. A fork's
-  transcript starts with a copy of the reply that launched it: that request is its launcher's, not counted. The node
+  transcript starts with a copy of the reply that launched it: that request is its launcher's, not counted. A team's
+  in-process teammate (its meta's `taskKind` `in_process_teammate`) is left out, its spawn result and as a nested
+  sub-Agent alike: a long-lived worker with its own transcript, whose usage is not the turn that spawned it. The node
   adds this to pages and pushes of Claude Code transcripts, reading each sub-Agent file once and then only what it gained.
 - **Folds**: `fold.usage` (see "Folded work").
 

@@ -20,7 +20,9 @@ import (
 // ID "agent:<id>": a client counts a subagent reported on two items once. The session's transcript has none of it
 // (its sidechain lines carry no usage). Pages and pushes of a Claude Code transcript get it (session.items,
 // pushItems); a batch with no such item reads nothing, and a subagent's file is read once, then only for the lines
-// it gained.
+// it gained. A team's in-process teammate (its meta's taskKind) is left out, as an item and as a nested subagent: a
+// long-lived worker with its own transcript in the Team panel, whose usage is not the turn that spawned it (and
+// would keep growing a past turn's number while it runs).
 
 // agentUsage puts each finished subagent's usage on the items of f's batch that report it.
 func agentUsage(f *transcript.File, items []proto.Item) {
@@ -58,8 +60,11 @@ func subagentsDirOf(path string) string {
 }
 
 // subagentUsage is what subagent id of dir used with its nested subagents, each counted once (a cycle in the metas
-// stops there); nil when its transcript says nothing.
+// stops there); nil when its transcript says nothing, or it is a teammate.
 func subagentUsage(dir, id string) []proto.TokenUsage {
+	if teammate(dir, id) {
+		return nil
+	}
 	kids := agentChildren(dir)
 	var sum []proto.TokenUsage
 	var seen map[string]bool
@@ -74,7 +79,9 @@ func subagentUsage(dir, id string) []proto.TokenUsage {
 			}
 			if !seen[k] {
 				seen[k] = true
-				walk(k)
+				if !teammate(dir, k) {
+					walk(k)
+				}
 			}
 		}
 	}
@@ -83,6 +90,13 @@ func subagentUsage(dir, id string) []proto.TokenUsage {
 		sum[i].ID = "agent:" + id
 	}
 	return sum
+}
+
+// teammate says whether subagent id of dir is a team's in-process teammate, by its meta (cached, subagents.go); one
+// without a meta is not.
+func teammate(dir, id string) bool {
+	m, ok := subagentMetaCached(filepath.Join(dir, "agent-"+id+".meta.json"))
+	return ok && m.TaskKind == "in_process_teammate"
 }
 
 // agentTreeCache remembers each subagents directory's launches (agentChildren) by the directory's mtime: a new

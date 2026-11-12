@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/nwverse/persona/server/internal/proto"
+	"github.com/nwverse/persona/server/internal/transcript"
 )
 
 // usageReply is one reply line of a subagent's transcript (all sidechain).
@@ -216,5 +217,49 @@ func TestSubagentsDirOf(t *testing.T) {
 		if agentFileID(id) != ok {
 			t.Errorf("agentFileID(%q) = %v", id, !ok)
 		}
+	}
+}
+
+// A team's in-process teammate is left out: its spawn result (which the transcript reads as completed) carries none,
+// and a subagent's usage does not walk into a teammate it launched (or what that teammate launched).
+func TestAgentUsageLeavesTeammatesOut(t *testing.T) {
+	n, home := testNode(t)
+	const id = "aaaaaaaa-0000-0000-0000-000000005427"
+	proj := filepath.Join(home, ".claude", "projects", "-work")
+	dir := filepath.Join(proj, id, "subagents")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	agent := func(name, meta, usage string) {
+		writeUsageLines(t, filepath.Join(dir, "agent-"+name+".jsonl"), usagePrompt, usageReply(name+"r", "claude-opus-5-5", usage))
+		writeUsageLines(t, filepath.Join(dir, "agent-"+name+".meta.json"), meta)
+	}
+	const team = `"taskKind":"in_process_teammate","teamName":"session-x"`
+	agent("tm1", `{"agentType":"server","name":"server",`+team+`}`, `{"input_tokens":50,"output_tokens":500}`)
+	agent("b1", `{"agentType":"general-purpose","finished":true}`, `{"input_tokens":1,"output_tokens":10}`)
+	agent("tm2", `{"agentType":"web","parentAgentId":"b1",`+team+`}`, `{"input_tokens":70,"output_tokens":700}`)
+	agent("k1", `{"agentType":"Explore","parentAgentId":"tm2","finished":true}`, `{"input_tokens":90,"output_tokens":900}`)
+	agent("k2", `{"agentType":"Explore","parentAgentId":"b1","finished":true}`, `{"input_tokens":2,"output_tokens":20}`)
+	spawned := `{"type":"user","uuid":"r1","timestamp":"2026-11-12T08:00:01Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_tm1","content":"Spawned successfully.\nagent_id: tm1\nname: server\nThe agent is now running and will receive instructions via mailbox."}]},"toolUseResult":{"status":"teammate_spawned","agentId":"tm1","name":"server"}}`
+	writeUsageLines(t, filepath.Join(proj, id+".jsonl"),
+		`{"type":"user","uuid":"p1","timestamp":"2026-11-12T08:00:00Z","message":{"role":"user","content":"start the team"}}`,
+		usageAgentCall("l1", "toolu_tm1"), spawned,
+		usageAgentCall("l2", "toolu_b1"), usageAgentReceipt("r2", "toolu_b1", "b1", false),
+	)
+	got := map[string][]proto.TokenUsage{}
+	for _, it := range pageItems(t, n, id) {
+		if it.Kind == proto.KindToolResult {
+			if it.ID == "r1#0" && (it.Task == nil || it.Task.TaskID != "tm1" || !transcript.AgentTerminal(it.Task.Status)) {
+				t.Fatalf("the spawn result is no finished agent's, the test checks nothing: %+v", it.Task)
+			}
+			got[it.ID] = it.Usage
+		}
+	}
+	want := map[string][]proto.TokenUsage{
+		"r1#0": nil,
+		"r2#0": {{ID: "agent:b1", Model: "claude-opus-5-5", Input: 3, Output: 30}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("page usage %+v,\nwant %+v", got, want)
 	}
 }
