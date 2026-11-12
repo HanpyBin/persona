@@ -2193,27 +2193,25 @@ struct ChatView: View {
         }
     }
 
-    /// Brings a line to the middle of the list: the navigator's, a quote's and a call's jump. On the phone the list itself
-    /// moves, as ↓ does (`ChatJumpRun`, on whole pixels): a line on screen or within a screen and a half is glided to; a
-    /// further one is put a screen away first, on the side the list comes from, and the last screen glides, so the jump
-    /// still shows which way it went and never draws the rows on the way. SwiftUI's animated scroll there drew every
-    /// text on screen again on every frame, and in a long Chinese answer that was most of each frame (#5076).
+    /// Brings a line to the middle of the list: the navigator's, a quote's and a call's jump. On the phone a line already on
+    /// screen is glided to on the list itself, as ↓ goes (`ChatJumpRun`, on whole pixels): SwiftUI's animated scroll drew
+    /// every text on screen again on every frame, and in a long Chinese answer that was most of each frame (#5076). A line
+    /// that is not on screen keeps SwiftUI's animated scroll: its offset is known only once SwiftUI lays it out, and doing
+    /// that and the leap on one frame made that frame longer than SwiftUI's own first frame there (measured, #5076).
     private func bringToMiddle(_ id: String) {
         #if os(iOS) || os(visionOS)
-        if let list = pin.list, let window = list.window, !Self.swiftUIJumps {
+        if let list = pin.list, let window = list.window, !Self.swiftUIJumps, scratch.drawnLines.contains(id) {
             if pin.holding { pin.release() }
             jumpRun.cancel()
             list.setContentOffset(list.contentOffset, animated: false) // a glide stops where it is
             let from = list.contentOffset.y
-            // Where SwiftUI puts the line, worked out now, before this frame is drawn: a lazy list knows only once it
-            // has laid the line out.
+            // Where SwiftUI puts the line, worked out now, before this frame is drawn (it is laid out already).
             position.scrollTo(id: id, anchor: .center)
             window.layoutIfNeeded()
             let to = list.contentOffset.y
-            // That request is replaced by a place, where the jump starts: kept to a line, SwiftUI would hold the list
-            // on it from the next frame on. Then forgotten, as ↓ forgets it (#4788).
-            let start = ChatJump.path(from: from, to: to, screen: list.bounds.height).start
-            position.scrollTo(point: CGPoint(x: scratch.offsetX, y: start - ChatJumpRun.newest(list)))
+            // That request is replaced by the place the list is: kept to a line, SwiftUI would hold the list on it from
+            // the next frame on. Then forgotten, as ↓ forgets it (#4788).
+            position.scrollTo(point: CGPoint(x: scratch.offsetX, y: from - ChatJumpRun.newest(list)))
             window.layoutIfNeeded()
             position = ScrollPosition(idType: String.self)
             jumpRun.start(list, to: .offset(to)) { arrived in
@@ -4144,8 +4142,9 @@ struct ChatView: View {
     #if DEBUG && os(iOS)
     /// `-showJumpPerf YES` (#5076): the chat's animated jumps through a long answer, three of each, every one measured
     /// (Documents/frames-jump-<kind>-<n>.json): ↓ from 8000 pt into the history (`end`), a message sent from there
-    /// (`send`), from the newest end to a quote of the longest answer (its start, `quote`) and to the oldest tool call
-    /// (`call`). With `-showSwiftUIJumps YES` as before. Documents/jump-perf.txt says where each one left the list.
+    /// (`send`), from the newest end to a quote of the longest answer (its start, `quote`), to the oldest tool call
+    /// (`call`) and to the oldest line on screen, as the navigator goes (`near`). With `-showSwiftUIJumps YES` as before.
+    /// Documents/jump-perf.txt says where each one left the list.
     private func jumpPerf() async {
         try? await Task.sleep(for: .seconds(12)) // the history loads and the page settles
         let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -4186,6 +4185,11 @@ struct ChatView: View {
             await measure("quote", n) { _ = jumpToQuoted(ContextRef(kind: "quote", title: "", url: "", text: "", msg: answer.id)) }
             await atNewest()
             await measure("call", n) { jumpToCall(call) }
+            await atNewest()
+            let shown = Set(scratch.drawnLines)
+            if let near = currentLines().first(where: { shown.contains($0.id) })?.id {
+                await measure("near", n) { jumpToLine(near) }
+            }
             await atNewest()
         }
         try? Data().write(to: dir.appending(path: "jump-perf-done"))

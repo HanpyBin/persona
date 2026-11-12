@@ -359,12 +359,13 @@ answer, most of each frame: docs/lessons/ios.md「Animated jumps redraw every te
 - To the newest end, animated (`scrollToEnd(animated: true)`): a message sent while reading the history, following
   catching up more than a screen away, a held row let go. As ↓: the position is forgotten first, the jump runs, the
   geometry is read once there and looked at again 0.3 s later.
-- To a line (`bringToMiddle`): the edge navigator's line, a quote's message, a call. SwiftUI places the line first, on
-  the same frame, without drawing it (`window.layoutIfNeeded()` after a non-animated `scrollTo(id:anchor: .center)`),
-  which gives its offset; that request is replaced by a point where the jump starts and forgotten. Within a screen and a
-  half the whole way glides; further, the list is put a screen short of the line on the side it comes from and the last
-  screen glides, then the line lights up as before. Once there SwiftUI is asked for the line again, without animation,
-  so it rests exactly where it used to.
+- To a line already on screen (`bringToMiddle`): the edge navigator's line, a quote's message, a call. SwiftUI places
+  the line first, on the same frame, without drawing it (`window.layoutIfNeeded()` after a non-animated
+  `scrollTo(id:anchor: .center)`), which gives its offset; that request is replaced by the point where the list is and
+  forgotten, and the list glides there; then the line lights up as before. Once there SwiftUI is asked for the line
+  again, without animation, so it rests exactly where it used to.
+- To a line not on screen: SwiftUI's animated `scrollTo(id:)` as before. Placing a far line and leaping on one frame
+  made that frame longer than SwiftUI's own worst one (docs/lessons/ios.md「Animated jumps redraw every text they pass」).
 - Offsets stay on whole pixels on the way; the last frame is the exact target. Reduce Motion: there at once.
 - `-showSwiftUIJumps YES` (DEBUG) keeps SwiftUI's animated scroll for all of them, to measure against in one build
   (`-showJumpPerf`, `-showAutoScroll`; docs/operations/testing.md「Long Agent answer (#4970)」). The Mac keeps it (frozen).
