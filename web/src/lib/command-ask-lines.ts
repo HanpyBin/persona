@@ -1,5 +1,5 @@
 // What the screen card says of Claude Code's command prompt in plain words (#5266): the warning, Claude Code's own words
-// under "Show original", the countdown. Only the lazy views/chat/CommandAskBody.tsx reads them (chat-commandask, off the
+// under "Show original", the countdown. Only the lazy views/chat/CommandScreenCard.tsx reads them (chat-commandask, off the
 // first screen's catalog).
 import { t } from "../i18n";
 import type { CommandAsk } from "./command-ask";

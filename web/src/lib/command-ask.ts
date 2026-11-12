@@ -1,6 +1,6 @@
 // Claude Code asking on its own terminal to run a shell command (its permission prompt, or its safety check in bypass
 // mode), as the hub reads it off the screen (#5265, #5266): whether a screen card is one, and its Allow / Deny. The words
-// the card says it in are lib/command-ask-lines.ts, with the lazy views/chat/CommandAskBody.tsx (off the first screen).
+// the card says it in are lib/command-ask-lines.ts, with the lazy views/chat/CommandScreenCard.tsx (off the first screen).
 // The same rules as the iPhone's CommandAsk (apple/Shared/CommandAsk.swift).
 import type { DialogOption, ScreenDialog } from "./types";
 
