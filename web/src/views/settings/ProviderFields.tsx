@@ -13,12 +13,16 @@ export const FIELD = "rounded-control bg-field text-ink shadow-inset-field outli
 export const SMALL = `${FIELD} h-7 px-2 text-[12px]`;
 
 /** `describedById` goes on the hint / error line so the field can point `aria-describedby` at it. */
-export function Labelled({ label, hint, error, children, htmlFor, describedById }: { label: React.ReactNode; hint?: React.ReactNode; error?: string; children: React.ReactNode; htmlFor?: string; describedById?: string }) {
+/** `accessory`: a control that belongs to this field (a switch), at the end of its label's row. */
+export function Labelled({ label, hint, error, children, htmlFor, describedById, accessory }: { label: React.ReactNode; hint?: React.ReactNode; error?: string; children: React.ReactNode; htmlFor?: string; describedById?: string; accessory?: React.ReactNode }) {
+  const caption = (
+    <label htmlFor={htmlFor} className={cx("block text-[12px] font-medium text-ink-2", accessory ? "min-w-0 truncate" : "mb-1")}>
+      {label}
+    </label>
+  );
   return (
     <div className="block min-w-0">
-      <label htmlFor={htmlFor} className="mb-1 block text-[12px] font-medium text-ink-2">
-        {label}
-      </label>
+      {accessory ? <div className="mb-1 flex items-center justify-between gap-3">{caption}{accessory}</div> : caption}
       {children}
       {(error || hint) && <span id={describedById} className={cx("mt-1 block text-[11px] leading-relaxed", error ? "text-red" : "text-ink-3")}>{error || hint}</span>}
     </div>
@@ -49,13 +53,14 @@ export function TextField({ label, value, onChange, hint, error, placeholder, mo
 }
 
 /** A key or other secret: masked, with "Show" / "Hide"; `multiline` for request headers (masked as discs until shown). */
-export function SecretField({ label, value, onChange, hint, placeholder, multiline }: {
+export function SecretField({ label, value, onChange, hint, placeholder, multiline, accessory }: {
   label: React.ReactNode;
   value: string;
   onChange: (v: string) => void;
   hint?: React.ReactNode;
   placeholder?: string;
   multiline?: boolean;
+  accessory?: React.ReactNode;
 }) {
   const id = useId();
   const noteId = useId();
@@ -70,7 +75,7 @@ export function SecretField({ label, value, onChange, hint, placeholder, multili
     </button>
   );
   return (
-    <Labelled label={label} hint={hint} htmlFor={id} describedById={noteId}>
+    <Labelled label={label} hint={hint} htmlFor={id} describedById={noteId} accessory={accessory}>
       <div className="relative">
         {multiline ? (
           <textarea id={id} aria-describedby={described} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} rows={3} {...quiet}
@@ -101,30 +106,21 @@ export function KeyField({ label, value, onChange, hint, placeholder, byReferenc
 }) {
   const id = useId();
   const noteId = useId();
+  // on the field's own label row, so in a list of keys each switch sits with the key it changes
   const toggle = onByReference && (
-    <div className="flex items-center justify-between gap-2 text-[12.5px] text-ink-2">
-      <span>{t("settings-providerfields.use_reference")}</span>
+    <span className="flex shrink-0 items-center gap-2 whitespace-nowrap text-[11.5px] text-ink-3">
+      <span aria-hidden>{t("settings-providerfields.use_reference")}</span>
       <Switch label={t("settings-providerfields.use_reference")} on={byReference} onChange={onByReference} />
-    </div>
+    </span>
   );
-  if (!byReference) {
-    return (
-      <div className="flex flex-col gap-1.5">
-        {toggle}
-        <SecretField label={label} value={value} onChange={onChange} hint={hint} placeholder={placeholder} />
-      </div>
-    );
-  }
+  if (!byReference) return <SecretField label={label} value={value} onChange={onChange} hint={hint} placeholder={placeholder} accessory={toggle} />;
   const note = stored ? `${referenceState(stored)}. ${t("settings-providerfields.reference_hint")}` : t("settings-providerfields.reference_hint");
   return (
-    <div className="flex flex-col gap-1.5">
-      {toggle}
-      <Labelled label={label} hint={hint ? <span className="flex flex-col gap-0.5"><span>{note}</span>{hint}</span> : note} htmlFor={id} describedById={noteId}>
-        <input id={id} aria-describedby={noteId} type="text" value={value} onChange={(e) => onChange(e.target.value)}
-          placeholder={stored?.reference || t("settings-providerfields.reference_placeholder")} autoComplete="off" spellCheck={false}
-          data-key-reference className={cx(INPUT, "font-mono")} />
-      </Labelled>
-    </div>
+    <Labelled label={label} hint={hint ? <span className="flex flex-col gap-0.5"><span>{note}</span>{hint}</span> : note} htmlFor={id} describedById={noteId} accessory={toggle}>
+      <input id={id} aria-describedby={noteId} type="text" value={value} onChange={(e) => onChange(e.target.value)}
+        placeholder={stored?.reference || t("settings-providerfields.reference_placeholder")} autoComplete="off" spellCheck={false}
+        data-key-reference className={cx(INPUT, "font-mono")} />
+    </Labelled>
   );
 }
 

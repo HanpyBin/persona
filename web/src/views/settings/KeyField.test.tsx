@@ -31,10 +31,12 @@ describe("KeyField", () => {
     expect(host.querySelector("input")!.type).toBe("password");
   });
 
-  it("offers the switch, and turning it on asks for a reference", () => {
+  it("offers the switch on the key's own label row, and turning it on asks for a reference", () => {
     const on = vi.fn();
     render(<KeyField label="API Key" value="" onChange={noop} byReference={false} onByReference={on} />);
     const sw = host.querySelector<HTMLElement>('[role="switch"]')!;
+    // in a list of computers' keys, each switch stays with the key it changes
+    expect(host.querySelector("label")!.parentElement!.contains(sw)).toBe(true);
     act(() => sw.click());
     expect(on).toHaveBeenCalledWith(true);
   });

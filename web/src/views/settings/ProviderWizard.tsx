@@ -576,7 +576,7 @@ export function ProviderWizard({ existing, onClose, onSaved }: { existing: Provi
                 <Segmented<ProviderForm["auth"]> label={t("settings-providerwizard.auth")} value={f.auth} onChange={set("auth")} options={[{ v: "bearer", label: "Bearer" }, { v: "api_key", label: "x-api-key" }]} />
               </Labelled>
             )}
-            <KeyField label={isNew || !old?.has_key ? "API Key" : t("settings-providerwizard.key_keep")} value={f.api_key} onChange={set("api_key")} placeholder={old?.has_key ? t("settings-providerwizard.key_set") : "sk-…"} hint={t("settings-providerwizard.key_hint")}
+            <KeyField label={isNew || !old?.has_key ? "API Key" : t("settings-providerwizard.key_keep")} value={f.api_key} onChange={set("api_key")} placeholder={old?.has_key ? t("settings-providerwizard.key_set") : "sk-…"} hint={f.key_by_reference ? undefined : t("settings-providerwizard.key_hint")}
               byReference={f.key_by_reference} stored={old?.key_reference}
               onByReference={keyRefs ? (on) => setF((x) => ({ ...x, key_by_reference: on, api_key: "" })) : undefined} />
             <div className="flex flex-col gap-2 rounded-card bg-inset p-3 shadow-hairline">
@@ -721,7 +721,7 @@ function KeyStep({ preset, pf, setPf, keyTest, onRetest, onOther, assign, setAss
       </div>
       {assign === null && nameField}
       <KeyField label="API Key" value={pf.api_key} onChange={(v) => setPf((x) => ({ ...x, api_key: v }))} placeholder={t("settings-providerwizard.key_paste")}
-        hint={preset.key_hint ? t("settings-providerwizard.key_hint_with", { hint: preset.key_hint }) : t("settings-providerwizard.key_hint")}
+        hint={pf.key_by_reference ? undefined : preset.key_hint ? t("settings-providerwizard.key_hint_with", { hint: preset.key_hint }) : t("settings-providerwizard.key_hint")}
         byReference={!!pf.key_by_reference} onByReference={keyRefs ? (on) => setPf((x) => ({ ...x, key_by_reference: on, api_key: "" })) : undefined} />
       {signup && (
         <a href={signup} target="_blank" rel="noopener noreferrer" className="touch-hit inline-flex items-center gap-1 self-start whitespace-nowrap text-[12px] font-medium text-accent hover:underline">

@@ -17087,6 +17087,22 @@ if SECRET_HANDOFF and PLUGINS_MODE:
              "reference": "op://Example/Gateway/key"}],
         "handoff_rules": [{"id": "0123456789abcdef", "reference": "op://Example/Registry token/credential", "launcher": "claude",
                            "machine": "macbook", "by": "device:d1", "at": "2026-01-01T10:00:00Z"}]}
+    # The provider that uses Example Vault's reference: added in Persona, its key a reference, the server's own key
+    # another (launcher_secret_references, docs/extensions/secret-providers.md "Launcher keys"; #3962 step 4c), with the
+    # features its form's computers page (launcher_scope) and a preset's key step (builtin_presets) need.
+    LAUNCHERS.insert(0, {
+        "name": "gateway", "display_name": "Example 网关", "source": "persona", "kind": "launcher", "base_url": "https://gateway.example.com",
+        "model": "example-large", "has_key": True, "auth": "bearer", "models": [{"id": "example-large", "context_window": 200000}],
+        "key_reference": {"provider": "example-vault", "provider_name": "Example Vault", "reference": "op://Example/Gateway/key",
+                          "title": "Gateway › key"},
+        "share": "all", "delivery": "on_demand", "own_service": "skip", "key_machines": ["server"],
+        "machine_key_references": {"server": {"provider": "example-vault", "provider_name": "Example Vault",
+                                              "reference": "op://Example/Server gateway/key", "title": "Server gateway › key"}}})
+    _features_without_launcher_references = features
+
+    def features():
+        f = _features_without_launcher_references()
+        return f + [x for x in ("launcher_secret_references", "launcher_scope", "builtin_presets") if x not in f]
 
 
 # MOCK_EXTENSION_PICKERS=1 (with MOCK_EXTENSIONS): a chat extension whose form picks one machine (format machine, Macs and

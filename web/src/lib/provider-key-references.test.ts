@@ -52,7 +52,7 @@ describe("a provider's key as a reference", () => {
   });
 
   it("goes for a single computer in machine_key_references, a typed key in machine_keys", () => {
-    const machines = [{ id: "laptop", trust: "trusted" }, { id: "desk", trust: "trusted" }] as Parameters<typeof scopeBody>[2];
+    const machines: Parameters<typeof scopeBody>[2] = [{ id: "laptop" }, { id: "desk" }];
     const f = { ...newScope(), keys: { laptop: REF, desk: "sk-desk" }, key_refs: { laptop: true } };
     const body = scopeBody(f, null, machines);
     expect(body.machine_key_references).toEqual({ laptop: REF });
