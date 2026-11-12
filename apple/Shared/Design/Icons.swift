@@ -388,6 +388,8 @@ extension Theme {
         static let photo = "photo"
         static let photos = "photo.on.rectangle"
         static let camera = "camera"
+        /// Scan Document: the document camera (VisionKit), the composer's item next to Take Photo (#3720).
+        static let scanDocument = "doc.viewfinder"
         /// Glasses Photo: a photo taken with the Meta glasses (Persona/Glasses), the composer's glasses item.
         static let glasses = "eyeglasses"
         static let list = "list.bullet.rectangle"
@@ -485,6 +487,8 @@ extension Theme {
         /// The assistant operating an iPhone through a Mac (the extension iphone): its section, its tools.
         static let phoneControl = "iphone.radiowaves.left.and.right"
         static let watch = "applewatch"
+        static let storage = "internaldrive"
+        static let scanCode = "qrcode.viewfinder"
         static let handoff = "iphone.and.arrow.forward"
         /// The default web browser (open a link outside the app).
         static let safari = "safari"
