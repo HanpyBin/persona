@@ -5,8 +5,9 @@
 // is in: MessageActions') or keyboard focus in the bar shows it; it stays REPLY_BAR_LINGER_MS after the pointer leaves,
 // then fades (at once with reduced motion), and an open ⋯ menu keeps it. Narration inside a work summary and a reply
 // still streaming have no bar: their right-click / long-press menu (MessageActions) has every action, and touch screens
-// have MessageActions' copy + ⋯ row instead. All of it watches the pointer itself, so the reply around it draws nothing
-// again, and none of it is on the first screen (MessageActions loads it lazily).
+// have MessageActions' copy + ⋯ row instead. After the time, what the exchange cost or its tokens, with cindy's usage
+// card (TurnUsage, #5426); an open card keeps the bar too. All of it watches the pointer itself, so the reply around it
+// draws nothing again, and none of it is on the first screen (MessageActions loads it lazily).
 import { useEffect, useRef, useState } from "react";
 import { t } from "../../i18n";
 import { exactTime, relativeTime } from "../../lib/relative-time";
@@ -14,6 +15,7 @@ import { copyText, cx, Menu } from "../../ui/atoms";
 import { Icon } from "../../ui/icons";
 import { REPLY_BAR_FADE_MS, REPLY_BAR_LINGER_MS } from "../../ui/motion";
 import type { Action } from "./MessageActions";
+import { TurnUsage } from "./TurnUsage";
 
 /** How often the time is worked out again while the pointer is over the reply (cindy's 30 s): only then, so a long chat
  *  holds no timer per reply. */
@@ -27,14 +29,16 @@ async function copyQuietly(text: string): Promise<boolean> {
   return done || copyText(text);
 }
 
-/** `fork`: "Start a new session", when the session can. `more`: the ⋯ menu's actions; no ⋯ without any. */
-export function ReplyBar({ text, ts, fork, more }: { text: string; ts?: string; fork?: Action; more: Action[] }) {
+/** `fork`: "Start a new session", when the session can. `more`: the ⋯ menu's actions; no ⋯ without any. `usage`: what the
+ *  exchange used (lib/turn-usage.ts usageKey), `usageMs` its work time, `persona` a Persona conversation's plain cost. */
+export function ReplyBar({ text, ts, fork, more, usage, usageMs, persona }: { text: string; ts?: string; fork?: Action; more: Action[]; usage?: string; usageMs?: number; persona?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const [hovered, setHovered] = useState(false);
   const [visible, setVisible] = useState(false);
   const [copied, setCopied] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [menu, setMenu] = useState<HTMLElement | null>(null);
+  const [card, setCard] = useState(false);
 
   // the pointer over the reply: the element this bar is in
   useEffect(() => {
@@ -76,7 +80,7 @@ export function ReplyBar({ text, ts, fork, more }: { text: string; ts?: string; 
       // so a click does not keep it after the pointer leaves)
       className={cx(
         "mt-1.5 hidden h-6 items-center gap-0.5 transition-opacity [@media(hover:hover)]:flex",
-        visible || menu ? "opacity-100" : "pointer-events-none opacity-0 has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:opacity-100",
+        visible || menu || card ? "opacity-100" : "pointer-events-none opacity-0 has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:opacity-100",
       )}
       style={{ transitionDuration: `${REPLY_BAR_FADE_MS}ms` }}
       onFocus={() => setNow(Date.now())}
@@ -115,6 +119,7 @@ export function ReplyBar({ text, ts, fork, more }: { text: string; ts?: string; 
           {time}
         </time>
       )}
+      {usage && <TurnUsage usage={usage} ms={usageMs} persona={persona} onOpen={setCard} />}
       {menu && <Menu anchor={menu} onClose={() => setMenu(null)} items={more} width={more.some((a) => a.hint) ? 200 : 184} />}
     </div>
   );
