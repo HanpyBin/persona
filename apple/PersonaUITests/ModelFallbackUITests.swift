@@ -5,7 +5,7 @@ import XCTest
 /// card with only the /model step, and its API error offers no Continue; the Persona main conversation's card offers
 /// Back to Configured Model and New Main Chat, and going back leaves only the pending note. There the line and the card
 /// each say one plain sentence with the model's short name, the record under a closed Details (#5202). Light and dark,
-/// and the main conversation at the largest text size;
+/// and the main conversation at the largest text size in zh-Hans, English and Japanese, where the card's buttons stack;
 /// `TEST_RUNNER_PERSONA_SHOTS=<dir>` keeps the screenshots (`fallback-<step>-<scheme>.png`).
 /// `TEST_RUNNER_PERSONA_PHASE=before` takes the same screenshots on an older build, checking nothing it doesn't do.
 final class ModelFallbackUITests: XCTestCase {
@@ -45,13 +45,19 @@ final class ModelFallbackUITests: XCTestCase {
             throw XCTSkip("needs mock_hub.py with MOCK_MODEL_FALLBACK=1 MOCK_MAIN_ACTIONS=1 (PERSONA_MODEL_FALLBACK_HUB)")
         }
         continueAfterFailure = false
-        for scheme in ["light", "dark", "large"] {
+        for scheme in ["light", "dark", "large", "large-en", "large-ja"] {
             _ = try? Data(contentsOf: URL(string: hub + "/mock/model-fallback/reset")!)
 
-            let look = scheme == "large"
-                ? ["-ui.scheme", "light", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+            let large = scheme.hasPrefix("large")
+            let language: [String] = switch scheme {
+            case "large-en": ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+            case "large-ja": ["-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+            default: []
+            }
+            let look = large
+                ? ["-ui.scheme", "light", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] + language
                 : ["-ui.scheme", scheme]
-            if scheme != "large" {
+            if !large {
                 // A terminal agent: the refusal's line after the exchange, the card with only the /model step, no Continue.
                 let app = launch(hub, ["-dev.openChat", "", "-openSession", agent] + look)
                 let card = labeled(app, "/model")
@@ -71,6 +77,21 @@ final class ModelFallbackUITests: XCTestCase {
             // and no button.
             let app = launch(hub, ["-tab", "assistant", "-openAssistant", main] + look)
             let back = app.buttons["回到配置的模型"].firstMatch
+            if scheme == "large-en" || scheme == "large-ja" {
+                // The card's words in English and Japanese, which are longer: one under another, each on one line in
+                // the screenshot.
+                let (backTitle, newTitle) = scheme == "large-en"
+                    ? ("Back to Configured Model", "New Main Chat") : ("設定済みのモデルに戻す", "新しいメインチャット")
+                let card = app.descendants(matching: .any)["readiness-card"].firstMatch
+                let backHere = card.buttons[backTitle].firstMatch
+                XCTAssertTrue(backHere.waitForExistence(timeout: 20), app.debugDescription)
+                if !before {
+                    XCTAssertGreaterThanOrEqual(card.buttons[newTitle].firstMatch.frame.minY, backHere.frame.maxY - 1,
+                                                "the buttons stack at the largest size")
+                }
+                shot(app, "main-\(scheme)")
+                continue
+            }
             if before {
                 _ = labeled(app, "API Error").waitForExistence(timeout: 20)
                 shot(app, "main-\(scheme)")
@@ -79,8 +100,15 @@ final class ModelFallbackUITests: XCTestCase {
             XCTAssertTrue(back.waitForExistence(timeout: 20), app.debugDescription)
             XCTAssertTrue(app.buttons["新建主对话"].firstMatch.exists, "New Main Chat on the main conversation")
             XCTAssertTrue(labeled(app, "这个对话现在用 Sonnet 5.5 回复").exists, "the card's plain sentence")
-            // At the largest size the line may be above the screen in the lazy list: the card only, and the shot.
-            if scheme == "large" { shot(app, "main-\(scheme)"); continue }
+            // At the largest size the line may be above the screen in the lazy list: the card only, its buttons one
+            // under another (side by side each was cut to a letter), and the shot.
+            if large {
+                let card = app.descendants(matching: .any)["readiness-card"].firstMatch
+                XCTAssertGreaterThanOrEqual(card.buttons["新建主对话"].firstMatch.frame.minY, card.buttons["回到配置的模型"].firstMatch.frame.maxY - 1,
+                                            "the buttons stack at the largest size")
+                shot(app, "main-\(scheme)")
+                continue
+            }
             let line = labeled(app, "上游拒绝了这次请求，已改用 Sonnet 5.5")
             XCTAssertTrue(line.waitForExistence(timeout: 10), "the refusal's plain sentence")
             XCTAssertFalse(labeled(app, "拒绝原文").exists, "the record stays under a closed Details")
@@ -93,6 +121,13 @@ final class ModelFallbackUITests: XCTestCase {
             XCTAssertTrue(labeled(app, "拒绝原文").waitForExistence(timeout: 5), "Details opens to the record")
             shot(app, "main-details-\(scheme)")
             toggle.tap()
+            // The card's own Details: the models and the error since.
+            let cardDetails = app.descendants(matching: .any)["readiness-card"].firstMatch.buttons["详情"].firstMatch
+            XCTAssertTrue(cardDetails.exists, "the card's Details")
+            cardDetails.tap()
+            XCTAssertTrue(labeled(app, "回退模型：Sonnet 5.5").waitForExistence(timeout: 5), "the card's Details opens to the record")
+            shot(app, "main-card-details-\(scheme)")
+            cardDetails.tap()
             back.tap()
             XCTAssertTrue(labeled(app, "下次启动将使用配置的模型").waitForExistence(timeout: 15), app.debugDescription)
             XCTAssertFalse(app.buttons["回到配置的模型"].exists)

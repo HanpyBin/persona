@@ -1287,7 +1287,8 @@ With hub feature `assistant_readiness`, the App reads `GET /api/v1/assistant/rea
 state in `AppModel.readiness`, `AssistantReadinessModel`), using the same presentation as the web (`../web/web.md` ("What the main chat still needs")):
 
 - Query while Persona is foregrounded (`.tabActiveTask`), when machines change, from `warm` responses, after chat creation is refused, and after saving a provider (`readinessChanged()`). Old hubs (no feature or 404) show nothing.
-- Above the new-chat input (old `AssistantHome`, new-shell `ShellHome`), a `ReadinessCard` (design-system component, BeautifulUI list rows):
+- Above the new-chat input (old `AssistantHome`, new-shell `ShellHome`), a `ReadinessCard` (design-system component, BeautifulUI list rows;
+  at the accessibility text sizes its buttons and Details stack, the main one first, each on one line, `docs/design/DESIGN_SYSTEM.md` 1.2 rule 3, #5202):
   `setup` shows the first missing step; `rate_limited` shows only a card without blocking Send. In `setup`, a nonempty draft replaces Send with `SendGate` ("Connect a model first", "Add a computer first"…); tap opens that step, retaining the draft without queuing it.
 - Actions (`ReadinessRoute`): add / confirm computer first opens Machines (switches to Add Computer after M3 lands); connect model opens provider wizard, replace key opens that provider;
   install / log in to Claude Code, wake computer and `local` sample questions open local instructions (`ReadinessHelpView`, not sent to a model); Try a message queries `?probe=1`. Unknown `action` shows text only.
