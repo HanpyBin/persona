@@ -51,9 +51,16 @@ final class SecretReferencesUITests: XCTestCase {
             let confirm = app.buttons["handoff-rule-remove-confirm"]
             XCTAssertTrue(confirm.waitForExistence(timeout: 5), app.debugDescription)
             shot(app, "rule-remove-confirm-" + scheme)
+            // iOS 26 shows the dialog as a popover without a Cancel button: a tap outside it cancels.
             let cancel = app.buttons["取消"].firstMatch
-            XCTAssertTrue(cancel.waitForExistence(timeout: 5), app.debugDescription)
-            cancel.tap()
+            if cancel.waitForExistence(timeout: 2) {
+                cancel.tap()
+            } else {
+                let outside = app.otherElements["PopoverDismissRegion"]
+                XCTAssertTrue(outside.exists, app.debugDescription)
+                outside.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.08)).tap()
+            }
+            XCTAssertTrue(confirm.waitForNonExistence(timeout: 5), app.debugDescription)
             XCTAssertTrue(rule.waitForExistence(timeout: 5), "a cancelled removal kept the rule")
             app.terminate()
         }
