@@ -281,18 +281,21 @@ internal fun AgentsScreen(
                 .takeIf { unread.isNotEmpty() })
         }
     }
-    // "By machine" shows a herdr tab's agents as a group (#2320), as the web's sidebar; the other groupings list one agent a row
-    val tabs = page.preferences.grouping == AgentGrouping.MachineSpace
     var expandedTasks by remember { mutableStateOf(emptySet<String>()) }
     // By Repository on Glass draws iOS's tree (#4338 A7, A8): each repository a card, its header and working trees' lines in
     // it, the agents' rows under their line and the idle ones behind one quiet line; each computer's idle repositories a row
     // each in its Idle Repositories. Brief and Board keep their headings and "N more idle" (decision 8).
     val repoTree = PersonaTheme.style == AppStyle.Glass && page.preferences.grouping == AgentGrouping.Repo
-    val tree = remember(page.list, page.settings.machineFilter, tabs, page.preferences.foldedTabs, page.preferences.mutes, expandedTasks, repoTree) {
-        agentTreeEntries(page.list, page.settings.machineFilter, tabs, page.preferences.foldedTabs, page.preferences.mutes, expandedTasks,
+    // By Project shows a herdr tab's agents as a group (#2320), as the web's sidebar, and so does By Repository's tree, as
+    // iOS (#4338 A11); the other groupings list one agent a row.
+    val tabs = page.preferences.grouping == AgentGrouping.MachineSpace || repoTree
+    // A search opens folded tabs while it runs, as it opens every fold (#4338 A6).
+    val foldedTabs = page.preferences.foldedTabs.takeIf { page.settings.query.isEmpty() } ?: emptySet()
+    val tree = remember(page.list, page.settings.machineFilter, tabs, foldedTabs, page.preferences.mutes, expandedTasks, repoTree) {
+        agentTreeEntries(page.list, page.settings.machineFilter, tabs, foldedTabs, page.preferences.mutes, expandedTasks,
             showAll = page.settings.expandedIdle.takeIf {
                 page.settings.query.isEmpty() && page.settings.quick == AgentQuickFilter.All && !page.pagination.paged
-            }, idleRepos = repoTree)
+            }, repoTree = repoTree)
     }
     // Rows outside the tree name their computer while the list mixes computers, By To-do's their host while it mixes
     // hosts (iOS `rowMachine`, `mixedHosts`; #4338 A9).
@@ -591,7 +594,7 @@ internal fun AgentsScreen(
                                 located = entry.located,
                                 onOpen = { openRow(row) }, menuItems = { rowMenu(row, entry.nested) },
                                 onClose = closeSwipe(row, operations.busy) { operationDialog = AgentOperationDialog.Close(row.session) },
-                                launcher = entry.launcher, branch = entry.branch, hideState = entry.inStateSection,
+                                launcher = entry.launcher, branch = entry.branch, pane = entry.pane, hideState = entry.inStateSection,
                                 requestCount = cardCounts[row.session.key] ?: 0, card = requestCards[row.session.key],
                                 mixesComputers = mixesComputers, showHost = showHost)
                         }
@@ -604,8 +607,15 @@ internal fun AgentsScreen(
                             depth = slot?.level ?: entry.depth, kind = stringResource(R.string.agents_child_tasks_kind))
                     }
                     is TreeTabEntry -> item(entry.key, contentType = "tab") {
-                        AgentTabEntryRow(entry, now, page.preferences.compact, onOpen = { openRow(entry.tab.lead) }, onToggle = { model.foldTab(entry.tab) },
-                            card = requestCards[entry.tab.lead.session.key], muted = page.preferences.mutes.mutes(entry.tab.lead))
+                        val slot = repoSlots[entry.key]
+                        val lead = entry.tab.lead
+                        val muted = page.preferences.mutes.mutes(lead)
+                        // In a repository's card, iOS's tab row (`TabGroupRow`, #4338 A11): a line at its agents' level that folds them.
+                        if (slot != null) AgentTabLine(entry.tab.members.first().session.slotLabel, lead.session.displayTitle, lead.rowStatus(muted),
+                            entry.tab.members.size, entry.folded, onToggle = { model.foldTab(entry.tab) }, Modifier.repoCard(slot.first, slot.last),
+                            level = slot.level, waiting = lead.waitsInBackground && !muted, stateWords = lead.rowStatusText(muted))
+                        else AgentTabEntryRow(entry, now, page.preferences.compact, onOpen = { openRow(lead) }, onToggle = { model.foldTab(entry.tab) },
+                            card = requestCards[lead.session.key], muted = muted)
                     }
                     is TreeIdleEntry -> item(entry.key, contentType = "idle") {
                         val slot = repoSlots[entry.key]
@@ -660,8 +670,8 @@ internal fun AgentsScreen(
         add(JAction(stringResource(R.string.agents_menu_detailed), checked = !page.preferences.compact, onClick = { if (page.preferences.compact) model.compact() }))
         add(JAction(stringResource(R.string.agents_menu_collapse_all), checked = page.list.allCollapsed, onClick = { model.foldAll(true) }))
         add(JAction(stringResource(R.string.agents_menu_expand_all), checked = page.list.groups.isNotEmpty() && page.list.groups.none { it.folded } && page.list.machines.none { it.folded } &&
-            // under "By machine" a tab group folded by hand is not expanded either (#2792)
-            (page.preferences.grouping != AgentGrouping.MachineSpace || page.preferences.foldedTabs.isEmpty()), onClick = { model.foldAll(false) }))
+            // where tabs are groups, a tab group folded by hand is not expanded either (#2792)
+            (!tabs || page.preferences.foldedTabs.isEmpty()), onClick = { model.foldAll(false) }))
         add(JAction(stringResource(R.string.agents_menu_machines), icon = PhIcons.Gauge, onClick = { navigator.navigate(MachinesRoute) }))
         if (terminalPanes) add(JAction(stringResource(R.string.agents_menu_terminals), icon = PhIcons.TerminalWindow,
             onClick = { navigator.navigate(persona.core.navigation.TerminalPanesRoute) }))
@@ -864,6 +874,8 @@ internal fun SlotRow(
     onClose: (() -> Unit)? = null,
     /** Under its herdr tab (#2320): the tab's launcher, or a pane it split off. */
     launcher: Boolean = false, branch: Boolean = false,
+    /** Under its tab's row: what it is called beside its tab mates ([AgentTab.paneName]); null: its agent, where it starts or branches. */
+    pane: String? = null,
     /** The card this agent waits on, first of its own ([firstBySession]): what it asks is the row's line while it needs you. */
     card: Interaction? = null,
     /** Its By Status section names its state, so the row does not ([TreeRowEntry.inStateSection]). */
@@ -878,8 +890,9 @@ internal fun SlotRow(
     val source = session.source
     val glass = PersonaTheme.style == AppStyle.Glass
     val content = row.rowContent(AgentRowContext(located = located, machine = machine.takeIf { mixesComputers }, host = showHost,
-        // Under its tab's row the agent is named by its agent and whether it started the tab; the tab's row names the tab.
-        pane = if (launcher || branch) AgentPane(session.agentLabel, launcher) else null, slot = slotLabel, stateSection = hideState), muted)
+        // Under its tab's row the agent is named beside its tab mates and whether it started the tab; the tab's row names the tab.
+        pane = pane?.let { AgentPane(it, launcher) } ?: AgentPane(session.agentLabel, launcher).takeIf { launcher || branch },
+        slot = slotLabel, stateSection = hideState), muted)
     val links = androidx.compose.ui.platform.LocalUriHandler.current
     // "Lark groups" / "Terminal" under the time (#3132, #3043); a botmux session's tag opens its Feishu topic when it has one.
     val origin = session.agentSource?.takeIf { !session.assistant }?.let { kind ->

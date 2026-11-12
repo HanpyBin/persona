@@ -175,8 +175,8 @@ class AgentsTreeTest {
             at("research", "/code/app", "idle", tab = "research"), at("minutes", "/code/notes", "idle", tab = "minutes"),
             at("cleanup", "/code/scripts", "idle"), at("api", "/srv/api", "working", machine = "box"),
             at("certs", "/srv/infra", "idle", machine = "box"))
-        fun entries(settings: AgentListSettings = AgentListSettings(grouping = AgentGrouping.Repo), idleRepos: Boolean = true) =
-            agentTreeEntries(buildAgentList(rows, machines, settings = settings), "", idleRepos = idleRepos)
+        fun entries(settings: AgentListSettings = AgentListSettings(grouping = AgentGrouping.Repo), repoTree: Boolean = true) =
+            agentTreeEntries(buildAgentList(rows, machines, settings = settings), "", repoTree = repoTree)
         val glass = entries()
         assertEquals(listOf("machine-header:machine/mac", "group:tree/mac//code/app", "session:mac/build", "idle:tree/mac//code/app",
             "idle-repos:machine/mac", "group:tree/mac//code/notes", "group:tree/mac//code/scripts",
@@ -204,8 +204,8 @@ class AgentsTreeTest {
         assertEquals(RepoCardSlot(first = true, last = false, level = 0), openSlots["group:tree/mac//code/notes"])
         assertEquals(RepoCardSlot(first = false, last = false, level = 1), openSlots["session:mac/minutes"])
         assertEquals(RepoCardSlot(first = false, last = true, level = 0), openSlots["group:tree/mac//code/scripts"])
-        // Brief and Board (no idleRepos): as before, the idle repositories inline and "N more idle" with no line of their own.
-        val plain = entries(idleRepos = false)
+        // Brief and Board (no repoTree): as before, the idle repositories inline and "N more idle" with no line of their own.
+        val plain = entries(repoTree = false)
         assertTrue(plain.none { it is TreeIdleReposEntry })
         assertNull(plain.filterIsInstance<TreeIdleEntry>().single().fold)
         assertEquals(2, plain.filterIsInstance<TreeIdleEntry>().single().hidden)
@@ -259,6 +259,11 @@ class AgentsTreeTest {
         // peers (the top left pane is a shell): no launcher, side by side under their tab
         assertEquals(listOf(false, false), listOf("peerA", "peerB").map { rows.getValue(it).launcher || rows.getValue(it).branch })
         assertEquals(listOf(1, 1), listOf("peerA", "peerB").map { rows.getValue(it).depth })
+        // Each named beside its tab mates (iOS `TabPanes.paneName`): the starter by its agent, two others running the same
+        // one numbered; peers as well, since none started the tab (#4338 A11).
+        assertEquals(listOf("Claude", "Claude 1", "Claude 2"), listOf("lead", "review", "tests").map { rows.getValue(it).pane })
+        assertEquals(listOf("Claude 1", "Claude 2"), listOf("peerA", "peerB").map { rows.getValue(it).pane })
+        assertNull("a row outside a tab of several is not a pane", rows.getValue("deps").pane)
         // the idle peer is shown with its tab, so nothing is left for "N more idle"
         assertTrue(entries.none { it is TreeIdleEntry })
         assertTrue(rows.getValue("deps").last)
@@ -278,6 +283,62 @@ class AgentsTreeTest {
         // one agent of the tab left under a quick filter: a row of its own
         val needs = agentTreeEntries(buildAgentList(panes, machines, settings = MachineSpaceTree.copy(quick = AgentQuickFilter.NeedsYou)), "mac", tabs = true)
         assertTrue(needs.none { it is TreeTabEntry })
+    }
+
+    @Test fun byRepositoryOnGlassShowsATabOfSeveralAgentsAsItsLineWithItsAgentsAtItsLevel() {
+        // #4338 A11, as iOS's `entryRows` and `AgentListOrder.tabEntries` in By Repository: a tab of several agents is one
+        // line at its agents' level in the card, the starter's branches a level in, each agent named beside its tab mates;
+        // a tab with an agent that stays keeps its idle agents under it, a tab of idle agents waits behind the idle line.
+        fun at(id: String, state: String, agent: String, slot: Int, place: Int?, cwd: String = "/code/app") = AgentSession(Session(
+            machineId = "mac", sessionId = id, state = state, cwd = cwd, agent = agent, spaceId = "w1", spaceName = "app",
+            slotId = "t$slot", slotIndex = slot, slotName = "release".takeIf { slot == 1 }, paneId = "w1:$id", paneIndex = place,
+            updatedAt = "2026-01-01T00:00:00Z"))
+        val fix = "/code/app/.worktrees/fix"
+        val rows = listOf(
+            at("starter", "working", "claude", 1, 0), at("codex", "idle", "codex", 1, 1), at("second", "unread", "claude", 1, 2),
+            at("third", "idle", "claude", 1, 3), at("peerA", "idle", "claude", 2, 1), at("peerB", "idle", "claude", 2, 2),
+            at("solo", "idle", "claude", 3, 0), at("fixA", "working", "claude", 4, 0, fix), at("fixB", "needs_you", "codex", 4, 1, fix),
+        )
+        val byRepo = AgentListSettings(grouping = AgentGrouping.Repo)
+        fun entries(settings: AgentListSettings = byRepo, folded: Set<String> = emptySet()) =
+            agentTreeEntries(buildAgentList(rows, machines, settings = settings), "", tabs = true, foldedTabs = folded, repoTree = true)
+        val glass = entries()
+        assertEquals(listOf("group:repo/mac//code/app", "group:tree/mac//code/app", "tab:mac/:w1/t1", "session:mac/starter",
+            "session:mac/codex", "session:mac/second", "session:mac/third", "idle:tree/mac//code/app", "group:tree/mac//code/app/.worktrees/fix",
+            "tab:mac/:w1/t4", "session:mac/fixA", "session:mac/fixB"), glass.map { it.key })
+        val tab = glass.filterIsInstance<TreeTabEntry>().first()
+        // The line speaks for the working starter (Android's rule, as the web's: working before unread).
+        assertEquals("starter", tab.tab.lead.session.sessionId)
+        assertEquals("release", tab.tab.members.first().session.slotLabel)
+        val slots = repoCardSlots(glass)
+        // The tab's line and its starter at the tree's agents' level, its branches a level in.
+        assertEquals(RepoCardSlot(first = false, last = false, level = 1), slots["tab:mac/:w1/t1"])
+        assertEquals(listOf(1, 2, 2, 2), listOf("starter", "codex", "second", "third").map { slots.getValue("session:mac/$it").level })
+        assertEquals(RepoCardSlot(first = false, last = false, level = 1), slots["tab:mac/:w1/t4"])
+        assertEquals(RepoCardSlot(first = false, last = true, level = 2), slots["session:mac/fixB"])
+        val named = glass.filterIsInstance<TreeRowEntry>().associate { it.row.session.sessionId to it.pane }
+        assertEquals(listOf("Claude", "Codex", "Claude 1", "Claude 2"), listOf("starter", "codex", "second", "third").map(named::getValue))
+        assertEquals(listOf("Claude", "Codex"), listOf("fixA", "fixB").map(named::getValue))
+        // The idle line holds what is not under a tab that shows: the idle tab's two peers and the agent alone in its tab.
+        val line = glass.filterIsInstance<TreeIdleEntry>().single()
+        assertEquals(listOf("peerA", "peerB", "solo"), line.fold!!.rows.map { it.session.sessionId })
+        assertEquals(3, line.hidden)
+        // Opened, the idle tab is a line of its own with its peers at its level, then "Hide 3 Idle".
+        val opened = entries(byRepo.copy(expandedIdle = setOf("tree/mac//code/app")))
+        assertEquals(listOf("tab:mac/:w1/t2", "session:mac/peerA", "session:mac/peerB", "session:mac/solo", "idle:tree/mac//code/app"),
+            opened.map { it.key }.drop(7).take(5))
+        assertEquals(listOf(1, 1, 1), listOf("tab:mac/:w1/t2", "session:mac/peerA", "session:mac/peerB").map { repoCardSlots(opened).getValue(it).level })
+        assertEquals(listOf("Claude 1", "Claude 2"), opened.filterIsInstance<TreeRowEntry>().filter { it.row.session.slotId == "t2" }.map { it.pane })
+        assertEquals(3, opened.filterIsInstance<TreeIdleEntry>().single().fold!!.rows.size)
+        // Folded, the tab is its line alone.
+        val folded = entries(folded = setOf(tab.tab.foldKey))
+        assertEquals(listOf("tab:mac/:w1/t1", "idle:tree/mac//code/app"), folded.map { it.key }.drop(2).take(2))
+        assertTrue(folded.filterIsInstance<TreeTabEntry>().first().folded)
+        // Brief and Board (no tabs, no repoTree): one agent a row, the idle ones behind "N more idle", as before.
+        val plain = agentTreeEntries(buildAgentList(rows, machines, settings = byRepo), "")
+        assertTrue(plain.none { it is TreeTabEntry })
+        assertTrue(plain.filterIsInstance<TreeRowEntry>().all { it.pane == null && !it.launcher && !it.branch })
+        assertEquals(5, plain.filterIsInstance<TreeIdleEntry>().first().hidden)
     }
 
     // #4338 A11, as iOS's `cappedRows`: a long section shows 20 rows, then "Show All N"; open, "Collapse" at its end.

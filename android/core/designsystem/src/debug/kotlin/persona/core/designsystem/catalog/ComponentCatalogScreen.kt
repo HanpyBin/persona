@@ -200,6 +200,11 @@ fun ComponentCatalogScreen(modifier: Modifier = Modifier, onBack: (() -> Unit)? 
                         Modifier.repoCard(first = false, last = false), branch = "perf/importer", tally = "1 个 Agent")
                     AgentWorktreeLine("bisect", main = false, folded = true, onToggle = { feedback = "展开 bisect" },
                         Modifier.repoCard(first = false, last = false), detached = true, tally = "空闲", quiet = true)
+                    // A tab of several agents at their level (#4338 A11): open, and folded to its line.
+                    AgentTabLine("review", "Check the release notes", Status.NeedsYou, agents = 3, folded = false,
+                        onToggle = { feedback = "折叠 review" }, Modifier.repoCard(first = false, last = false))
+                    AgentTabLine(null, "Rotate the certificates", Status.Working, agents = 2, folded = true,
+                        onToggle = { feedback = "展开标签页" }, Modifier.repoCard(first = false, last = false), waiting = true)
                     // A working tree's idle agents behind one line (#4338 A8), and the line that folds them again.
                     AgentRepoIdleLine(2, listOf("review", "research"), open = false, onClick = { feedback = "展开 2 个空闲" },
                         Modifier.repoCard(first = false, last = false))

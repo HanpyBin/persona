@@ -40,8 +40,9 @@ import persona.core.designsystem.icons.PhIcons
 
 // By Repository's lines on Glass (iOS `RepoTreeRows.swift`, #4338 A7, A8; docs/android/android-design.md 2.4): each
 // repository a card on the page, its header line and its working trees' lines in it, their agents in the work-item rows
-// (`AgentRow`) under their line, the idle ones behind one quiet line; a computer's idle repositories one row each in its
-// Idle Repositories. Brief and Board keep `AgentSpaceHeader` and `AgentIdleRow` (decision 8).
+// (`AgentRow`) under their line, a tab's several agents under its line (A11), the idle ones behind one quiet line; a
+// computer's idle repositories one row each in its Idle Repositories. Brief and Board keep `AgentSpaceHeader` and
+// `AgentIdleRow` (decision 8).
 
 /** A level in (iOS `Theme.Tree.indent`), the column a line's mark sits in (`Theme.Tree.column`), above and below its words. */
 private val TreeIndent = Tokens.Space.xl - Tokens.Space.xxs
@@ -49,6 +50,8 @@ private val TreeColumn = Tokens.Space.l + Tokens.Space.xxs
 private val TreeRowPadding = Tokens.Space.sm
 private val TreeChevron = Tokens.Space.m
 private val TreeWorktreeMark = Tokens.Space.m + Tokens.Space.xxs
+/** The clock of a tab's agent that only waits in the background: as wide as the working ring around a dot (iOS `StatusDot`). */
+private val TreeClock = Tokens.Space.m + Tokens.Space.xxs
 
 /**
  * The fill of By Repository's cards (iOS's grouped card), from the page that holds them ([JAgentHomeSurface]); null where
@@ -86,19 +89,20 @@ private fun FoldChevron(folded: Boolean) {
 /**
  * A line of the tree (iOS `RepoTreeLine`): [level] levels in, its [mark] in the tree's column so marks line up level by
  * level, at least a finger's height, the whole line the button, read as one: [spoken] (after the click, which keeps
- * its actions).
+ * its actions; [onClickLabel] says what a tap does).
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun RepoTreeLine(
     level: Int, onClick: () -> Unit, modifier: Modifier, spoken: SemanticsPropertyReceiver.() -> Unit,
-    onLongClick: (() -> Unit)? = null, onLongClickLabel: String? = null,
+    onLongClick: (() -> Unit)? = null, onLongClickLabel: String? = null, onClickLabel: String? = null,
     mark: @Composable () -> Unit, content: @Composable RowScope.() -> Unit,
 ) {
     Row(
         modifier.fillMaxWidth().heightIn(min = Tokens.MinTouch.android)
             .onSecondaryClick(onLongClick)
-            .combinedClickable(role = Role.Button, onClick = onClick, onLongClick = onLongClick, onLongClickLabel = onLongClickLabel)
+            .combinedClickable(role = Role.Button, onClickLabel = onClickLabel, onClick = onClick, onLongClick = onLongClick,
+                onLongClickLabel = onLongClickLabel)
             .clearAndSetSemantics(spoken)
             .padding(start = TreeIndent * level, top = TreeRowPadding, bottom = TreeRowPadding),
         verticalAlignment = Alignment.CenterVertically,
@@ -263,6 +267,56 @@ fun AgentRepoIdleLine(
         Text(words, style = PersonaTheme.type.caption, color = palette.ink2, maxLines = 1, overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f))
         if (!open) JIcon(PersonaIcons.disclosure, null, size = TreeChevron, tint = palette.ink3)
+    }
+}
+
+/**
+ * A herdr tab holding several agents, in its working tree's part of the card (iOS `TabGroupRow`, #4338 A11), at its
+ * agents' [level]: the state of its most urgent agent ([status]; the clock while that one only waits in the background,
+ * [waiting]), the tab's [name] ("Tab" when the host gives none) and that agent's [title], then how many [agents] and the
+ * chevron. A tap folds the tab's agents to this line and opens them again ([onToggle]); each agent's own row opens it.
+ * TalkBack hears the tab, the count and the state ([stateWords], else the [status]'s name), and whether it is folded.
+ */
+@Composable
+fun AgentTabLine(
+    name: String?,
+    title: String,
+    status: Status,
+    agents: Int,
+    folded: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+    level: Int = 1,
+    waiting: Boolean = false,
+    stateWords: String? = null,
+) {
+    val palette = PersonaTheme.palette
+    val type = PersonaTheme.type
+    val shownName = name?.takeIf(String::isNotBlank)
+    val count = pluralStringResource(R.plurals.designsystem_tab_agents, agents, agents)
+    val tab = shownName?.let { stringResource(R.string.designsystem_tab_named, it) } ?: stringResource(R.string.designsystem_tab)
+    val state = stateWords ?: stringResource(status.labelRes)
+    val foldState = stringResource(if (folded) R.string.designsystem_folded else R.string.designsystem_expanded)
+    val separator = stringResource(R.string.designsystem_separator)
+    RepoTreeLine(
+        level = level, onClick = onToggle, modifier = modifier,
+        onClickLabel = stringResource(if (folded) R.string.designsystem_tab_show else R.string.designsystem_collapse),
+        spoken = {
+            contentDescription = listOf(tab, count, state).joinToString(separator)
+            stateDescription = foldState
+        },
+        mark = {
+            if (waiting) JIcon(PersonaIcons.backgroundWaiting, null, size = TreeClock, tint = palette.status(Status.Working).dot, decorative = true)
+            else JStatusDot(status)
+        },
+    ) {
+        NameFirst(Modifier.weight(1f), chip = false, detail = true) {
+            Text(shownName ?: stringResource(R.string.designsystem_tab), style = type.labelSmall, color = palette.ink, maxLines = 1,
+                overflow = TextOverflow.Ellipsis)
+            Text(title, style = type.caption, color = palette.ink2, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Text(count, style = type.caption, color = palette.ink2, maxLines = 1)
+        FoldChevron(folded)
     }
 }
 

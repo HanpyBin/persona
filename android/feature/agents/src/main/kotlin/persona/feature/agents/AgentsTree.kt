@@ -48,14 +48,20 @@ internal data class TreeRowEntry(
     val launcher: Boolean = false, val branch: Boolean = false, val nested: Boolean = false,
     /** Under a By Status section that names its state, so the row leaves the word out (iOS `inStateSection`); Muted mixes states. */
     val inStateSection: Boolean = false,
+    /**
+     * Under a [TreeTabEntry]: what it is called beside its tab mates ([AgentTab.paneName], iOS `TabPanes.Role`), which its
+     * third line says instead of the tab its row above names.
+     */
+    val pane: String? = null,
 ) : AgentTreeEntry {
     override val key: String get() = "session:${row.id}"
 }
 
 /**
- * A herdr tab holding several agents of the space (#2320, docs/protocol/agent-states.md "Several panes in one tab"): its row
- * speaks for the most urgent of them and says how many there are; its agents follow it in pane order unless [folded].
- * Open by default (the point is to see which agents belong together); folded by hand it stays folded ([AgentTab.foldKey]).
+ * A herdr tab holding several agents of the space or the working tree (#2320, docs/protocol/agent-states.md "Several panes
+ * in one tab"): its row speaks for the most urgent of them and says how many there are; its agents follow it in pane order
+ * unless [folded]. Open by default (the point is to see which agents belong together); folded by hand it stays folded
+ * ([AgentTab.foldKey]).
  */
 internal data class TreeTabEntry(val tab: AgentTab, val depth: Int, val first: Boolean, val last: Boolean, val folded: Boolean) : AgentTreeEntry {
     override val key: String get() = "tab:${tab.key}"
@@ -97,9 +103,10 @@ private const val QUIET = "quiet"
 
 /**
  * Flattens the list into tree lines: "Pinned" first, then every computer with its spaces, then any other groups. With
- * [tabs] ("By machine", as the web's sidebar) a space's agents that share a herdr tab are one [TreeTabEntry] with its agents
- * under it, listed where its most urgent agent would be; a tab is shown whole once one of its agents is, and the
- * tabs in [foldedTabs] ([AgentTab.foldKey]) are folded to their row. [mutes] pick a tab's lead as the list ranks them.
+ * [tabs] (By Project, as the web's sidebar; By Repository on Glass, as iOS) the agents of a space or a working tree that
+ * share a herdr tab are one [TreeTabEntry] with its agents under it, each named beside its tab mates, listed where its
+ * first agent would be; a tab is shown whole once one of its agents is, and the tabs in [foldedTabs] ([AgentTab.foldKey])
+ * are folded to their row. [mutes] pick a tab's lead as the list ranks them.
  */
 internal fun agentTreeEntries(
     list: AgentListResult, machineFilter: String, tabs: Boolean = false, foldedTabs: Set<String> = emptySet(),
@@ -111,10 +118,12 @@ internal fun agentTreeEntries(
      */
     showAll: Set<String>? = null,
     /**
-     * By Repository on Glass, as iOS (#4338 A8): each computer's idle repositories after a [TreeIdleReposEntry], and a
-     * working tree's idle agents behind their quiet line ([AgentListGroup.idleFold]) that folds them again once open.
+     * By Repository on Glass, as iOS: each computer's idle repositories after a [TreeIdleReposEntry], and a working tree's
+     * idle agents behind their quiet line ([AgentListGroup.idleFold]) that folds them again once open (#4338 A8). A tab's
+     * agents sit at its row's level, the starter's branches a level in, and a tab that shows keeps its idle agents under
+     * its row, off the quiet line (iOS `entryRows`, `AgentListOrder.tabEntries`; #4338 A11).
      */
-    idleRepos: Boolean = false,
+    repoTree: Boolean = false,
 ): List<AgentTreeEntry> {
     val entries = mutableListOf<AgentTreeEntry>()
     fun group(group: AgentListGroup, space: Boolean, depth: Int, first: Boolean) {
@@ -142,16 +151,21 @@ internal fun agentTreeEntries(
                     val folded = line.foldKey in foldedTabs
                     shown += line.members.size
                     entries += TreeTabEntry(line, depth, firstLine, lastLine && folded, folded)
+                    // By Repository's tree as iOS: the agents at the tab's level; elsewhere a step in under its row.
+                    val level = if (repoTree) depth else depth + 1
                     if (!folded) line.members.forEachIndexed { at, row ->
                         val branch = line.isBranch(row)
-                        entries += TreeRowEntry(row, depth + if (branch) 2 else 1, first = false, last = lastLine && at == line.members.lastIndex,
-                            located = false, launcher = row.id == line.launcher?.id, branch = branch)
+                        entries += TreeRowEntry(row, level + if (branch) 1 else 0, first = false, last = lastLine && at == line.members.lastIndex,
+                            located = false, launcher = row.id == line.launcher?.id, branch = branch, pane = line.paneName(row))
                     }
                 }
             }
         }
         if (cap != null) entries += TreeShowAllEntry(group, group.visibleRows.size, depth, expanded = open)
-        val fold = group.idleFold?.takeIf { idleRepos }
+        // A tab with an agent that stays shows whole: its idle agents are under its row, not behind the line (iOS `tabEntries`).
+        val inBusyTabs = byTab.values.filter { tab -> tab.members.any { it.stays(mutes) } }.flatMapTo(mutableSetOf()) { tab -> tab.members.map { it.id } }
+        val fold = group.idleFold?.takeIf { repoTree }?.let { it.copy(rows = it.rows.filterNot { row -> row.id in inBusyTabs }) }
+            ?.takeIf { it.rows.isNotEmpty() }
         val hidden = group.rows.size - shown - (group.visibleRows.size - drawn.size)
         if (fold != null) entries += TreeIdleEntry(group, fold.rows.size, depth, fold)
         else if (hidden > 0) entries += TreeIdleEntry(group, hidden, depth)
@@ -169,7 +183,7 @@ internal fun agentTreeEntries(
         if (headed && machine.folded) return@forEach
         val groups = machine.groups.mapNotNull(byId::get)
         // The idle repositories come last, under their heading.
-        val firstIdle = if (idleRepos) groups.indexOfFirst { it.isIdleRepository } else -1
+        val firstIdle = if (repoTree) groups.indexOfFirst { it.isIdleRepository } else -1
         groups.forEachIndexed { index, it ->
             // A working tree sits in its repository, gone while the repository is folded.
             if (it.under != null && byId[it.under]?.folded != false) return@forEachIndexed

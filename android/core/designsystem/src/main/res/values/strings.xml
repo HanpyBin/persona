@@ -142,6 +142,10 @@
     </plurals>
     <!-- A herdr tab of several agents (#2320) -->
     <string name="designsystem_tab_launcher">Lead</string>
+    <!-- By Repository's tab line on Glass (#4338 A11, iOS TabGroupRow): a tab without a name, its spoken name, and the tap that opens it -->
+    <string name="designsystem_tab">Tab</string>
+    <string name="designsystem_tab_named">Tab %1$s</string>
+    <string name="designsystem_tab_show">Show This Tab\'s Agents</string>
     <!-- An Agents row's third line on Glass (#4338 A9): the to-do chip and the muted bell, for TalkBack -->
     <string name="designsystem_row_todo">To-do: %1$s</string>
     <string name="designsystem_row_muted">Notifications muted</string>
