@@ -152,8 +152,9 @@ an existing chat, a page's selection used as context or for an AI edit, another 
 decisions. Only a workspace mention the manager resolves is theirs: at the start of the message, every `kind` it names is
 `workspace` and its computer and folder are known, so the manager writes the block anew and the app's words in it never reach
 the model. What Siri, Shortcuts
-or another App Intent ("Ask Persona", which runs on a locked phone too) or the share sheet sends is marked `via` and never
-counts either; a notification's reply, which needs the phone unlocked, does. A line counts only when it holds those words (the node ties an id to a line by its first words), and the
+or another App Intent ("Ask Persona", which runs on a locked phone too), the iPhone's share sheet or a card's button (the Today
+card's Prep, with a calendar event's title in it) sends is marked `via` and never counts either; a notification's reply, which
+needs the phone unlocked, does. Android does not mark its share sheet yet, so what it shares counts as typed. A line counts only when it holds those words (the node ties an id to a line by its first words), and the
 transcript's window must open with the turn's prompt. An id counts once: for the first line it is read on, never for another
 line that carries it; a send the hub did not vouch for that carries it, or a second vouched send of it with other words, voids
 it. A `client_msg_id` alone proves nothing (channels, the inbox, extensions and Persona's own sends carry one too, and the hub

@@ -891,11 +891,14 @@ nonisolated struct APIClient: Sendable {
 
     /// How the app sent a message when it was not typed in the app itself (docs/protocol/protocol.md, `via`): such a
     /// message never counts as the user's own words for a secret hand-off's Always rule.
-    enum MessageVia: String, Encodable, Sendable {
+    enum MessageVia: String, Codable, Sendable {
         /// Siri, Shortcuts or another App Intent ("Ask Persona", which runs on a locked phone too).
         case intent
         /// The share sheet.
         case share
+        /// A card's button that writes the message for the user from what the app read (the Today card's Prep, with a
+        /// calendar event's title in it).
+        case card
     }
 
     struct SendBody: Encodable {

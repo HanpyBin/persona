@@ -979,6 +979,12 @@ func TestHandoffRulesCoverTheFirstTurnOfAConversationTheUserOpened(t *testing.T)
 	}
 	r.f.items = []proto.Item{{ID: "line2", Role: "user", Kind: proto.KindText, Text: prompt, ClientMsgID: "c-shared"}}
 	r.declineCard(r.startIn(self, handoffArgs))
+	if _, err := r.s.SendParams(context.Background(), SendParams{MachineID: "server", SessionID: self, Human: true,
+		Params: map[string]any{"client_msg_id": "c-marked", "text": prompt, "via": true}}); err != nil { // any mark marks it
+		t.Fatal(err)
+	}
+	r.f.items = []proto.Item{{ID: "line3", Role: "user", Kind: proto.KindText, Text: prompt, ClientMsgID: "c-marked"}}
+	r.declineCard(r.startIn(self, handoffArgs))
 
 	// Opened without the hub's word: no id for the node, and the card.
 	r = newHandoffRig(t)

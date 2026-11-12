@@ -89,6 +89,22 @@ import Testing
         #expect(try via(sends[1].body) == nil)
     }
 
+    /// A message a card's button wrote (the Today card's Prep) keeps its mark in the outbox, across a relaunch, and is
+    /// sent with it.
+    @Test func aCardsMessageKeepsItsMarkInTheOutbox() async throws {
+        var msg = PendingMessage(text: "Help me prepare for “Design review”", images: [])
+        msg.via = .card
+        let kept = try JSONDecoder().decode(PendingMessage.self, from: try JSONEncoder().encode(msg))
+        #expect(kept.via == .card)
+        let typed = try JSONDecoder().decode(PendingMessage.self, from: try JSONEncoder().encode(PendingMessage(text: "typed", images: [])))
+        #expect(typed.via == nil)
+        let hub = FakeHub()
+        hub.on("POST", "/api/v1/sessions/server/main/messages", json: #"{"ok":true}"#)
+        try await hub.client.send(SessionKey(machineID: "server", sessionID: "main"), text: kept.text, clientMsgID: kept.id.uuidString, via: kept.via)
+        let body = try #require(hub.sent("POST", "/api/v1/sessions/server/main/messages").first?.body)
+        #expect((try JSONSerialization.jsonObject(with: body) as? [String: Any])?["via"] as? String == "card")
+    }
+
     @Test func aReferenceIsSavedInPlaceOfAValueAndARuleRemoved() async throws {
         let hub = FakeHub()
         let detail = #"{"id":"example-notes","name":"Example Notes","kind":"connectors","status":"running","permissions":[]}"#
