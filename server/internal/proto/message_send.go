@@ -6,6 +6,14 @@ import (
 	"time"
 )
 
+// FeatureMessageSendState is informational: extension features can appear in
+// older hubs' feature arrays. Trust only the authenticated hello's top-level
+// message_send_state version, written by the hub, not an extension report.
+const (
+	FeatureMessageSendState = "message_send_state"
+	MessageSendStateVersion = 1
+)
+
 const (
 	MessageSendProcessing = "processing"
 	MessageSendDelivered  = "delivered"
@@ -29,6 +37,8 @@ func SendTraceID(id string) string {
 // it per client message ID, independently of session snapshots, and reconcile a
 // lost event with the final HTTP response or a retry using the same ID.
 // Delivered acknowledges input delivery, not completion of the model's answer.
+// Clients consume early events only when their current authenticated hello has
+// message_send_state equal to version 1; a feature-array entry alone is not proof.
 type MessageSendState struct {
 	Type        string    `json:"type"`
 	MachineID   string    `json:"machine_id"`

@@ -10,6 +10,15 @@ and adds its import and export lists. Put what a lazy page needs from such a mod
 (`lib/secret-reference.ts`). To find the file that moved, build main and the branch with the budget at 1 (the build then
 prints every language's count), and compare the first-screen files' brotli sizes with hashes blanked out.
 
+## Feedback cache eviction must not cancel a send (#5258)
+
+A bounded UI cache owns only the progress projection, not the request's lifetime. Using its entry identity as an
+`isAuthContextCurrent` fence rejects still-authorized queued messages when the first overlay is evicted. Keep credential,
+manager and explicit attempt retirement separate from cache membership; process the durable HTTP result even if the
+projection is gone. Test a queue longer than the cache limit, not only one send and one retry. For visible timing,
+inspect ancestor display/opacity and the viewport, then wait for frames: a DOM mutation can precede a delayed fade and
+an image labelled Sending can still be blank. Keep these browser estimates distinct from physical GPU timing.
+
 ## A size budget over built files must not count their content hashes (#5164)
 
 The first-screen budget added up the brotli copies of files that import and preload each other by content-hashed name.

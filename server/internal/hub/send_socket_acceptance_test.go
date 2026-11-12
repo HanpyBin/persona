@@ -2,6 +2,7 @@ package hub
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -100,6 +102,7 @@ func (s socketSendStore) SettleSend(ctx context.Context, id, state string) error
 // socket. Click is the client HTTP invocation; this does not measure UI paint.
 func TestSendReceiptOverHTTPAndWebSocket(t *testing.T) {
 	binary := os.Getenv("PERSONA_SEND_SOCKET_NODE")
+	before := os.Getenv("PERSONA_SEND_SOCKET_BEFORE") != ""
 	if binary == "" {
 		t.Skip("build internal/node with go test -c; set PERSONA_SEND_SOCKET_NODE and isolated PERSONA_TEST_DATABASE_URL")
 	}
@@ -236,6 +239,25 @@ func TestSendReceiptOverHTTPAndWebSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = ws.CloseNow() })
+	_, greeting, err := ws.Read(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hello struct {
+		Type           string          `json:"type"`
+		Features       []string        `json:"features"`
+		ReceiptVersion json.RawMessage `json:"message_send_state"`
+	}
+	if err := json.Unmarshal(greeting, &hello); err != nil || hello.Type != "hello" {
+		t.Fatalf("socket hello: %v", err)
+	}
+	if before {
+		if len(hello.ReceiptVersion) != 0 {
+			t.Fatal("baseline hello unexpectedly acquired a receipt authority marker")
+		}
+	} else if !bytes.Equal(hello.ReceiptVersion, []byte("1")) || !slices.Contains(hello.Features, proto.FeatureMessageSendState) {
+		t.Fatal("socket hello lacks the hub-authored receipt version")
+	}
 	seen := make(chan proto.MessageSendState, 16)
 	go func() {
 		for {
@@ -283,7 +305,6 @@ func TestSendReceiptOverHTTPAndWebSocket(t *testing.T) {
 		case <-ctx.Done():
 		}
 	}
-	before := os.Getenv("PERSONA_SEND_SOCKET_BEFORE") != ""
 	for _, target := range []struct{ kind, sid string }{{"main", info.Main}, {"agent", info.Agent}} {
 		id := fmt.Sprintf("52580000-0000-4000-8000-%012x", time.Now().UnixNano()&0xffffffffffff)
 		trace := proto.SendTraceID(id)
