@@ -522,6 +522,14 @@ speed history (`web/src/lib/token-rate.ts`) is ported from `packages/maker-share
 over time; the state words follow `localizeAgentStatus.ts` and `workingStatus.ts`, and are worked out from Persona's own
 transcript items (`web/src/lib/run-step.ts`).
 
+The web chat's top bar and its background work follow cindy's design at the owner's request (2026-11-12, #5421): the
+top bar (`Header` in `web/src/views/chat/ChatView.tsx`, after cindy's `SessionContentHeader`, `AgentDeviceIndicator`,
+`SessionRenameInput` and `GitContextBadge`), the goal bar over the composer (`web/src/views/chat/GoalBar.tsx`, after
+`GoalIndicator`) and the Background tasks side panel (`web/src/views/chat/BackgroundPanel.tsx`, after the right sidebar's
+`background-tasks` plugin, `BackgroundTasksBody` and `openBackgroundTasksTab`): layout, states, wording and how they
+open. No code is copied for those. The "on another computer" arc on an Agent's mark (`RemoteSignal` in
+`web/src/ui/AgentMark.tsx`) takes its path and placement from cindy's `components/icons/RemoteSourceMark.tsx`.
+
 What a turn cost on the web chat's reply bar (`web/src/views/chat/TurnUsage.tsx` and `web/src/lib/turn-cost.ts`, #5426)
 is ported from cindy's `MessageActionBar.tsx` usage cell, `UsageCostPopover.tsx`, `lib/turnUsageTooltip.ts`
 (`buildTurnUsageTooltipLines`, `formatPercent`, `getTurnUsageSuggestion`), `lib/usageFormat.ts` (`formatTurnCostMoney`)
