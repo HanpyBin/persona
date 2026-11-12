@@ -82,8 +82,9 @@ struct ReadinessCard: View {
 
     @ViewBuilder private var buttons: some View {
         let hasAny = action != nil || alt != nil || !details.isEmpty || busy
+        let row = buttonRow(spacing: Theme.Space.m)
         if hasAny {
-            buttonRow(spacing: Theme.Space.m) {
+            row {
                 if busy { ProgressView().controlSize(.small) }
                 if let actionTitle, let action {
                     Button {
@@ -147,8 +148,9 @@ struct ReadinessCard: View {
                             .buttonStyle(.plain)
                     }
                 }
+                let row = buttonRow(spacing: Theme.Space.s)
                 if action != nil || alt != nil || !details.isEmpty {
-                    buttonRow(spacing: Theme.Space.s) {
+                    row {
                         if let actionTitle, let action {
                             Button {
                                 Haptics.tap()
