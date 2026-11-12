@@ -22,9 +22,10 @@ import { useChatActions, type ChatActions } from "./chat-actions";
 
 // Hidden until the pointer comes, so it is not part of the first screen (startup-preload.ts): its row is kept while it
 // loads, so nothing moves when it comes.
-const ReplyBar = lazy(() => import("./ReplyBar").then((m) => ({ default: m.ReplyBar })));
+const replyBar = () => import("./ReplyBar");
+const ReplyBar = lazy(() => replyBar().then((m) => ({ default: m.ReplyBar })));
 // what the exchange cost, at the end of a touch screen's row (the reply bar has it on hover)
-const TurnUsage = lazy(() => import("./TurnUsage").then((m) => ({ default: m.TurnUsage })));
+const TurnUsage = lazy(() => replyBar().then((m) => ({ default: m.TurnUsage })));
 
 
 function pointAnchor(x: number, y: number): HTMLElement {

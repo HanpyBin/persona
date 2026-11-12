@@ -17,6 +17,8 @@ import { REPLY_BAR_FADE_MS, REPLY_BAR_LINGER_MS } from "../../ui/motion";
 import type { Action } from "./MessageActions";
 import { TurnUsage } from "./TurnUsage";
 
+export { TurnUsage };
+
 /** How often the time is worked out again while the pointer is over the reply (cindy's 30 s): only then, so a long chat
  *  holds no timer per reply. */
 const TIME_TICK_MS = 30_000;

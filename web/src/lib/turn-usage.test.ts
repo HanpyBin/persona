@@ -6,12 +6,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { initI18n } from "../i18n";
 import { chatLines, segments, type Segment } from "./turns";
 import type { Item, TokenUsage } from "./types";
-import { tallyItem, turnUsage, usageKey, type ModelTokens, type TurnUsage } from "./turn-usage";
+import { usageKey } from "./turn-usage";
+import type { ModelTokens, UsageSummary } from "./turn-cost";
 
 const ask = vi.hoisted(() => vi.fn());
 vi.mock("./api", async (original) => ({ ...(await original<typeof import("./api")>()), api: ask }));
 
-const { formatCost, formatPercent, forgetPrices, lowCache, modelCost, parseUsage, personaLines, priceOf, requestPrices, turnCost, usageLines, usageTotals } = await import("./turn-cost");
+const { formatCost, formatPercent, forgetPrices, lowCache, modelCost, modelTokens, parseUsage, personaLines, priceOf, requestPrices, summarize, turnCost, usageLines, usageTotals } = await import("./turn-cost");
 
 const OPUS = "claude-opus-5-5";
 const SONNET = "claude-sonnet-5-5";
@@ -24,6 +25,7 @@ const opus = (n: Partial<TokenUsage>): TokenUsage => ({ model: OPUS, ...n });
 const tokens = (m: Partial<ModelTokens>): ModelTokens => ({ model: OPUS, in: 0, out: 0, cache_read: 0, cache_write: 0, cache_write_1h: 0, ...m });
 
 const segOf = (lines: ReturnType<typeof chatLines>): Segment[] => lines.flatMap((l) => (l.kind === "segment" ? [l.seg] : []));
+const models = (s: Segment | undefined) => summarize(s?.usage)?.models;
 
 describe("an exchange's usage", () => {
   it("adds every item of the exchange: replies, thoughts, calls, a sync subagent's result, folds and Codex's turn duration", () => {
@@ -40,47 +42,43 @@ describe("an exchange's usage", () => {
       u(13, "next"),
       a(14, "sure"),
     ];
-    const [first, second] = segments(items);
-    expect(first.usage?.models).toEqual([
+    const [first, second] = segOf(chatLines(items));
+    expect(models(first)).toEqual([
       { model: OPUS, in: 13, out: 95, cache_read: 4400, cache_write: 500, cache_write_1h: 100 },
-      { model: "gpt-5.5", in: 7, out: 8, cache_read: 9, cache_write: 0, cache_write_1h: 0 },
       { model: SONNET, in: 50, out: 60, cache_read: 70, cache_write: 80, cache_write_1h: 0 },
+      { model: "gpt-5.5", in: 7, out: 8, cache_read: 9, cache_write: 0, cache_write_1h: 0 },
     ]);
     expect(first.usage?.first).toBe(true);
     expect(second.usage).toBeUndefined(); // an older node's exchange: nothing to show
+    expect(segments(items)[0].usage?.entries).toHaveLength(6); // as the items carry them, summed only with the bar
   });
 
   it("counts a subagent's report once, its largest count of each kind", () => {
     const report = (n: Partial<TokenUsage>): TokenUsage[] => [{ id: "agent:x", model: SONNET, ...n }];
     const items = [u(1, "go"), call(2, "c2", "Agent"), result(3, "c2", report({ in: 10, out: 5 })), { ...result(4, "c2", report({ in: 8, out: 9 })), id: "r4b#0" }, a(5, "ok")];
-    expect(segments(items)[0].usage?.models).toEqual([{ model: SONNET, in: 10, out: 9, cache_read: 0, cache_write: 0, cache_write_1h: 0 }]);
+    expect(models(segments(items)[0])).toEqual([{ model: SONNET, in: 10, out: 9, cache_read: 0, cache_write: 0, cache_write_1h: 0 }]);
     // two subagents on the same model are two reports, summed
     const two = [u(1, "go"), result(3, "c2", report({ in: 10 })), result(4, "c4", [{ id: "agent:y", model: SONNET, in: 3 }]), a(5, "ok")];
-    expect(segments(two)[0].usage?.models[0].in).toBe(13);
+    expect(models(segments(two)[0])?.[0].in).toBe(13);
   });
 
   it("sums a model whatever wrapper its id has, and keeps the fast speed apart", () => {
-    const t = [
-      [{ model: `${OPUS}-20261101`, in: 1 }],
-      [{ model: `us.anthropic.${OPUS}-v1:0`, in: 2 }],
-      [{ model: OPUS, out: 3, fast: true }],
-      [{ in: 4 }],
-    ].reduce((tally, usage) => tallyItem(tally, { ...a(1, "x"), usage }), undefined as ReturnType<typeof tallyItem>);
-    expect(turnUsage(t)?.models).toEqual([
+    expect(modelTokens([{ model: `${OPUS}-20261101`, in: 1 }, { model: OPUS, out: 3, fast: true }, { model: `us.anthropic.${OPUS}-v1:0`, in: 2 }, { in: 4 }])).toEqual([
       { model: OPUS, in: 3, out: 0, cache_read: 0, cache_write: 0, cache_write_1h: 0 },
       { model: OPUS, fast: true, in: 0, out: 3, cache_read: 0, cache_write: 0, cache_write_1h: 0 },
       { model: "", in: 4, out: 0, cache_read: 0, cache_write: 0, cache_write_1h: 0 },
     ]);
-    expect(turnUsage(tallyItem(undefined, a(1, "x", [{ model: OPUS }])))).toBeUndefined(); // all zero: nothing used
+    expect(modelTokens([{ model: OPUS }])).toEqual([]); // all zero: nothing used
+    // a report seen before the model's own requests keeps the model's place, and still counts once
+    expect(modelTokens([{ id: "agent:x", model: SONNET, out: 5 }, { model: OPUS, out: 1 }, { id: "agent:x", model: SONNET, out: 4 }, { model: SONNET, out: 2 }]).map((m) => [m.model, m.out])).toEqual([[SONNET, 7], [OPUS, 1]]);
   });
 
   it("counts a background subagent's notice drawn on its card in the exchange that launched it", () => {
     const notice: Item = { id: "n6#0", seq: 6, role: "system", kind: "notice", text: "Agent done", task: { kind: "agent", status: "completed", task_id: "bg1", tool_use_id: "c2" }, usage: [{ id: "agent:bg1", model: SONNET, out: 900 }] };
     const items = [u(1, "look in the background"), call(2, "c2", "Agent", [opus({ out: 10 })]), result(3, "c2"), a(4, "started"), u(5, "and meanwhile?"), notice, a(7, "here", [opus({ out: 20 })])];
-    for (const segs of [segments(items), segOf(chatLines(items))]) {
-      expect(segs[0].usage?.models.map((m) => [m.model, m.out])).toEqual([[OPUS, 10], [SONNET, 900]]);
-      expect(segs[1].usage?.models.map((m) => [m.model, m.out])).toEqual([[OPUS, 20]]);
-    }
+    const segs = segOf(chatLines(items));
+    expect(models(segs[0])?.map((m) => [m.model, m.out])).toEqual([[OPUS, 10], [SONNET, 900]]);
+    expect(models(segs[1])?.map((m) => [m.model, m.out])).toEqual([[OPUS, 20]]);
   });
 
   it("counts what woke a turn in the work it woke, and marks only the chat's first exchange with tokens as its first round", () => {
@@ -90,7 +88,7 @@ describe("an exchange's usage", () => {
     const lines = chatLines(items);
     expect(lines.map((l) => l.kind)).toEqual(["notice", "segment", "segment", "segment"]);
     const segs = segOf(lines);
-    expect(segs.map((s) => s.usage?.models[0])).toEqual([tokens({ in: 5, out: 2 }), undefined, tokens({ out: 1 })]);
+    expect(segs.map((s) => models(s)?.[0])).toEqual([tokens({ in: 5, out: 2 }), undefined, tokens({ out: 1 })]);
     expect(segs.map((s) => s.usage?.first)).toEqual([true, undefined, undefined]);
   });
 
@@ -98,7 +96,7 @@ describe("an exchange's usage", () => {
     const one = segments([u(1, "a"), a(2, "b", [opus({ in: 1 })])])[0].usage;
     const two = segments([u(1, "a"), a(2, "b", [opus({ in: 1 })])])[0].usage;
     expect(usageKey(one)).toBe(usageKey(two));
-    expect(parseUsage(usageKey(one))).toEqual(one);
+    expect(parseUsage(usageKey(one))).toEqual({ models: [tokens({ in: 1 })] });
     expect(parseUsage(undefined)).toBeUndefined();
     expect(parseUsage("{")).toBeUndefined();
   });
@@ -149,7 +147,7 @@ describe("the card's lines", () => {
   beforeEach(async () => {
     await initI18n("en");
   });
-  const usage = (models: ModelTokens[], first?: boolean): TurnUsage => ({ models, ...(first ? { first } : {}) });
+  const usage = (models: ModelTokens[], first?: boolean): UsageSummary => ({ models, ...(first ? { first } : {}) });
 
   it("with a cost: the title, the value, the tokens, the cache, the time and the model, in cindy's order", () => {
     const one = usage([tokens({ in: 2, out: 3400, cache_read: 1_200_000, cache_write: 9000 })]);

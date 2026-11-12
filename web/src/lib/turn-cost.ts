@@ -7,13 +7,67 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { t } from "../i18n";
 import { api } from "./api";
-import { replyModelName } from "./model-change";
+import { bareModel, replyModelName } from "./model-change";
 import type { PanelPrice } from "./model-panel";
 import { compactTokens } from "./tokens";
-import type { ModelTokens, TurnUsage } from "./turn-usage";
+import type { TurnUsage } from "./turn-usage";
+import type { TokenUsage } from "./types";
 import { workDuration } from "./work-groups";
 
 const KINDS = ["in", "out", "cache_read", "cache_write", "cache_write_1h"] as const;
+
+/** One model's tokens in an exchange: `in` without the cache, `cache_write_1h` the part of `cache_write` kept an hour.
+ *  `fast`: Claude Code's fast speed, apart from the same model's normal requests (it has no known price). `model` is
+ *  the id without its wrappers (bareModel), "" when the transcript did not say. */
+export interface ModelTokens {
+  model: string;
+  fast?: boolean;
+  in: number;
+  out: number;
+  cache_read: number;
+  cache_write: number;
+  cache_write_1h: number;
+}
+
+/** An exchange's tokens by model, and whether it is the page's first round. */
+export interface UsageSummary {
+  /** In the order each model first used tokens. */
+  models: ModelTokens[];
+  first?: boolean;
+}
+
+const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0);
+
+/** What an exchange's entries add up to by model and speed: a subagent's report (an `id`) once per model and speed,
+ *  the largest count of each kind it was seen with; the rest summed. Models without a token left out. */
+export function modelTokens(entries: readonly TokenUsage[]): ModelTokens[] {
+  const reports = new Map<string, ModelTokens>();
+  const models = new Map<string, ModelTokens>();
+  const add = (into: Map<string, ModelTokens>, key: string, u: TokenUsage, model: string, max: boolean) => {
+    let m = into.get(key);
+    if (!m) into.set(key, (m = { model, ...(u.fast ? { fast: true } : {}), in: 0, out: 0, cache_read: 0, cache_write: 0, cache_write_1h: 0 }));
+    for (const k of KINDS) m[k] = max ? Math.max(m[k], num(u[k])) : m[k] + num(u[k]);
+  };
+  for (const u of entries) {
+    const model = u.model ? bareModel(u.model) : "";
+    const key = `${model}\n${u.fast ? 1 : 0}`;
+    // its place in the order, whichever entry comes first: a report's counts are added below
+    if (!models.has(key)) add(models, key, { fast: u.fast }, model, false);
+    if (u.id) add(reports, `${u.id}\n${key}`, u, model, true);
+    else add(models, key, u, model, false);
+  }
+  for (const [key, r] of reports) {
+    const m = models.get(key.slice(key.indexOf("\n") + 1))!;
+    for (const k of KINDS) m[k] += r[k];
+  }
+  return [...models.values()].filter((m) => KINDS.some((k) => m[k] > 0));
+}
+
+/** The usage a reply's props carry, summed by model; undefined when it used nothing. */
+export function summarize(u: TurnUsage | undefined): UsageSummary | undefined {
+  const models = u ? modelTokens(u.entries) : [];
+  return models.length ? { models, ...(u?.first ? { first: true } : {}) } : undefined;
+}
 
 /** All of an exchange's tokens: `total` is input, output, cache reads and writes; `hit` the cache reads' share of all
  *  input (null without any input). */
@@ -24,12 +78,12 @@ export function usageTotals(models: readonly ModelTokens[]): Omit<ModelTokens, "
   return { ...sum, total: prompt + sum.out, hit: prompt > 0 ? sum.cache_read / prompt : null };
 }
 
-/** The usage a reply's props carry (lib/turn-usage.ts usageKey); undefined for anything else. */
-export function parseUsage(key: string | undefined): TurnUsage | undefined {
+/** The usage a reply's props carry (lib/turn-usage.ts usageKey), summed by model; undefined for anything else. */
+export function parseUsage(key: string | undefined): UsageSummary | undefined {
   if (!key) return undefined;
   try {
     const u = JSON.parse(key) as TurnUsage;
-    return Array.isArray(u?.models) && u.models.length ? u : undefined;
+    return Array.isArray(u?.entries) ? summarize(u) : undefined;
   } catch {
     return undefined;
   }
@@ -179,7 +233,7 @@ export function formatPercent(v: number | null): string | null {
 const LOW_CACHE_MIN_INPUT = 50_000;
 const LOW_CACHE_MAX_HIT = 0.2;
 
-export function lowCache(usage: TurnUsage): boolean {
+export function lowCache(usage: UsageSummary): boolean {
   if (usage.first) return false;
   const s = usageTotals(usage.models);
   return s.in + s.cache_read + s.cache_write >= LOW_CACHE_MIN_INPUT && s.hit !== null && s.hit < LOW_CACHE_MAX_HIT;
@@ -193,7 +247,7 @@ function modelNames(models: readonly ModelTokens[]): string[] {
 /** The card's lines, in cindy's order (buildTurnUsageTooltipLines): with a cost, its title, the value and, for two or
  *  more models, each one's; then the tokens, the cache, the time when known (`ms`, the work summary's "Worked for"),
  *  the model when there was no breakdown, the low-cache suggestion, and without a cost why there is none. */
-export function usageLines(usage: TurnUsage, cost: TurnCost | null, ms?: number): string[] {
+export function usageLines(usage: UsageSummary, cost: TurnCost | null, ms?: number): string[] {
   const lines: string[] = [];
   const s = usageTotals(usage.models);
   const priced = cost && cost.total > 0 ? cost : null;

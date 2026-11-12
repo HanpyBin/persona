@@ -71,7 +71,7 @@ describe("Answer", () => {
     draw();
     expect(replies()).toHaveLength(1);
     const [props] = replies();
-    expect(JSON.parse(props.usage!)).toEqual({ models: [{ model: "claude-opus-5-5", in: 3, out: 50, cache_read: 0, cache_write: 0, cache_write_1h: 0 }], first: true });
+    expect(JSON.parse(props.usage!)).toEqual({ entries: [{ model: "claude-opus-5-5", in: 3, out: 40 }, { model: "claude-opus-5-5", out: 10 }] });
     expect(props.usageMs).toBe(60_000); // the work summary's "Worked for": from the message to the reply
     draw();
     draw();

@@ -10,7 +10,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initI18n } from "../../i18n";
 import type { Segment } from "../../lib/turns";
 import type { Item } from "../../lib/types";
-import { usageKey, type ModelTokens } from "../../lib/turn-usage";
+import { usageKey } from "../../lib/turn-usage";
+import type { ModelTokens } from "../../lib/turn-cost";
 import { REPLY_BAR_LINGER_MS } from "../../ui/motion";
 import { ChatActionsContext, type ChatActions } from "./chat-actions";
 import { MessageActions } from "./MessageActions";
@@ -182,7 +183,7 @@ describe("the reply bar", () => {
 
 const tokens = (m: Partial<ModelTokens>): ModelTokens => ({ model: "claude-opus-5-5", in: 0, out: 0, cache_read: 0, cache_write: 0, cache_write_1h: 0, ...m });
 // $0.35 of Opus: 2 input, 3,400 output, 1.2M read from the cache, 9,000 written to it
-const OPUS_TURN = usageKey({ models: [tokens({ in: 2, out: 3400, cache_read: 1_200_000, cache_write: 9000 })] });
+const OPUS_TURN = usageKey({ entries: [tokens({ in: 2, out: 3400, cache_read: 1_200_000, cache_write: 9000 })] });
 const pointer = (type: string, el: Element, pointerType = "mouse") => act(() => {
   const e = new MouseEvent(type, { bubbles: true, relatedTarget: document.body });
   Object.defineProperty(e, "pointerType", { value: pointerType });
@@ -248,7 +249,7 @@ describe("what the exchange cost, after the time", () => {
   });
 
   it("shows each model's cost when the exchange used two, the subagent's included", async () => {
-    await draw({ usage: usageKey({ models: [tokens({ out: 5000 }), tokens({ model: "claude-sonnet-5-5", out: 2000 })] }) });
+    await draw({ usage: usageKey({ entries: [tokens({ out: 5000 }), tokens({ model: "claude-sonnet-5-5", out: 2000 })] }) });
     expect(usageText()?.textContent).toBe("价值 $0.12");
     act(() => usageText()!.click());
     expect(cardLines()?.slice(0, 5)).toEqual(["本轮明细", "本轮 token 价值：$0.12", "按模型拆分：", "· Opus 5.5 $0.10", "· Sonnet 5.5 $0.02"]);
@@ -256,7 +257,7 @@ describe("what the exchange cost, after the time", () => {
   });
 
   it("without a price for every model, says the tokens, their lines in a tooltip that cannot be pinned", async () => {
-    await draw({ usage: usageKey({ models: [tokens({ in: 100, out: 23_300 }), tokens({ model: "claude-haiku-5-5", out: 10 })] }) });
+    await draw({ usage: usageKey({ entries: [tokens({ in: 100, out: 23_300 }), tokens({ model: "claude-haiku-5-5", out: 10 })] }) });
     expect(usageText()?.textContent).toBe("23.4k tokens");
     expect(usageText()?.dataset.turnUsage).toBe("tokens");
     enter();
@@ -290,7 +291,7 @@ describe("what the exchange cost, after the time", () => {
     act(() => usageText()!.click());
     expect(card()?.getAttribute("aria-label")).toBe("这条回复的估算费用");
     expect(cardLines()).toEqual(["这条回复约 $0.35，按公开价格估算"]);
-    await draw({ actions: { ...chat, assistant: true }, usage: usageKey({ models: [tokens({ model: "claude-haiku-5-5", out: 10 })] }) });
+    await draw({ actions: { ...chat, assistant: true }, usage: usageKey({ entries: [tokens({ model: "claude-haiku-5-5", out: 10 })] }) });
     expect(usageText()).toBeNull();
   });
 });

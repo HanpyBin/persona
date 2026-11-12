@@ -10,7 +10,7 @@ import { injectedOf } from "./injected";
 import { markModelChanges, type ModelChange } from "./model-change";
 import { sourceKey, sourceOf, userSourceSentinel } from "./message-source";
 import { attachedAgentNotices, taskCalls } from "./task-association";
-import { tallyItem, turnUsage, type TurnUsage, type UsageTally } from "./turn-usage";
+import { countUsage, markFirstUsage, type TurnUsage } from "./turn-usage";
 import type { Injected, Item, MessageSource } from "./types";
 
 export type Step =
@@ -89,7 +89,8 @@ export interface Segment {
    *  words are not a finished reply, and say so (cindy's "This reply did not complete", #5314). */
   cut?: boolean;
   /** What its items used (#5426, lib/turn-usage.ts): every item counts, those it does not show too (a tool's result, a
-   *  Codex turn's duration, a subagent's notice drawn on its card). Absent when none of them carries tokens. */
+   *  Codex turn's duration); chatLines adds a subagent's notice drawn on its card to the exchange that launched it.
+   *  Absent when none of them carries tokens. */
   usage?: TurnUsage;
 }
 
@@ -240,8 +241,6 @@ export function segments(items: Item[], results?: ReadonlyMap<string, Item>): Se
   let cur: Segment | null = null;
   let lastUserEntry = "";
   const tools = new Map<string, Extract<Step, { kind: "tool" }>>();
-  const callSegs = new Map<string, Segment>();
-  const reports: [Item, Segment | null][] = [];
 
   const open = (id: string): Segment => {
     const s: Segment = { id, steps: [], tools: 0, thoughts: 0, replies: 0, folds: [] };
@@ -250,10 +249,7 @@ export function segments(items: Item[], results?: ReadonlyMap<string, Item>): Se
   };
 
   for (const it of items) {
-    if (attached.has(it.id)) {
-      if (hasUsage(it)) reports.push([it, cur]);
-      continue;
-    }
+    if (attached.has(it.id)) continue; // what its subagent used: chatLines counts it where it was launched
     const entry = it.id.split("#")[0];
     if (viewFeedbackOnly(it)) continue;
     if (isUserMessage(it)) {
@@ -298,10 +294,7 @@ export function segments(items: Item[], results?: ReadonlyMap<string, Item>): Se
     switch (it.kind) {
       case "tool_use": {
         const st: Extract<Step, { kind: "tool" }> = { kind: "tool", id: it.id, use: it, result: it.tool_use_id ? results?.get(it.tool_use_id) : undefined, images: [] };
-        if (it.tool_use_id) {
-          tools.set(it.tool_use_id, st);
-          callSegs.set(it.tool_use_id, cur);
-        }
+        if (it.tool_use_id) tools.set(it.tool_use_id, st);
         cur.steps.push(st);
         cur.tools++;
         break;
@@ -340,18 +333,8 @@ export function segments(items: Item[], results?: ReadonlyMap<string, Item>): Se
     }
   }
 
-  // a subagent's notice drawn on its card: what it used counts where it was launched
-  if (reports.length) {
-    const calls = taskCalls(items);
-    for (const [it, at] of reports) {
-      const s = callSegs.get(calls.get(it.id) ?? "") ?? at;
-      if (s) countUsage(s, it);
-    }
-  }
   // the answer: the last thing the agent said in the segment
   for (const s of out) {
-    const usage = turnUsage(tallies.get(s));
-    if (usage) s.usage = usage;
     for (let i = s.steps.length - 1; i >= 0; i--) {
       const st = s.steps[i];
       if (st.kind === "text") {
@@ -362,36 +345,7 @@ export function segments(items: Item[], results?: ReadonlyMap<string, Item>): Se
     }
     s.replies = s.steps.filter((x) => x.kind === "text").length;
   }
-  markFirstUsage(out);
   return groupSourceLabels(out);
-}
-
-// What each exchange's items used so far (lib/turn-usage.ts): kept so chatLines can add what segments() never saw.
-const tallies = new WeakMap<Segment, UsageTally>();
-const hasUsage = (it: Item) => Boolean(it.usage?.length || it.fold?.usage?.length);
-
-function countUsage(s: Segment, it: Item) {
-  if (!hasUsage(it)) return;
-  const next = tallyItem(tallies.get(s), it);
-  if (next) tallies.set(s, next);
-}
-
-/** `seg` with what `more` used added (chatLines: items its exchanges were built without). */
-function addUsage(seg: Segment, more: Item[]) {
-  for (const it of more) countUsage(seg, it);
-  const usage = turnUsage(tallies.get(seg));
-  if (usage) seg.usage = usage;
-}
-
-/** The first exchange that used tokens is marked as the loaded chat's first round (TurnUsage.first); no other is. */
-function markFirstUsage(segs: Segment[]) {
-  let used = false;
-  for (const s of segs) {
-    if (!s.usage) continue;
-    const { first: _, ...rest } = s.usage;
-    s.usage = used ? rest : { ...rest, first: true };
-    used = true;
-  }
 }
 
 /** Keep consecutive provenance labels quiet without hiding any individual message. */
@@ -942,7 +896,7 @@ function turnLines(t: Turn, live: boolean, results?: ReadonlyMap<string, Item>):
   }
   const segs = segments(ordered, results);
   // what the background task that woke it used is the work it woke
-  if (ordered !== t.ordered && segs[0] && hasUsage(t.ordered[0])) addUsage(segs[0], [t.ordered[0]]);
+  if (ordered !== t.ordered && segs[0]) countUsage(segs[0], t.ordered[0]);
   // stopped after everything it did (not an exchange that went on after it): its last words are not a finished reply
   const end = segs.at(-1), at = t.ordered.at(-1)?.seq ?? 0;
   if (end && !live && t.trailing.some((n) => isInterruptNotice(n) && n.seq > at)) end.cut = true;
@@ -1026,17 +980,12 @@ export function chatLines(items: Item[], opts: ChatLinesOptions = {}): ChatLine[
  *  tokens is its first round. */
 function lineUsage(lines: ChatLine[], items: Item[], attached: ReadonlySet<string>) {
   const segs = lines.flatMap((l) => (l.kind === "segment" ? [l.seg] : l.kind === "supervision" ? l.lines.flatMap((c) => (c.kind === "segment" ? [c.seg] : [])) : []));
-  const reports = items.filter((it) => attached.has(it.id) && hasUsage(it));
-  if (reports.length) {
-    const calls = taskCalls(items);
-    const launched = new Map<string, Segment>();
-    for (const seg of segs) for (const st of seg.steps) if (st.kind === "tool" && st.use.tool_use_id) launched.set(st.use.tool_use_id, seg);
-    const more = new Map<Segment, Item[]>();
-    for (const it of reports) {
-      const seg = launched.get(calls.get(it.id) ?? "");
-      if (seg) more.set(seg, [...(more.get(seg) ?? []), it]);
-    }
-    for (const [seg, list] of more) addUsage(seg, list);
+  const reports = items.filter((it) => attached.has(it.id) && it.usage?.length);
+  const calls = reports.length ? taskCalls(items) : undefined;
+  for (const it of reports) {
+    const call = calls!.get(it.id);
+    const seg = call && segs.find((s) => s.steps.some((st) => st.kind === "tool" && st.use.tool_use_id === call));
+    if (seg) countUsage(seg, it);
   }
   markFirstUsage(segs);
 }
