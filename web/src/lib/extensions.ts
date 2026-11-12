@@ -10,6 +10,7 @@ import { EXTENSIONS_CHANGED } from "./extension-prompts";
 import type { Contribution, DependencyState, PackMember } from "./extension-model";
 import type { ExtensionAuth, ExtensionTool } from "./extension-auth";
 import { clock } from "./format";
+import type { SecretReference } from "./secret-reference";
 import { itemHeaders } from "./manager-choice";
 import { t } from "../i18n";
 
@@ -192,13 +193,7 @@ export interface ExtensionSecret {
   reference?: SecretReference;
 }
 
-/** A secret provider's reference a setting holds: whose it is, the reference and what it names in words. */
-export interface SecretReference {
-  provider: string;
-  provider_name: string;
-  reference: string;
-  title?: string;
-}
+export type { SecretReference } from "./secret-reference";
 
 /** A setting that holds one of a provider's references: another extension's secret, or a model provider's key. */
 export interface SecretUser {
@@ -495,11 +490,6 @@ export function pickerChoices(f: ExtensionField, current: Json | undefined, mach
 }
 
 /** Where a reference's value comes from, in words: "From <provider> · <item>". */
-export function referenceState(r: SecretReference): string {
-  const from = t("lib-extensions.from_provider", { provider: r.provider_name || r.provider });
-  return r.title ? `${from} · ${r.title}` : from;
-}
-
 export function secretState(s: ExtensionSecret): string {
   if (s.reference) return t("lib-extensions.from_provider", { provider: s.reference.provider_name || s.reference.provider });
   if (s.set) return s.hint ? t("lib-extensions.is_set_hint", { hint: s.hint }) : t("lib-extensions.is_set");

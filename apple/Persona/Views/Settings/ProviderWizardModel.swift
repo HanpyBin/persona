@@ -150,6 +150,7 @@ enum LauncherName {
         didSet {
             guard presetID != oldValue else { return }
             presetKey = ""
+            presetKeyByReference = false // as the web's form starts over
             presetName = ""
             presetDisplayName = ""
             presetModel = preset?.defaultModel ?? ""
@@ -450,7 +451,8 @@ enum LauncherName {
     /// What the key test sends for a preset: the key, how the gateway takes it and the preset; the model only when another than
     /// the default was picked (the hub fills in the address and its default model).
     var keyProbe: LauncherProbe? {
-        guard let p = preset else { return nil }
+        // A reference is checked by the save: sent as the key, its value would go to the preset's address.
+        guard let p = preset, !presetKeyByReference else { return nil }
         let m = presetModel.trimmingCharacters(in: .whitespaces)
         return LauncherProbe(name: nil, baseURL: nil, auth: p.auth ?? "api_key", apiKey: trimmedKey, headers: nil,
                              model: m.isEmpty || m == p.defaultModel ? nil : m, preset: p.id)

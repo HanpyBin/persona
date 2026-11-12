@@ -6,6 +6,8 @@ import { describe, expect, it } from "vitest";
 import { presetBody, type LauncherPreset } from "./launcher-presets";
 import { newScope, scopeBody, scopeFromView } from "./provider-scope";
 import { autoCheckable, formFromView, newForm, probeBody, providerBody, referencePending } from "./providers";
+import { referenceState } from "./secret-reference";
+import { t } from "../i18n";
 
 const REF = "op://Dev/Gateway/key";
 const preset = { id: "example", name: "Example", base_url: "https://api.example.com" } as unknown as LauncherPreset;
@@ -60,5 +62,15 @@ describe("a provider's key as a reference", () => {
     // a computer whose stored key is a reference opens with its switch on
     const opened = scopeFromView({ share: "all", key_machines: ["laptop"], machine_key_references: { laptop: { provider: "example-vault", provider_name: "Example Vault", reference: REF } } });
     expect(opened?.key_refs).toEqual({ laptop: true });
+  });
+});
+
+describe("where a reference's value comes from", () => {
+  it("names its provider and item, and only the reference once the provider is gone", () => {
+    const from = (provider: string) => t("lib-extensions.from_provider", { provider });
+    expect(referenceState({ provider: "example-vault", provider_name: "Example Vault", reference: REF, title: "Gateway › key" })).toBe(`${from("Example Vault")} · Gateway › key`);
+    expect(referenceState({ provider: "example-vault", provider_name: "", reference: REF })).toBe(from("example-vault"));
+    // a removed provider extension: the hub answers its id and name empty, so no "From  · …"
+    expect(referenceState({ provider: "", provider_name: "", reference: REF, title: "" })).toBe(REF);
   });
 });

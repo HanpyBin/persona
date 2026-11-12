@@ -2,7 +2,7 @@
 // (cindy's AddProviderWizard: connect → models, the rest folded under "Advanced"; the hub's presets are lib/launcher-presets.ts), its checks, the POST / PUT body, and the import preview of a computer's aliases. Pure: the views
 // in views/settings/Provider*.tsx only render it.
 import { ApiError, errorText } from "./api";
-import type { SecretReference } from "./extensions";
+import type { SecretReference } from "./secret-reference";
 import { hostOf as urlHost } from "./hubs";
 import { displayNameProblem, launcherNameProblem, testableKey } from "./launcher-presets";
 import type { ScopeView } from "./provider-scope";

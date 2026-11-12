@@ -249,7 +249,8 @@ export function ProviderWizard({ existing, onClose, onSaved }: { existing: Provi
   }, [step, preset?.id, pf.api_key, pf.key_by_reference, pf.model]);
 
   const runKeyTest = async (seq = ++testSeq.current) => {
-    if (!preset) return;
+    // here as well as at its callers: a reference sent as the key would hand its value to the preset's address
+    if (!preset || pf.key_by_reference) return;
     setKeyTest({ running: true });
     let result: TestResult;
     try {

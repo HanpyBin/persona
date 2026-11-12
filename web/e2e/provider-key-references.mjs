@@ -30,6 +30,10 @@ const GATEWAY = {
 const PRESETS = [{ id: "builtin/example", plugin: "builtin", name: "Example", display_name: "Example Cloud", description: "Pay as you go", kind: "launcher",
   api: "messages", base_url: "https://api.example.com/anthropic", auth: "bearer", model: "example-large", models: [{ id: "example-large" }] }];
 
+const TYPED = "op://Example/Gateway/key2";
+const PRESET_TYPED = "op://Example/Example Cloud/credential";
+/** The connection tests and model lists among the page's requests. */
+const probes = (posts) => posts.filter((p) => p.path === "/launchers/test" || p.path === "/launchers/discover").map((p) => p.path);
 const result = { status: "running", runs: [] };
 let step = "start";
 const browser = await chromium.launch(chromiumAt ? { executablePath: chromiumAt, args: ["--no-sandbox"] } : { channel: "chrome" });
@@ -42,9 +46,13 @@ try {
     const context = await browser.newContext({ viewport: { width, height }, locale: "en-US", colorScheme: theme, reducedMotion: "reduce", isMobile: touch, hasTouch: touch });
     await context.addInitScript(`localStorage.setItem('persona.token','example');localStorage.setItem('persona.language','en');localStorage.setItem('persona.theme','${theme}');`);
     await context.route(/^https?:\/\/(?!127\.0\.0\.1|localhost|\[::1\])/, (route) => route.abort());
+    const posts = []; // every write and probe the page sends: a typed reference must never reach a test or a model list
     await context.route("**/api/v1/**", (route) => {
       const path = new URL(route.request().url()).pathname.replace("/api/v1", "");
-      if (route.request().method() !== "GET") return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+      if (route.request().method() !== "GET") {
+        posts.push({ path, body: route.request().postData() ?? "" });
+        return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+      }
       const data = path === "/machines" ? { machines: [LAPTOP, DESK] }
         : path === "/launchers" ? { launchers: [GATEWAY], sync: [] }
         : path === "/launchers/presets" ? { presets: PRESETS }
@@ -84,6 +92,10 @@ try {
     await ref.scrollIntoViewIfNeeded();
     await settle(page);
     await page.screenshot({ path: `${output}/${name}-provider-form.png` });
+    // A new reference typed: the test and the model list wait for the save.
+    await ref.fill(TYPED);
+    await page.waitForTimeout(1500); // past the form's automatic check
+    assert.deepEqual(probes(posts), [], `${name}: a typed reference went to a probe`);
 
     // A computer's own key as a reference.
     step = `${name} computer key`;
@@ -104,8 +116,11 @@ try {
     const sw = page.getByRole("switch", { name: "Use a reference" }).first();
     await sw.waitFor({ timeout: 15_000 });
     await sw.click();
-    await page.locator("[data-key-reference]").first().fill("op://Example/Example Cloud/credential");
+    await page.locator("[data-key-reference]").first().fill(PRESET_TYPED);
     await page.getByText("Checked when you save it").first().waitFor({ timeout: 10_000 });
+    await page.waitForTimeout(1500); // past the key step's automatic test
+    assert.deepEqual(probes(posts), [], `${name}: a preset's typed reference went to its key test`);
+    assert.ok(!posts.some((p) => p.body.includes(TYPED) || p.body.includes(PRESET_TYPED)), `${name}: a typed reference was sent`);
     await settle(page);
     await page.screenshot({ path: `${output}/${name}-preset-key.png` });
 

@@ -2,7 +2,7 @@
 // which computers it runs on, when its key travels, whether it stands back where the harness has a service of its own,
 // and keys for single computers. The editor's form, its check, the summary the detail dialog shows, the fields of the
 // POST / PUT body, and the list's grouping by harness. Pure: views/settings/ProviderScope.tsx only renders it.
-import type { SecretReference } from "./extensions";
+import type { SecretReference } from "./secret-reference";
 import { formatList, t } from "../i18n";
 import type { Machine } from "./types";
 

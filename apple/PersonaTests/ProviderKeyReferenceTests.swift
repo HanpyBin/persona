@@ -66,10 +66,22 @@ import Testing
         w.presetKeyByReference = true
         w.presetKey = Self.ref
         #expect(!w.keyTestable && w.canSavePreset)
+        // and the key test's own request has no key to send
+        #expect(w.keyProbe == nil)
         let input = try #require(w.presetInput)
         #expect(input.apiKeyReference == Self.ref && input.apiKey == nil && input.preset == "builtin/glm")
         let sent = try JSONSerialization.jsonObject(with: try JSONEncoder().encode(input)) as? [String: Any]
         #expect(sent?["api_key_reference"] as? String == Self.ref && sent?["api_key"] == nil)
+        // Another preset starts over, its key a key again.
+        w.presetID = nil
+        #expect(!w.presetKeyByReference && w.presetKey.isEmpty)
+    }
+
+    @Test func aReferenceWhoseProviderIsGoneShowsItself() throws {
+        let gone = try JSON.decoder.decode(SecretReference.self, from: Data(#"{"provider":"","provider_name":"","reference":"op://Dev/Gateway/key"}"#.utf8))
+        #expect(ExtensionText.referenceState(gone) == "op://Dev/Gateway/key")
+        let named = try JSON.decoder.decode(SecretReference.self, from: Data(#"{"provider":"example-vault","provider_name":"","reference":"op://Dev/Gateway/key","title":"Gateway › key"}"#.utf8))
+        #expect(ExtensionText.referenceState(named).contains("example-vault") && ExtensionText.referenceState(named).hasSuffix(" · Gateway › key"))
     }
 
     @Test func aComputersReferenceGoesInMachineKeyReferences() throws {

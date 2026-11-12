@@ -1,8 +1,8 @@
 import XCTest
 
 /// A model provider's key as a secret provider's reference on the iPhone (#3962 step 4c), against the mock hub's
-/// made-up provider (`MOCK_EXTENSIONS=1 MOCK_SECRET_HANDOFF=1`, `TEST_RUNNER_PERSONA_SECRET_REFERENCES_HUB`): Example 网关's
-/// key is a reference of Example Vault, so its page says where the key comes from and its form opens with "Use a
+/// made-up provider (`MOCK_EXTENSIONS=1 MOCK_SECRET_HANDOFF=1`, `TEST_RUNNER_PERSONA_SECRET_REFERENCES_HUB`): the model
+/// provider `gateway`'s key is a reference of Example Vault, so its page says where the key comes from and its form opens with "Use a
 /// Reference" on; the server's own key, another reference, opens the same way on its Computers page; a preset's key step
 /// takes a reference typed in plain text. Nothing is saved. Light and dark; with `PERSONA_SHOTS`, a screenshot of each.
 final class ProviderKeyReferencesUITests: XCTestCase {

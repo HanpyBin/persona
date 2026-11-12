@@ -441,14 +441,17 @@ enum ExtensionText {
         }
     }
 
-    /// A secret's row: set (with its last four characters when the hub gives them, #5906), or not set (required).
-    /// Where a reference's value comes from: "From <provider> · <item>".
+    /// Where a reference's value comes from: "From <provider> · <item>"; the reference itself once its provider is gone
+    /// (the hub then answers its id and name empty).
     static func referenceState(_ r: SecretReference) -> String {
-        let from = String(localized: "From \(r.providerName.isEmpty ? r.provider : r.providerName)", comment: "A secret that holds a secret provider's reference")
+        let provider = r.providerName.isEmpty ? r.provider : r.providerName
+        guard !provider.isEmpty else { return r.title.flatMap { $0.isEmpty ? nil : $0 } ?? r.reference }
+        let from = String(localized: "From \(provider)", comment: "A secret that holds a secret provider's reference")
         guard let title = r.title, !title.isEmpty else { return from }
         return from + " · " + title
     }
 
+    /// A secret's row: set (with its last four characters when the hub gives them, #5906), or not set (required).
     static func secretState(_ s: ExtensionSecret) -> String {
         if let r = s.reference { return String(localized: "From \(r.providerName.isEmpty ? r.provider : r.providerName)", comment: "A secret that holds a secret provider's reference") }
         guard s.set else { return s.required == true ? String(localized: "Not set (required)") : String(localized: "Not set") }

@@ -5,7 +5,7 @@ import { Collapse, cx, SECRET_INPUT, Switch } from "../../ui/atoms";
 import { Icon } from "../../ui/icons";
 import { inputClass, textareaClass } from "../assistant/parts";
 import { t } from "../../i18n";
-import { referenceState, type SecretReference } from "../../lib/extensions";
+import { referenceState, type SecretReference } from "../../lib/secret-reference";
 
 export const INPUT = inputClass;
 /** A field's look without its size, for the inline ones (SMALL: in a model row). */
