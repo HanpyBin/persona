@@ -2,181 +2,223 @@
 
 > Temporary. Delete this file and `4206-one-sidebar-prototype.html` before the branch merges.
 
-Branch `feat/4206-one-sidebar`, with origin/main merged in at `53232dd61`, `14bf19004` and `dde9de38e` (merges, no rebase; never rebase or force push this branch). Work in progress. It needs the owner's approval before it merges, because it is a UI change.
+Branch `feat/4206-one-sidebar`. origin/main has been merged in four times (`53232dd61`, `14bf19004`, `dde9de38e`, `90d6a3b79`): merges only, **never rebase or force push this branch**. The work moves to another machine here; this file is meant to be enough to carry on without the earlier conversation. It is a UI change: **the owner must approve light / dark screenshots before it merges**.
 
-## What the owner decided
+## What is being built
 
-**The problem (#4206).** The open iPhone Duo showed the Assistant | Agents switch at the top centre, where neither thumb reaches it. The rounds below went in this order:
+#4206: the open iPhone Duo showed an Assistant | Agents switch at the top centre, out of either thumb's reach. The owner chose **one sidebar instead of a switch**, like the web app, on **iPad and the open Duo, in both postures** (on its side and upright). Approved prototype: `docs/handoff/4206-one-sidebar-prototype.html` (v3; open it in a browser; device, dark and fold toggles). The layout follows ChatGPT's on the open Duo.
 
-1. **Switch at the foot of the right column.** Settled first, built, then dropped.
-2. **Upright stays at the top.** The open Duo held upright keeps the switch at the top, like a plain iPhone.
-3. **One sidebar instead of a switch (adopted).** The owner then proposed a single sidebar, like the web app. It applies on **iPad and the open Duo, in both postures**.
-4. **Layout follows ChatGPT on the open Duo.** The owner's reference is ChatGPT's open-Duo sidebar:
-   - the app's mark and name at the top, with a collapse button;
-   - a list of places;
-   - a line, then the lists;
-   - at the foot, New Chat on the left and one capsule with search and settings on the right.
-5. **Rarer places under More.** Meeting Recording, Health and Machines fold into an inline **More** row, so the first screen on its side is not all places.
-6. ~~**Recent starts folded on its side.**~~ Superseded on 2026-11-12 (see "Later decisions" 7): there is no Recent.
+The column, top to bottom:
 
-**Approved prototype:** `docs/handoff/4206-one-sidebar-prototype.html`. It is v3; open it in a browser, and it has device, dark and fold toggles.
-
-**Sidebar, top to bottom:**
-
-1. A header: Persona's mark and name, with a collapse button.
-2. The places:
-   - Main Chat (with an unread dot);
-   - Inbox (with its count);
-   - To-dos (with its count);
-   - Scheduled Tasks;
-   - Knowledge;
-   - More, which opens inline to Meeting Recording, Health and Machines.
+1. Header: Persona's mark and name, and a fold button.
+2. Places: Main Chat (unread dot), Inbox (count), To-dos (count), Scheduled Tasks, Knowledge, and **More**, which opens inline to Meeting Recording, Health, Machines (and Messages while it is switched on).
 3. A line.
-4. **Pinned** (the directions under their names, with "N working · N need you"), then **All Chats** (over the window). Recent is gone (2026-11-12, decision 7).
-5. **Agents**: a heading with ⋯ and New Session, then the existing Agents list (filters, grouping, pinned, machine and repository groups).
-6. A fixed foot: **New Chat**, and a capsule with search and Settings.
+4. **Pinned**: the directions' conversations under their names, with "N working · N need you"; then **All Chats** (a sheet). This follows #4610 (owner, decision 7 below); there is no Recent.
+5. **Agents**: a heading with ⋯ and New Session, then the Agents list (filters, grouping, pinned, machine and repository groups).
+6. A fixed foot: **New Chat**, and a capsule with Search and Settings.
 
-**Behaviour:**
+The right column shows Persona's page while no agent is open, and an agent's chat when one is tapped; a Persona row closes the open agent. There is no Assistant | Agents switch. `docs/apple/ios.md` "One sidebar" describes the shipped behaviour and is kept up to date.
 
-- There is no Assistant | Agents switch.
-- The right column shows Persona's page while no agent is open, and an agent's chat when one is tapped.
-- Tapping a Persona row closes the open agent and shows that page.
+### The owner's later decisions
 
-- On the open Duo **held upright** the column lies **over** the page; see #4852 below.
+1. **The fold button and the page's top on one line** (`OneSidebarHeader`'s top padding against `AssistantTopBar.topInset`). On its side the page's New Chat moved into the system's side column (#4854), so there it reads: the fold and the page's face start on one line.
+2. **#4852, upright:** on the open Duo upright (669 pt wide) the column lies **over** the page (the page keeps its full width; a rejected try, `4724529fb`, gave the detail a 300 pt minimum and was reverted). A pick that changes the page (the main row, a place, a Pinned row, a conversation from All Chats, an agent) slides the column away with an animation; filters and groupings do not. The drag handle on the column's edge is centred vertically. On its side and on the iPad the column stays beside the page.
+3. **#4853:** on its side the top was too close to the screen's edge (the rounded corner clipped the mark). It needs a margin like ChatGPT's, keeping decision 1.
+4. **#4854:** on its side, the page's top-right New Chat (`assistant-new`) goes into the system's right side column, and moves with the Dynamic Island (read the island / safe area, no fixed offset).
+5. **#4855:** the iPad column's grey-blue is replaced with a neutral grey, **iPad only**. `Theme.systemSidebar` is the Mac's sidebar colour too and **must not change**.
+6. **#3641, two checks upright:** ① ‹ on an agent opened from the column goes back to Persona's page (it used to slide the column out instead); ② the new conversation shows what needs you (`shell-needs-you`).
+7. **Recent follows #4610:** no Recent; Pinned (with its counts) and All Chats, from #4610's iOS data (`AssistantSidebarGroups.directions`, `model.assistantLeaders`, `model.directionNames`, `model.directionCounts`, `DirectionCountsText`; All Chats is `AutoConversationsView` in a sheet). The old "Recent starts folded on its side" rule is dropped.
 
-## Later decisions (owner, 2026-11-11), one by one
+On GitHub #4852–#4855 and #3641 take **`Refs` only, never `Fixes`**. **Do not comment** in #4206, #3641 or #4852–#4855.
 
-1. **Fold button and the page's New Chat on one line.** The column header's fold button and the page's top-right New Chat must sit on the same horizontal line. **Done** (in `79322e978`): `OneSidebarHeader` pads its top by `AssistantTopBar.topInset` and its bottom by `Theme.Space.s`. Checked on the iPad: both span y 67–166 px in a screenshot. `OneSidebarTests.testTheColumnHasThePlacesRecentAndAgents` asserts it (midY within 2 pt) on the iPad and on the Duo on its side. Upright the column is over the page, so the test does not check it there.
-2. **#4852: upright overlay with an animated retract.** On the open Duo held upright (669 pt wide):
-   - the column lies over the page, and the page keeps its full width. The owner rejected `4724529fb`, which gave the detail a 300 pt minimum so the column pushed the page aside. They said this squeezed both.
-   - A pick that changes the page slides the column away with an animation: the main row, a place, a Pinned row or a conversation from All Chats (Recent before decision 7), like the morning brief, Messages, or an agent.
-   - Filters and groupings do **not** close it: Needs You / All, and the grouping segments (Project, …).
-   - The drag handle on the column's edge is centred vertically.
-   - On its side and on the iPad nothing changes; the column stays beside the page.
-   - Status: **code committed in this handoff's commit, compiled, NOT yet verified** on the simulator or by UI test (see "Half done").
-3. **#4853: the top on its side is too high.** On the open Duo on its side, the top UI sits too close to the top edge, and the display's rounded corner clips the column's avatar/mark at the top left. The owner wants a margin like ChatGPT's app, for the mark and anything else near the top. **Not started.** Likely places:
-   - `OneSidebarHeader`'s top padding in `OneSidebar.swift`;
-   - `AssistantTopBar.topInset` / height 70 in `AssistantTopBar.swift`;
-   - `SidebarTopFill` in `SplitNavigation.swift`.
-   Keep decision 1 (one line) true after the change.
-4. **#4854: New Chat to the right column on its side.** On the open Duo on its side, move the home page's top-right New Chat (`assistant-new`) into the system's right side-bar column, as ChatGPT does. If the Dynamic Island grows (Live Activity), the button must move rather than sit under it. Read the island or safe area, not a fixed offset. **Not started.** See `docs/apple/ios.md` "iPhone Duo" (`sideBars`, the system's side-bar columns). Also see how the chat already puts its actions there (#3680).
-5. **#4855: the iPad column's background.** The owner finds the iPad column's grey-blue ugly and points to ChatGPT's (a near-white/neutral grey). They asked whether the change is global or iPad only. **Conclusion: iPad only. Done** (see #4855 below).
-   - The grey-blue on the iPad (glass style) is the system sidebar column's own colour plus `SidebarTopFill` in `SplitNavigation.swift`. That modifier fills the top only when `UIDevice.current.userInterfaceIdiom == .pad`, with `Theme.systemSidebar` = `Color(light: 0xE6E9EE, dark: 0x191C20)`.
-   - The open Duo's column is already white.
-   - `Theme.systemSidebar` is also the Mac's sidebar colour (`MacRootView`), so **do not change the token**. Give the iPad column its own background (and the matching `SidebarTopFill` colour), e.g. `Theme.Shell.drawer` (0xF9F9F9 / 0x171717), behind an iPad-only check.
-   - Show light and dark screenshots before and after.
-6. **#3641: two checks upright** (the supervisor's request; do not reply in #3641):
-   - **① ‹ on an agent opened from the list must go back, not slide the column out.** By reading the code, `ChatView.backShowsList` was true on the split's first page with the list folded. So upright, ‹ brought the list back instead of going back. **Fixed in code** (`!oneSidebar` added, in this handoff's commit): in the one sidebar, Persona's page is under the agent's, so ‹ goes back to it. Compiled, **not yet run** on the simulator. No UI test yet.
-   - **② The new conversation shows Needs You.** On its side, `DuoOpenChromeTests.testTheNewConversationShowsWhatNeedsYou` asserts `shell-needs-you` and passed. **Upright: not yet checked.**
+## Status by issue (at `40d04943f`, the last code commit)
 
-7. **Recent follows #4610 (owner, 2026-11-12).** The column has no Recent: the main row, then **Pinned** (the directions' conversations under their names with "N working · N need you"), then **All Chats**, as every other client. It reuses #4610's iOS data: `AssistantSidebarGroups.directions`, `model.assistantLeaders`, `model.directionNames`, `model.directionCounts`, `DirectionCountsText`; All Chats is `AutoConversationsView` in a sheet, as the drawer's. The on-its-side "Recent starts folded" rule and `sidebarOnItsSide` / `oneSidebar.recentFolded` are gone. In #4852's picks, Recent rows are replaced by Pinned rows and conversations from All Chats. **Done** (see "Done").
+| Item | Status | Where, and how it was verified |
+|---|---|---|
+| #4852 upright overlay, retract on picks, filters stay, centred handle | Done and verified | `SplitNavigation` (overlay posture, `hideOverlay`), `SplitDividerHandle`. `OneSidebarTests.testUprightAPickSlidesTheColumnAwayAndFiltersDoNot` passes on the Duo upright, also on the narrow-column fallbacks. Upright only by design; on its side and on the iPad the other tests pass with the column beside the page. |
+| #3641 ① ‹ goes back to Persona's page | Done; verified up to `90d6a3b79`, **not re-verified on `40d04943f`** | `ChatView.backShowsList` (`!oneSidebar`). `testUprightBackFromAnAgentGoesToPersonasPage` passed on the Duo upright on `dde9de38e`, `a928f17c2`, `90d6a3b79`; on `40d04943f` it fails **before** it reaches ‹ (see "The open failure"). The ‹ code has not changed since. |
+| #3641 ② new conversation shows Needs You upright | Done and verified | `DuoOpenChromeTests.testTheNewConversationShowsWhatNeedsYou` passes on the Duo upright (`dde9de38e`, `a928f17c2`, `90d6a3b79`, and on `40d04943f`'s code) and on its side. |
+| #4853 top margin on its side, one line kept | Done and verified on its side up to `a928f17c2` | Per-column `safeAreaPadding(.top, topPad(…))` in `SplitNavigation`, at least `OneSidebarMetrics.topMargin` (`Theme.Space.l`). `testTheColumnHasThePlacesPinnedAndAgents` asserts the margin and `face.minY == collapse.minY`. Not rerun on its side since `90d6a3b79`. |
+| #4854 New Chat in the system's side column | Done and verified on its side up to `a928f17c2`, **except under a Live Activity** | `AssistantView` shows the system bar with New Chat as a `.topBarTrailing` item under side bars (`newInSideBar`); `RootBarHidden` (coordinator), `SplitPlaceholder`, `ChatView` let the bar show. The test asserts New Chat sits in the side column. The expanded island (a Live Activity) was never shot. The item is the system's own, so it should move as the system's bar does. |
+| #4855 iPad column colour | Done; tests pass; **before/after shots must be retaken** | `OneSidebarMetrics.padColumn` / `chromeBackground`, `SplitNavigation.topFillColor` into `SidebarTopFill(color:)`: `Theme.Shell.drawer` (F9F9F9 / 171717) on the iPad with the glass style; `Theme.systemSidebar` unchanged. iPad suites and `SidebarMetricsTests` pass on `dde9de38e`. The owner has not seen the shots yet. |
+| Recent → Pinned + All Chats (#4610) | Done and verified | `OneSidebarSections.pinned` / `pinnedRow` / `allChatsRow`. `testTheColumnHasThePlacesPinnedAndAgents` passes in all three postures on `dde9de38e`. |
+| Foot New Chat cut to "…" on its side | Done and verified on its side (`a928f17c2`) | `OneSidebarFoot`: the name while it fits, the icon alone otherwise (`ViewThatFits`). |
+| Narrow-column fallbacks (`40d04943f`) | Done and compiled; **verified only partly on the Duo upright, not on its side or the iPad, no screenshots** | In the system-width column of the open Duo a Pinned row's name and counts, and the five grouping segments, were cut to "…". Now a Pinned row puts its counts on a second line under the name (`ViewThatFits`, `Theme.Space.xs` more above and below), and `AgentsGroupingSegments` falls back to the grouping pill (`AgentsGroupingMenu`, `agents.grouping`). `testTheSegmentsPickTheGrouping` and the upright pick test take either. |
 
-On GitHub, #4852–#4855 and #3641 only take `Refs` until a fix is verified (no `Fixes` for unfinished work). Do **not** comment in #4206, #3641 or #4852–#4855.
+## Test runs by commit
 
-## Done (pushed)
+Suites: "Duo three" = `PersonaUITests/OneSidebarTests` + `DuoOpenChromeTests` + `SplitDividerTests`; "iPad set" = `OneSidebarTests` + `IPadSidebarTests` + `SplitDividerTests` (+ `PersonaTests/SidebarMetricsTests`). Upright-only tests skip on its side and on the iPad; one beside-only test skips upright.
 
-- `53232dd61`: merge of origin/main (conflict in `AssistantView.swift`: kept the one-sidebar props, dropped main's removed `switcherHeight`).
-- `79322e978`, the feature:
-  - one sidebar on iPad and the open Duo;
-  - grouping as segments (`AgentsGroupingSegments` in `AgentsMenus.swift`, `DevGrouping.segments/.segment` in `ChatsView.swift`, strings `agents.grouping.segment.*`);
-  - Messages under More when `LarkHomePreference.shared.shows` (`OneSidebarHome` shows `LarkConversationsView` while `selectedTab == .feishu`);
-  - the open agent's row highlighted;
-  - `MainChatRowMenu` on the main row;
-  - dead code removed: the page-tab switch, `MainChatPlaceItems`, collapse/footer search in `AssistantSidebar.swift`, the iOS `FeishuRootTab` (now visionOS only);
-  - `PadRouter.handled` serial;
-  - `SplitNavigation`'s ZStack, so Main Chat closes an agent: the stack stays under `home` at opacity 0, without hit testing and hidden from accessibility;
-  - tests: `OneSidebarTests` (new), `DuoOpenChromeTests` (switch tests removed; the face is `persona-avatar` or `assistant-menu`), `IPadSidebarTests`, `SidebarMetricsTests` (adds `OneSidebar.swift`);
-  - `docs/apple/ios.md` "One sidebar".
-- `14bf19004`: second merge of origin/main (138 commits). Conflict in `ChatsView.swift`: kept the branch's `openBeside` (main's By Repository rule plus the one sidebar). Main removed `AppModel.showsAssistantIdentity` (#4712): `OneSidebarHeader` now checks `model.managerRoster?.isMulti == true`, as the column's header does.
-  - The open question it raised (the one sidebar's own Recent against #4610) is answered by decision 7: Recent is gone, Pinned instead.
-- `4724529fb`: upright tiling (300 pt detail minimum). **Rejected by the owner and reverted** by this handoff's commit.
-- This handoff's commit (see `git log`). It contains #4852 and #3641 ① as described above, compiled only.
+| Commit | iPad | Duo upright | Duo on its side |
+|---|---|---|---|
+| `dde9de38e` (3rd merge) | iPad set: 12 run, 2 skipped, all pass; `SidebarMetricsTests` 5 pass | Duo three: 16, 1 skipped, all pass | Duo three: 16, 2 skipped, all pass |
+| `a928f17c2` (foot New Chat) | `OneSidebarTests` + `IPadSidebarTests`: 10, 2 skipped, pass (the flake below failed twice first) | `OneSidebarTests` + `DuoOpenChromeTests`: 14, 1 skipped, pass | same two: 14, 2 skipped, pass |
+| `90d6a3b79` (4th merge) | not run | Duo three: 16, 1 skipped, all pass | not run |
+| `40d04943f` (narrow-column fallbacks; run on the same code just before it was committed) | **not run** | Duo three: 16, 1 skipped, **1 failure**: `testUprightBackFromAnAgentGoesToPersonasPage` (twice: in the full run and alone) | **not run** |
 
-## Step 2 and #4853 / #4854 / #4855 (this session, 2026-11-12)
+### Flaky
 
-- `dde9de38e`: third merge of origin/main. Conflicts: `ShellComponents.swift` (kept the branch's removal of `AssistantWaitingBadge`), `AssistantView.swift` (main's `liftHost = MessageLiftHost()`; the branch's removed `pageTabSwitch` stays removed) and `Localizable.xcstrings` (main's file plus the branch's five `agents.grouping.segment.*` keys, merged by hand: re-serializing the JSON would reformat the whole file). Its trailer names the wrong model (`Claude Opus 4.7`); it is pushed and is left as is (no force push).
+- `OneSidebarTests.testAnOpenedAgentIsSelectedAndPersonaClosesIt` (iPad and Duo on its side): sometimes fails at "Main Chat did not close the agent" (after the tap the agent stays open and Main Chat is not lit), then passes on a rerun with the same timing. Its swipes up and back down do not always land in the same place; the Main Chat tap comes about 2.7 s after the swipe back down. Cause not found (no screen recording was available).
 
-- **Pinned instead of Recent** (decision 7): `OneSidebarSections.pinned` / `pinnedRow` / `allChatsRow` in `OneSidebar.swift`; `RootTabs` no longer reads the posture for Recent.
-- **Messages upright**: after its pick slid the column away there was no way back but the edge handle (its own stack has no system button). `OneSidebarHome` now shows Show Sidebar (`feishu-sidebar-button`) at its top corner while the column is away.
-- **#4853**: `RootTabs` reads the system's bar edge at the root (`readsVerticalBarEdge`, as the shell does) into `\.oneSidebarSideBars`. Under side bars (the open Duo on its side) `SplitNavigation` pads each column's top itself (`topPad`): a `safeAreaPadding` around the split (the first cut, on `RootTabs`) never reached its columns. Each column gets at least `OneSidebarMetrics.topMargin` (`Theme.Space.l`) and as much as the lower of the two columns' own safe tops (the page's has the system bar's room, 24 pt; the list's has 0), so the fold and the face stay on one line (decision 1). The width modifier (`SidebarWidth`) must stay the column's outermost: under the padding the dragged width no longer reached the split (`SplitDividerTests` failed on its side, 320 → 320).
-- **#4854**: under side bars beside the one sidebar, `AssistantView` shows the system's navigation bar with New Chat as a `.topBarTrailing` item (title removed), so the system places it in its side column under the clock and the camera and moves it with the Dynamic Island; Three things hid that bar and had to let it be: `RootBarHidden` (now `atRoot && !newInSideBar`, with a coordinator so a late hide queued before does not run once it is no longer wanted), the hidden stack's `SplitPlaceholder` under the home (`.automatic` under side bars, as the detail column's one bar is shared) and the assistant `ChatView` (`newInSideBar`). `AssistantTopBar(newInSideBar:)` leaves its own out (an empty spot keeps the face where it was). The New Chat action is `AssistantView.newConversationAction` (Health's page in a health conversation, as before).
-  - **Decision 1 on its side** now reads: the fold and the page's top (the face) start on one line; New Chat is in the side column. The test asserts `face.minY == collapse.minY`.
-- **#4855**: on the iPad with the glass style, the column (`OneSidebarColumnColor`: list background hidden, `Theme.Shell.drawer` behind), its header and foot (`OneSidebarMetrics.chromeBackground`) and the status-bar strip above it (`SplitNavigation.topFillColor` into `SidebarTopFill(color:)`) are one neutral color: F9F9F9 light, 171717 dark. Before, the list was `Theme.systemSidebar` (E6E9EE / 191C20) and the header, foot and strip were white / black. `Theme.systemSidebar` is unchanged (the Mac and the open Duo keep it). Shots: `~/Documents/persona-4206-shots/4855-{before,after}-{light,dark}.png` (iPad, zh-Hans, glass).
-- **The foot's New Chat on its side**: at the system's column width on the open Duo on its side (a quarter of the screen) the capsule's name was cut to "…" (seen in the step 5 shot). `OneSidebarFoot` now shows the name while it fits and the icon alone otherwise (`ViewThatFits`, the capsule `fixedSize`, the button `layoutPriority(1)` over the Search / Settings capsule). The iPad and the Duo upright keep the name.
-- **Tests**:
-  - `OneSidebarTests`: `testTheColumnHasThePlacesPinnedAndAgents` (Pinned / All Chats, no Recent; on its side the margin, the face line and New Chat in the side column), `testUprightAPickSlidesTheColumnAwayAndFiltersDoNot`, `testUprightBackFromAnAgentGoesToPersonasPage` (#3641 ①; opens the agent from a Needs You card, since synthetic drags miss upright), and the older tests adapted upright (the column slides away after a pick; brought out from the page's button, the system's Show Sidebar or `feishu-sidebar-button`). The mock hub must run with `MOCK_LEADERS=1`.
-  - `DuoOpenChromeTests`: upright aware (the column is brought out in setUp, folded before the face is tapped; Settings' × upright is in the top bar's trailing items, left of the display's top-right corner). `testTheNewConversationShowsWhatNeedsYou` passes upright (#3641 ②).
+### The open failure: `testUprightBackFromAnAgentGoesToPersonasPage`
 
-## Status of the runs
+Fails at `OneSidebarTests.swift:314`, "no Needs You card in the column", on the Duo upright after the narrow-column fallbacks. Upright, synthetic drags do nothing, so the test reaches an agent by tapping a Needs You card (`agents.interaction`) in the column. The column's list is lazy: the cards do not exist until they scroll into view.
 
-- Duo upright: `OneSidebarTests` + `DuoOpenChromeTests` all pass (the last two fixed in later runs: ‹ from an agent, #3641 ①; the main row's and the face's menus).
-- iPad: `OneSidebarTests` (8 pass, the 2 upright-only skip), `IPadSidebarTests`, `SplitDividerTests` (2) and `PersonaTests/SidebarMetricsTests` (5) pass. `SidebarMetricsTests` first caught the Pinned heading (a `.frame` between its padding and `minHeight`), fixed.
-- **The handle's closed state was not kept on the iPad** (found while checking step 2 ④): the split lays itself out first with a ~117 pt list and the page sliding in from before it, so `notePosture` read it as laid over (`overlays`), the close was not written, and the split put the list back out right after `onAppear` closed it. Fixed in `SplitNavigation`: the split starts from the kept state (`SplitDividerHandle.startsClosed`), and the posture is only read once the list is at least `sidebarMinPhone` wide and the page does not start before the split. That skipped the upright Duo's only reading (the list then comes out over the page with nothing moving), and five upright tests failed: the split now also reads the posture right after the list comes out (`onChange(of: columns)`), and `overlays` is nil until read, the handle keeping nothing meanwhile and the state at that moment once the list is known to be beside the page. Upright, the relaunch check in `SplitDividerTests` is skipped (laid over the page, closing is not kept). `SplitDividerTests.testDraggedPastItsLeastTheListClosesAndComesBackFromTheEdge` now relaunches and checks the list stays closed. `testTheAssistantsHistoryIsDraggedToo` is removed: Persona's page has no history column of its own beside the one sidebar.
-- After the posture fix (`onChange(of: columns)`, `overlays` nil until read): Duo upright `OneSidebarTests` (8 pass, 1 skip: beside only) and `SplitDividerTests` (2) pass; iPad `OneSidebarTests`, `IPadSidebarTests`, `SplitDividerTests` pass (`testAnOpenedAgentIsSelectedAndPersonaClosesIt` failed once at "Main Chat did not close the agent" and passed on its own rerun: its swipes up and back down do not always land in the same place).
-- Duo on its side (after #4853 / #4854): `OneSidebarTests` (7 pass, the 2 upright-only skip), `DuoOpenChromeTests` (5) and `SplitDividerTests` (2) pass. `testAnOpenedAgentIsSelectedAndPersonaClosesIt` failed once earlier (same flake as on the iPad) and passed in the full run. Upright and the iPad are rerun after this commit.
-- **After the third merge (`dde9de38e`)**, one build, all pass: Duo upright `OneSidebarTests` + `DuoOpenChromeTests` + `SplitDividerTests` (16, 1 skip: beside only); Duo on its side, the same three (16, 2 skip: upright only); iPad `OneSidebarTests` + `IPadSidebarTests` + `SplitDividerTests` (12, 2 skip) and `PersonaTests/SidebarMetricsTests` (5). `SplitDividerTests` is the handle's check on each: dragged past its least the list closes, comes back from the edge and stays closed across a relaunch (the relaunch step skipped upright). Mind the Duo's posture in DeviceHub: `TEST_RUNNER_PERSONA_ORIENTATION=landscape` alone does not put it on its side (a first post-merge "on its side" run ran upright); it is on its side now.
-- **After the foot fix**, one build: Duo on its side `OneSidebarTests` + `DuoOpenChromeTests` (14, 2 skip: upright only), Duo upright the same two (14, 1 skip: beside only), iPad `OneSidebarTests` + `IPadSidebarTests` (10, 2 skip). On the iPad `testAnOpenedAgentIsSelectedAndPersonaClosesIt` failed twice in a row at "Main Chat did not close the agent" (the agent stayed open and Main Chat unlit after the tap) and passed on the third run with the same timing: the known flake, not tied to the foot. Its cause is not found (no frames: the recording needs ffmpeg, which this Mac lacks); the tap comes about 2.7 s after the swipe back down.
+What the failure's hierarchy shows (column about 199 pt wide):
 
-## Not done
+- two Pinned rows now take two lines (52.7 pt instead of 44);
+- the segments row became the grouping pill's row;
+- the filter chips wrap to three lines (y 825–955);
+- the fixed foot starts at y 859.
 
-- #4854 under a Live Activity (the expanded island): not shot; the item is the system's own, so it follows the island as the system's bar does.
-- **Screenshots for the owner, light and dark**: iPad, Duo on its side, Duo upright, into `~/Documents/persona-4206-shots/` (`ipad-{light,dark}.png`, `duo-landscape-{light,dark}.png`, `duo-portrait-{light,dark}.png`; the old `duo-landscape-light.png` is stale, overwrite it), plus #4855 before / after. Report the paths to the supervisor.
-- The PR, then **stop and wait for the owner's explicit approval**. After approval: delete `docs/handoff/4206-*`, then merge with `scripts/hooks/merge-pr.sh`. Do not merge before approval.
+The first screen ends inside the chips, so no Needs You card is built. The test's fallback taps the lowest "需要你" text left of the column's edge. Without a Needs You section header, that is the label inside the already selected filter chip (`agents.filter.needsYou`), and tapping it does not scroll anything.
 
-## Environment (this Mac mini)
+**Judgment:** the test fails because it cannot reach a card in the taller column, not because ‹ is broken. The product code for ‹ is unchanged, and the test passed on `90d6a3b79`. Not fixed. Options:
 
-- **Simulators**
-  - Duo: `Persona Duo 4206`, UDID `125B7423-F653-4043-A8D6-6F5A0637FF1E`, iOS 27.1. 27.1 only has the Duo.
-  - iPad: iPad Pro 13-inch (M5), UDID `C0FF6FB0-FB9B-493A-8E9A-EE6D77CE3F6C`, iOS 27.0.
-  - Created with `scripts/app/sim-boot.sh --profile stock --device-type … --runtime … '<name>'`.
-- **Config**: `~/.config/persona/config.json` (private, 0600, minimal: dev bundle id `<dev bundle id>`, simulator `Persona Duo 4206`). Then `eval "$(python3 scripts/persona_config.py env)"` and `python3 scripts/persona_config.py xcconfig`. After adding a file: `cd apple && xcodegen generate -q` (xcodegen from brew).
-- **Mock hub**: running with leaders (port 18842, log `/tmp/persona-4206-mock.log`). If it is gone, restart it from the repo root with `MOCK_LEADERS=1 PORT=18842 nohup python3 scripts/mock/mock_hub.py > /tmp/persona-4206-mock.log 2>&1 &` (stop it by its port's pid, never `pkill -f mock_hub.py`).
-- **Build** (from `apple/`). SwiftPM's GitHub clones time out here without the local proxy:
-  ```sh
-  https_proxy=http://127.0.0.1:7897 http_proxy=http://127.0.0.1:7897 xcodebuild -project Persona.xcodeproj -scheme Persona \
-    -destination 'platform=iOS Simulator,id=<UDID>' -derivedDataPath ../build/DerivedData build-for-testing
-  ```
-- **UI tests**:
-  ```sh
-  TEST_RUNNER_PERSONA_MOCK_HUB=http://127.0.0.1:18842 [TEST_RUNNER_PERSONA_ORIENTATION=landscape] xcodebuild -project Persona.xcodeproj -scheme Persona \
-    -destination 'platform=iOS Simulator,id=<UDID>' -derivedDataPath ../build/DerivedData test-without-building \
-    -only-testing:PersonaUITests/OneSidebarTests -only-testing:PersonaUITests/DuoOpenChromeTests \
-    [-only-testing:PersonaUITests/IPadSidebarTests -only-testing:PersonaTests/SidebarMetricsTests] -resultBundlePath /tmp/<name>.xcresult
-  ```
-  - The Duo tests need the Duo **open** in DeviceHub.
-  - `ORIENTATION=landscape` is for on its side. For upright, rotate the Duo in DeviceHub and leave the variable out.
-- **Manual run**:
-  - `xcrun simctl install <UDID> build/DerivedData/Build/Products/Debug-iphonesimulator/Persona.app`
-  - `xcrun simctl launch <UDID> <dev bundle id> -AppleLanguages '(zh-Hans)' -AppleLocale zh_CN -pairURL 'persona://pair?url=http%3A%2F%2F127.0.0.1%3A18842&token=mock' -tab assistant -app.tab assistant -dev.openChat '' -dev.grouping repo -agents.list.closed NO -ui.style glass`
-  - Appearance: `xcrun simctl ui <UDID> appearance light|dark`.
-  - If the column stays closed: `xcrun simctl spawn <UDID> defaults write <dev bundle id> agents.list.closed -bool NO`.
-- **Screenshots**: `xcrun simctl io <UDID> screenshot --display=3 f.png` for the Duo's inner (open) display. Plain `screenshot` works for the iPad. This needs no screen-recording permission.
-- **DeviceHub (Xcode's device window), by System Events** (Accessibility is granted). Send one call at a time and don't retry in a loop. Never restart herdr or Ghostty: that stops every agent on this machine.
-  - Select the Duo: `tell application "System Events" to tell process "DeviceHub" to set selected of row 3 of outline 1 of scroll area 1 of group 1 of splitter group 1 of group 1 of splitter group 1 of group 1 of window 1 to true`. The window title shows the selected device.
-  - The buttons are in `group 3 of splitter group 1 of group 1 of splitter group 1 of group 1 of window 1`:
-    - posture: `Closed` / `Partially Open` / `Open`;
-    - rotate: the button whose `help` is `Rotate Right`.
-    - Click one by looping over `every button of` that group and matching `help`. `/tmp/p4206/rotate.applescript` does this but may be gone.
-  - The Duo is currently **open and upright**.
-- **Latest screenshots** (`/tmp/p4206/`, scratch):
-  - `up1.png`: Duo upright, this build's overlay; not yet assessed.
-  - `ipad-now.png`: iPad, header aligned.
-  - `duo-land-tile4.png`: Duo on its side.
-  - `duo-port-light2.png`: the old upright overlay, before the retract.
-  - `duo-port-290.png` / `duo-up-tile*.png`: the rejected tiling.
+- launch the test with a wider stored column (`-agents.list.width`), so the rows and segments fit on one line again (check that `SidebarWidth` applies upright);
+- find another element that exists below the first screen to tap so XCUITest scrolls (not the filter chips: the foot covers them);
+- open the agent another way.
+
+Also worth showing the owner: upright, the Needs You cards are now entirely below the first screen.
+
+## Not done yet
+
+- The narrow-column fallbacks have **not been run on the Duo on its side or the iPad**.
+- **Screenshots:** all earlier screenshots stayed on the previous machine and are stale (they predate the fourth merge and the fallbacks). Retake light and dark for the iPad, the Duo upright and the Duo on its side, plus #4855 before / after (below).
+- **origin/main is 24 commits ahead** of this branch (fetched at this handoff), not merged. `git merge-tree --write-tree HEAD origin/main` shows no conflicts.
+- #4854 under a Live Activity: not shot.
+- No PR is open yet.
+
+## How to run
+
+### Tools and simulators
+
+- Xcode 27.1, and `xcodegen` (Homebrew).
+- Simulators:
+  - **iPhone Duo**: device type `iPhone Duo`, on the **iOS 27.1** runtime (only 27.1 has it).
+  - **iPad Pro 13-inch (M5)** on **iOS 27.0**.
+  - Create or reuse one with `scripts/app/sim-boot.sh --profile stock --device-type "iPhone Duo" --runtime <iOS 27.1 runtime> "<name>"`; it prints the UDID. Use your own UDIDs below.
+- Private config: `scripts/persona_config.py` reads it (see that script). Then, from the repo root:
+  - `eval "$(python3 scripts/persona_config.py env)"` (gives `PERSONA_BUNDLE_ID`, used below);
+  - `python3 scripts/persona_config.py xcconfig`;
+  - `cd apple && xcodegen generate -q` (again after adding a file; `apple/Persona.xcodeproj/` is generated and untracked: never commit it).
+- If SwiftPM's GitHub clones time out, give `xcodebuild` your network's proxy through `https_proxy` / `http_proxy`.
+
+### Mock hub
+
+From the repo root (the tests need the leader conversations, so `MOCK_LEADERS=1`):
+
+```sh
+MOCK_LEADERS=1 PORT=18842 nohup python3 scripts/mock/mock_hub.py > <some log> 2>&1 &
+```
+
+Stop it by the PID listening on port 18842 (`lsof -ti tcp:18842`), not with `pkill -f mock_hub.py`, which also kills other people's hubs.
+
+### Build and UI tests (from `apple/`)
+
+```sh
+xcodebuild -project Persona.xcodeproj -scheme Persona -destination 'platform=iOS Simulator,id=<UDID>' \
+  -derivedDataPath ../build/DerivedData build-for-testing
+
+# Duo upright (the Duo rotated upright in DeviceHub, no ORIENTATION variable):
+TEST_RUNNER_PERSONA_MOCK_HUB=http://127.0.0.1:18842 xcodebuild -project Persona.xcodeproj -scheme Persona \
+  -destination 'platform=iOS Simulator,id=<Duo UDID>' -derivedDataPath ../build/DerivedData test-without-building \
+  -only-testing:PersonaUITests/OneSidebarTests -only-testing:PersonaUITests/DuoOpenChromeTests \
+  -only-testing:PersonaUITests/SplitDividerTests -resultBundlePath <somewhere>/duo-up.xcresult
+
+# Duo on its side: rotate it in DeviceHub first AND add TEST_RUNNER_PERSONA_ORIENTATION=landscape; same suites.
+
+# iPad:
+TEST_RUNNER_PERSONA_MOCK_HUB=http://127.0.0.1:18842 xcodebuild ... -destination 'platform=iOS Simulator,id=<iPad UDID>' \
+  ... test-without-building -only-testing:PersonaUITests/OneSidebarTests -only-testing:PersonaUITests/IPadSidebarTests \
+  -only-testing:PersonaUITests/SplitDividerTests -only-testing:PersonaTests/SidebarMetricsTests
+```
+
+- A single test: `-only-testing:PersonaUITests/OneSidebarTests/testUprightBackFromAnAgentGoesToPersonasPage`.
+- `test-without-building` can sit for minutes after the last test before it exits. Run it in the background and wait on the process.
+
+### The Duo's posture (DeviceHub)
+
+The Duo tests need the Duo **Open** and in the right posture. `TEST_RUNNER_PERSONA_ORIENTATION=landscape` alone does **not** turn the open Duo on its side (a run once went upright that way); rotate it in Xcode's device window, whose process is `DeviceHub`.
+
+By hand, select the Duo there, set its posture to Open and use Rotate Right / Rotate Left. Each click turns it a quarter.
+
+By script, give the terminal Accessibility access. Send one click at a time and check the result before the next; never loop retries. The buttons sit in one group of the window:
+
+```applescript
+tell application "System Events"
+  tell process "DeviceHub"
+    set g to group 3 of splitter group 1 of group 1 of splitter group 1 of group 1 of window 1
+    repeat with b in (every button of g)
+      try
+        if help of b is "Rotate Right" then
+          click b
+          return "clicked"
+        end if
+      end try
+    end repeat
+    return "not found"
+  end tell
+end tell
+```
+
+- The posture buttons (Closed / Partially Open / Open) are in the same group. List them with `get {description, help} of every button of g` before you match one.
+- Selecting the Duo: set `selected` of its row in `outline 1 of scroll area 1 of group 1 of splitter group 1 of group 1 of splitter group 1 of group 1 of window 1` to true. The row's index depends on the machine's device list; the window's title shows the selected device.
+- Check the posture from a screenshot of the inner display: `xcrun simctl io <Duo UDID> screenshot --display=3 f.png`, then `sips -g pixelWidth -g pixelHeight f.png`:
+  - on its side: **2853 × 2007**;
+  - upright: **2007 × 2853**.
+
+### Screenshots (light and dark)
+
+For each device, after a `build-for-testing` (or a build) of the branch's HEAD:
+
+1. `xcrun simctl install <UDID> ../build/DerivedData/Build/Products/Debug-iphonesimulator/Persona.app`
+2. For each of `light` and `dark`:
+   - `xcrun simctl terminate <UDID> "$PERSONA_BUNDLE_ID"`
+   - `xcrun simctl ui <UDID> appearance <light|dark>`
+   - `xcrun simctl spawn <UDID> defaults write "$PERSONA_BUNDLE_ID" agents.list.closed -bool NO` (so the column is out)
+   - launch:
+     ```sh
+     xcrun simctl launch <UDID> "$PERSONA_BUNDLE_ID" -AppleLanguages '(zh-Hans)' -AppleLocale zh_CN \
+       -pairURL 'persona://pair?url=http%3A%2F%2F127.0.0.1%3A18842&token=mock' -tab assistant -app.tab assistant \
+       -dev.openChat '' -dev.grouping repo -agents.list.closed NO -ui.style glass
+     ```
+   - wait about 9 s for the mock hub's data;
+   - Duo: `xcrun simctl io <UDID> screenshot --display=3 <file>` (the inner display); iPad: `xcrun simctl io <UDID> screenshot <file>`.
+   - Upright, the column may start away: bring it out with the page's sidebar button in the Simulator window before the shot.
+3. Names: `ipad-{light,dark}.png`, `duo-portrait-{light,dark}.png`, `duo-landscape-{light,dark}.png`. Keep them out of the repo, and look at each one before reporting.
+4. **#4855 before / after** (iPad, light and dark):
+   - "after" is HEAD.
+   - For "before", make `OneSidebarMetrics.padColumn` return `nil` in a scratch build. Don't commit it. That gives the old look: the system sidebar's `Theme.systemSidebar` list, a white / black header and foot, and the system's strip.
+   - Names: `4855-{before,after}-{light,dark}.png`.
+
+## Next steps, in order
+
+1. Set up the simulators, the config, `xcodegen` and the mock hub (`MOCK_LEADERS=1`, port 18842); build `feat/4206-one-sidebar` HEAD.
+2. Fix `testUprightBackFromAnAgentGoesToPersonasPage` on the Duo upright (see "The open failure"), then run the Duo three upright until green.
+3. Run the Duo three **on its side** (rotated in DeviceHub + `TEST_RUNNER_PERSONA_ORIENTATION=landscape`) and the iPad set on the fallbacks; rerun the known flake once if it fails.
+4. Merge origin/main (a merge, no rebase; 24+ commits, no conflicts at handoff time), build, rerun the three postures, push.
+5. Take the light / dark screenshots (iPad, Duo upright, Duo on its side) and #4855 before / after; check the Pinned rows, the grouping pill and the foot in the narrow column; optionally #4854 under a Live Activity.
+6. Update this handoff and push; report to the supervisor with the shots, then **stop and wait for the owner's explicit approval** (UI change).
+7. After approval only: delete `docs/handoff/4206-*`, push, open the PR (`Refs` for #4852–#4855 and #3641), merge with `scripts/hooks/merge-pr.sh`.
 
 ## Pitfalls
 
-- **Upright on the open Duo, synthetic drags miss** (swipes and press-and-drag do nothing): reach rows below the first screen by tapping an element that exists (XCUITest scrolls it in first). The column's agent rows are not built until scrolled to, so the upright test opens an agent from a Needs You card instead.
-- **Upright, the column may start away** right after an install; tests bring it out from the page's button (`assistant-sidebar-button`), the system's Show Sidebar (a page pushed on Persona's page) or `feishu-sidebar-button` (Messages).
-- `xcodebuild test-without-building` can sit for minutes after the last test before it exits; run it in the background and wait on `pgrep -f xcodebuild`.
-- **`DuoOpenChromeTests` face**: the mock hub has several assistants, so the page's face is `persona-avatar`, not `assistant-menu`. Match either: `identifier IN {assistant-menu, persona-avatar}`.
-- **`apple/Persona.xcodeproj/` is untracked** (generated by xcodegen). Never `git add` it; stage files by path. A new test file does not run until `xcodegen generate`.
-- An agent chat's title is `chat.title` or `chat.compactTitle`. Agent rows can be offscreen in the column, so swipe up to find them.
-- The Messages list's frame starts at the window edge, so check its first static text's `minX`, not the list's.
-- **main's `apple/PersonaTests/JSONDateTests.swift` (#4931) does not compile with Xcode 27.1** (static `ISO8601DateFormatter`s are not concurrency-safe), so `build-for-testing` fails. The supervisor: CI builds with Xcode 26.0.1, so only newer local Xcode fails and main's CI is not blocked; do not commit a fix into #4206, no issue. Main has since fixed it (formatters made per call), so after `dde9de38e` it compiles as is and the local `nonisolated(unsafe)` patch is dropped (kept at `/tmp/p4206/jsondate-local.patch` in case an older main is checked out).
-- **Pre-existing check failures, also on origin/main, not ours**:
+- **Upright on the open Duo, synthetic drags miss** (swipes and press-and-drag do nothing). Reach things below the first screen by tapping an element that exists (XCUITest scrolls it in). The column's agent rows and Needs You cards are not built until scrolled to.
+- **Upright, the column may start away** after an install; tests bring it out from the page's button (`assistant-sidebar-button`), the system's Show Sidebar (a page pushed on Persona's page) or `feishu-sidebar-button` (Messages).
+- **The handle's closed state**: the split starts from the kept state (`SplitDividerHandle.startsClosed`). It reads the posture only once the list is at least `sidebarMinPhone` wide and the page does not start before the split, and again right after the list comes out (`onChange(of: columns)`). `overlays` stays nil until it is read. Laid over the page (upright), closing is not kept, so `SplitDividerTests`' relaunch check skips upright.
+- **`SidebarWidth` must stay the column's outermost modifier**: under the top padding the dragged width stopped reaching the split (320 → 320).
+- `DuoOpenChromeTests`' face: the mock hub has several assistants, so the page's face is `persona-avatar`, not `assistant-menu`. Match either.
+- An agent chat's title is `chat.title` or `chat.compactTitle`. The Messages list's frame starts at the window edge, so check its first text's `minX`.
+- `apple/PersonaTests/JSONDateTests.swift` failed to compile with Xcode 27.1 on an older main (static `ISO8601DateFormatter`s). Main fixed it; CI builds with Xcode 26.0.1. If an older main ever shows it, patch it locally only. Don't commit that patch to this branch, and don't open an issue.
+- Pre-existing check failures, also on origin/main, not this branch's:
   - `test_apple_perf_patterns` (`AppModel+Managers.swift` file read);
-  - `test_apple_state_initial_values` (`AssistantSwitcher.swift` `ManagersModel`).
-  - `test_doc_paths` fails only while this handoff exists, which is expected; it goes when the handoff is deleted.
-- Commits: `git -c user.name=zake111000 -c user.email=14012239+zake111000@users.noreply.github.com commit`, English, ending with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. No internal hosts or names in public text.
+  - `test_apple_state_initial_values` (`AssistantSwitcher.swift` `ManagersModel`);
+  - `test_doc_paths` fails only while this handoff exists.
+- `dde9de38e`'s trailer names the wrong model. It is pushed, so it is left as is (no force push).
+- Commits on this branch:
+  - `git -c user.name=zake111000 -c user.email=14012239+zake111000@users.noreply.github.com commit`;
+  - English messages ending with the `Co-Authored-By:` trailer;
+  - stage files by path;
+  - run `python3 scripts/privacy_check.py` first;
+  - no internal hosts or names in public text.
