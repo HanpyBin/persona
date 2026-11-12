@@ -3,7 +3,9 @@ import XCTest
 /// After an upstream refusal (#4489), against scripts/mock/mock_hub.py with MOCK_MODEL_FALLBACK=1 MOCK_MAIN_ACTIONS=1
 /// (`TEST_RUNNER_PERSONA_MODEL_FALLBACK_HUB=http://127.0.0.1:<port>`): a terminal agent shows the refusal's line and a
 /// card with only the /model step, and its API error offers no Continue; the Persona main conversation's card offers
-/// Back to Configured Model and New Main Chat, and going back leaves only the pending note. Light and dark;
+/// Back to Configured Model and New Main Chat, and going back leaves only the pending note. There the line and the card
+/// each say one plain sentence with the model's short name, the record under a closed Details (#5202). Light and dark,
+/// and the main conversation at the largest text size;
 /// `TEST_RUNNER_PERSONA_SHOTS=<dir>` keeps the screenshots (`fallback-<step>-<scheme>.png`).
 /// `TEST_RUNNER_PERSONA_PHASE=before` takes the same screenshots on an older build, checking nothing it doesn't do.
 final class ModelFallbackUITests: XCTestCase {
@@ -43,25 +45,31 @@ final class ModelFallbackUITests: XCTestCase {
             throw XCTSkip("needs mock_hub.py with MOCK_MODEL_FALLBACK=1 MOCK_MAIN_ACTIONS=1 (PERSONA_MODEL_FALLBACK_HUB)")
         }
         continueAfterFailure = false
-        for scheme in ["light", "dark"] {
+        for scheme in ["light", "dark", "large"] {
             _ = try? Data(contentsOf: URL(string: hub + "/mock/model-fallback/reset")!)
 
-            // A terminal agent: the refusal's line after the exchange, the card with only the /model step, no Continue.
-            var app = launch(hub, ["-dev.openChat", "", "-ui.scheme", scheme, "-openSession", agent])
-            let card = labeled(app, "/model")
-            if !before {
-                XCTAssertTrue(app.descendants(matching: .any)["refusal-notice"].firstMatch.waitForExistence(timeout: 20), app.debugDescription)
-                XCTAssertTrue(card.waitForExistence(timeout: 10), "the fallback card")
-                XCTAssertTrue(card.label.contains("Sonnet 5.5"), card.label)
-                XCTAssertFalse(app.buttons["回到配置的模型"].exists, "a terminal session can't go back from here")
-                XCTAssertFalse(app.buttons["继续"].exists, "Continue would go to the same model")
-            } else {
-                _ = labeled(app, "API Error").waitForExistence(timeout: 20)
+            let look = scheme == "large"
+                ? ["-ui.scheme", "light", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+                : ["-ui.scheme", scheme]
+            if scheme != "large" {
+                // A terminal agent: the refusal's line after the exchange, the card with only the /model step, no Continue.
+                let app = launch(hub, ["-dev.openChat", "", "-openSession", agent] + look)
+                let card = labeled(app, "/model")
+                if !before {
+                    XCTAssertTrue(app.descendants(matching: .any)["refusal-notice"].firstMatch.waitForExistence(timeout: 20), app.debugDescription)
+                    XCTAssertTrue(card.waitForExistence(timeout: 10), "the fallback card")
+                    XCTAssertTrue(card.label.contains("Sonnet 5.5"), card.label)
+                    XCTAssertFalse(app.buttons["回到配置的模型"].exists, "a terminal session can't go back from here")
+                    XCTAssertFalse(app.buttons["继续"].exists, "Continue would go to the same model")
+                } else {
+                    _ = labeled(app, "API Error").waitForExistence(timeout: 20)
+                }
+                shot(app, "agent-\(scheme)")
             }
-            shot(app, "agent-\(scheme)")
 
-            // The Persona main conversation: both buttons; going back leaves the pending note and no button.
-            app = launch(hub, ["-tab", "assistant", "-ui.scheme", scheme, "-openAssistant", main])
+            // The Persona main conversation: one plain sentence each, both buttons; going back leaves the pending note
+            // and no button.
+            let app = launch(hub, ["-tab", "assistant", "-openAssistant", main] + look)
             let back = app.buttons["回到配置的模型"].firstMatch
             if before {
                 _ = labeled(app, "API Error").waitForExistence(timeout: 20)
@@ -70,7 +78,21 @@ final class ModelFallbackUITests: XCTestCase {
             }
             XCTAssertTrue(back.waitForExistence(timeout: 20), app.debugDescription)
             XCTAssertTrue(app.buttons["新建主对话"].firstMatch.exists, "New Main Chat on the main conversation")
+            XCTAssertTrue(labeled(app, "这个对话现在用 Sonnet 5.5 回复").exists, "the card's plain sentence")
+            // At the largest size the line may be above the screen in the lazy list: the card only, and the shot.
+            if scheme == "large" { shot(app, "main-\(scheme)"); continue }
+            let line = labeled(app, "上游拒绝了这次请求，已改用 Sonnet 5.5")
+            XCTAssertTrue(line.waitForExistence(timeout: 10), "the refusal's plain sentence")
+            XCTAssertFalse(labeled(app, "拒绝原文").exists, "the record stays under a closed Details")
             shot(app, "main-\(scheme)")
+            // The identifier may land on the disclosure's own button.
+            let details = app.descendants(matching: .any)["refusal-details"].firstMatch
+            XCTAssertTrue(details.exists, "the refusal's Details")
+            let toggle = details.elementType == .button ? details : details.buttons.firstMatch
+            toggle.tap()
+            XCTAssertTrue(labeled(app, "拒绝原文").waitForExistence(timeout: 5), "Details opens to the record")
+            shot(app, "main-details-\(scheme)")
+            toggle.tap()
             back.tap()
             XCTAssertTrue(labeled(app, "下次启动将使用配置的模型").waitForExistence(timeout: 15), app.debugDescription)
             XCTAssertFalse(app.buttons["回到配置的模型"].exists)

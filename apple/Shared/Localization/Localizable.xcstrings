@@ -1,6 +1,29 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "After an upstream refusal, this conversation answers with %@." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "After an upstream refusal, this conversation answers with %1$@."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上流で拒否されたため、この会話は %1$@ で応答しています。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上游拒绝了一次请求，这个对话现在用 %1$@ 回复。"
+          }
+        }
+      }
+    },
     "The app asks every address at once and uses the first in this order that answers; a later one when the earlier ones don't answer quickly. The paired address always comes first." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -89,6 +112,29 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "ハブ自身"
+          }
+        }
+      }
+    },
+    "The upstream refused this request, so it switched to %@." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The upstream refused this request, so it switched to %1$@."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上流がこのリクエストを拒否したため、%1$@ に切り替えました。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上游拒绝了这次请求，已改用 %1$@。"
           }
         }
       }
