@@ -21,7 +21,9 @@ Node's `session.start`:
      for that task, and the confirmation asks the same thing (`bypassConfirmKeys` in `node/claudeready.go`). It is pressed at most 3 times; a confirmation still showing ends
      the start with what to do. Any other start that meets it (the launcher's own `--dangerously-skip-permissions`, no mode chosen) presses nothing and ends at once with the
      #3294 message. A per-start `--settings '{"skipDangerousModePermissionPrompt":true}'` also hides it, but Claude Code takes only the last `--settings`, which is
-     Persona's hooks file or the launcher's own, so it would drop one of them; the user's `~/.claude` is never written.
+     Persona's hooks file or the launcher's own, so it would drop one of them. Persona writes no Claude config either way, but accepting the
+     confirmation (by hand or by the node) makes Claude Code itself record `"skipDangerousModePermissionPrompt": true` in that profile's `settings.json`
+     (checked on 2.1.322), so the confirmation shows once per profile, and later bypass starts there, Persona's or the user's own, no longer ask.
    - State idle/done and composer footer visible (`shift+tab` / `? for shortcuts` / `bypass permissions` / `esc to interrupt`), twice consecutively → ready.
    - Other blocked state (model selection, a permission Claude asks even in bypass, etc.) → return immediately; hub pushes the screen to the phone as a `screen`
      interaction. The first message is held, not dropped (`firstAfterDialog` in `node/firstprompt.go`): the session is Needs you saying the message goes in once the
