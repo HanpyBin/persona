@@ -97,7 +97,7 @@ import { UltracodeLostNote } from "./Ultracode";
 import { isUltracodeQueued, ultracodeQueueDone } from "../../lib/ultracode";
 import { ChatActionsContext, liveValue, type ChatActions } from "./chat-actions";
 import { QueueStrip } from "./QueueStrip";
-import { ChatSearch, type LoadOutcome } from "./ChatSearch";
+import type { LoadOutcome } from "./ChatSearch";
 import { forgetReveals, revealItem, undoReveals, clearReveal } from "./search-reveal";
 import { forwardDraftOf, openForward, peekJump, takeJump } from "../../lib/forward";
 import { lineOfItem, loadEarlierForSearch, untilStill, type ChatSearchHit, type SearchLoadOutcome } from "../../lib/chat-search";
@@ -134,6 +134,7 @@ import { lazyDialog, lazyOverlay } from "../LazyOverlay";
 // first switch does not slide in an empty layer.
 const loadTerminal = () => import("../session/TerminalPanel");
 // Sharing settings load on their first open, outside the first screen (docs/web/web.md "First screen").
+const ChatSearch = lazyDialog(() => import("./ChatSearch").then((m) => m.ChatSearch));
 const LinkTodoDialog = lazyDialog(() => import("../LinkTodoDialog").then((m) => m.LinkTodoDialog));
 const SharingDialog = lazyOverlay(() => import("../../sharing/SharingDialog").then((m) => m.default));
 const TerminalPanel = lazy(() => loadTerminal().then((m) => ({ default: m.TerminalPanel })));

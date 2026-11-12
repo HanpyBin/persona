@@ -212,8 +212,10 @@ describe("the sidebar shell across store pushes", () => {
       await flush();
       const link = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((b) => b.textContent?.includes(t("agentmenus.link_to_todo")))!;
       expect(link).toBeTruthy();
-      act(() => link.click());
-      await import("./LinkTodoDialog"); // wait for the same chunk the click requested
+      await act(async () => {
+        link.click();
+        await import("./LinkTodoDialog"); // wait for the same chunk the click requested
+      });
       await flush();
       expect(renders.get("link")).toBeGreaterThan(0);
       return document.querySelector('[role="dialog"][aria-modal="true"]');

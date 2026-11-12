@@ -15,6 +15,15 @@ vi.hoisted(() => {
   g.IntersectionObserver = class { observe() {} unobserve() {} disconnect() {} takeRecords() { return []; } };
 });
 
+const searchRenders = vi.hoisted(() => ({ count: 0 }));
+vi.mock("./ChatSearch", async load => {
+  const real = await load<typeof import("./ChatSearch")>();
+  return { ...real, ChatSearch: (props: Parameters<typeof real.ChatSearch>[0]) => {
+    searchRenders.count++;
+    return <real.ChatSearch {...props} />;
+  } };
+});
+
 const captured = vi.hoisted(() => ({
   onSend: undefined as ((out: Outgoing) => Promise<boolean>) | undefined,
   session: { machine_id: "hub", session_id: "c1", title: "Conversation", cwd: "/code", status: "idle" } as Session | undefined,
@@ -105,6 +114,7 @@ const flush = async () => {
 };
 
 beforeEach(() => {
+  searchRenders.count = 0;
   localStorage.clear();
   resetMessageFeedback();
   resetRestoredForTests();
@@ -118,6 +128,23 @@ afterEach(() => {
   act(() => root.unmount());
   host.remove();
   vi.unstubAllGlobals();
+});
+
+describe("the deferred search dialog", () => {
+  it.each([false, true])("keeps cold chat unchanged and opens the existing search dialog on intent (assistant=%s)", async assistant => {
+    captured.session = { machine_id: "hub", session_id: "c1", title: "Conversation", cwd: "/code", state: "idle", status: "idle" } as Session;
+    act(() => root.render(<ChatView mid="hub" sid="c1" assistant={assistant} />)); await flush();
+    expect(searchRenders.count).toBe(0);
+    expect(document.querySelector("[data-chat-search]")).toBeNull();
+    const more = host.querySelector<HTMLButtonElement>(`button[aria-label="${t("chat-chatview.more_actions")}"]`)!;
+    expect(more).toBeTruthy(); act(() => more.click()); await flush();
+    const search = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent === t("chat-chatsearch.menu"))!;
+    expect(search).toBeTruthy();
+    await act(async () => { search.click(); await import("./ChatSearch"); }); await flush();
+    expect(searchRenders.count).toBeGreaterThan(0);
+    expect(document.querySelector('[role="dialog"] [data-chat-search]')).not.toBeNull();
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain(t("chat-chatsearch.title"));
+  });
 });
 
 describe("message feedback before runtime execution", () => {
