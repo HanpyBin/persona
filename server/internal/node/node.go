@@ -187,6 +187,8 @@ type Node struct {
 	adoptedFailures []adoptedFailure
 	// fallbacks: each conversation's last model switch that answered, and the hold on it (assistant_fallback_hold.go).
 	fallbacks map[string]*assistantFallback
+	// unavailable: launcher + "\x00" + model a recovery found the gateway does not serve, and until when it is skipped.
+	unavailable map[string]time.Time
 
 	// runtimes: agent runtimes without a terminal, connected on runtime.sock (runtimes.go); runtimeSock overrides the
 	// socket path (tests).
