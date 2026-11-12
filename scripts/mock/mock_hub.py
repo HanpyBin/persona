@@ -12578,6 +12578,8 @@ if os.environ.get("MOCK_LONG_REPORT"):
         _report = long_report_text_varied() if _src == "cjk" else long_report_text()
         _r = [it("user", "text", 180, text="把天气 App 的数据层迁移方案整理出来，先读完现有代码再写。")]
         _r += [it("assistant", "text", 179, text="好，我先分头读代码。")]
+        if _src == "cjk":  # a plain call before the subagents: the oldest step a call's notice can lead back to (-showJumpPerf)
+            _r += tool("Bash", {"command": "ls Sources/Data"}, "".join("Model%02d.swift\n" % k for k in range(15)), 179)
         for _a in range(8):
             _r += tool("Agent", {"description": "读第 %d 组模块" % (_a + 1), "prompt": "读 Sources/Data 下第 %d 组文件，列出公开接口。" % (_a + 1)},
                        "第 %d 组共 12 个文件，公开接口如下：\n" % (_a + 1) + "".join("- func load%d()\n" % k for k in range(40)), 178 - _a)
