@@ -143,6 +143,8 @@ struct ChatView: View {
     private enum Entry: Equatable { case latestAnswer, line(String), message(String) }
     /// The line being landed on, measured while landing (only that one row watches its frame).
     @State private var landing: String?
+    /// The line a jump is about to glide to, measured first (`bringToMiddle`; only that one row watches its frame).
+    @State private var measuring: String?
 
     private var readKey: String { "chat.read.\(shownKey.machineID)/\(shownKey.sessionID)" }
     @State private var renaming: Session?
@@ -1225,6 +1227,21 @@ struct ChatView: View {
         position.scrollTo(point: CGPoint(x: scratch.offsetX, y: y))
     }
 
+    #if DEBUG
+    /// `-showAutoScroll`'s jumps to `y` pt from the newest end: on the list as the chat jumps (`ChatJumpRun`), or with
+    /// `-showSwiftUIJumps YES` as SwiftUI's animated scroll (eased over `seconds`, else the chat's standard motion).
+    private func debugJump(to y: CGFloat, seconds: Double?) {
+        #if os(iOS) || os(visionOS)
+        if !Self.swiftUIJumps, let list = pin.list {
+            position = ScrollPosition(idType: String.self)
+            jumpRun.start(list, to: .offset(ChatJumpRun.newest(list) + y)) { _ in }
+            return
+        }
+        #endif
+        withAnimation(seconds.map { .easeOut(duration: $0) } ?? Theme.Motion.standard) { scrollList(to: y) }
+    }
+    #endif
+
     /// Folds or opens a work line. From its header, the header stays under the finger (`ChatPin`), through the steps
     /// arriving from the hub after the tap; from Collapse under the last step, the flipped list keeps the reply below where
     /// it was on its own. No animation: hundreds of rows animating out left blank frames behind. Folding is at once too:
@@ -1678,6 +1695,14 @@ struct ChatView: View {
         if !animated, scratch.atNewest, position.edge == .top { return }
         if animated {
             #if os(iOS) || os(visionOS)
+            // On the list itself, as ↓ (`ChatJumpRun`): SwiftUI's animated scroll drew every text it passed again on
+            // every frame (#5076). Its stored position is forgotten first, as ↓ does (#4788).
+            if let list = pin.list, !Self.swiftUIJumps {
+                if pin.holding { pin.release() }
+                position = ScrollPosition(idType: String.self)
+                jumpRun.start(list) { arrived in landedAtNewest(list, arrived: arrived, again: true) }
+                return
+            }
             withAnimation(Theme.Motion.standard, completionCriteria: .removed) {
                 position.scrollTo(edge: .top)
             } completion: {
@@ -1761,7 +1786,7 @@ struct ChatView: View {
             try? await Task.sleep(for: .milliseconds(300))
             guard pin.list === list, follow.follows, !jumpRun.running, !list.isTracking, !list.isDecelerating,
                   let gap = pin.measuredNewestGap, gap > ChatJump.there else { return }
-            Self.jumpLog.notice("↓ landed, then the list moved \(Int(gap), privacy: .public) pt from the newest end: again")
+            Self.jumpLog.notice("A jump to the newest landed, then the list moved \(Int(gap), privacy: .public) pt from it: again")
             #if DEBUG
             scratch.jumpSlips += 1
             #endif
@@ -2162,10 +2187,43 @@ struct ChatView: View {
         entry = nil
         setFollow { $0.read() }
         Task { @MainActor in
-            withAnimation(Theme.Motion.standard) { position.scrollTo(id: id, anchor: .center) }
+            bringToMiddle(id)
             try? await Task.sleep(for: .milliseconds(250))
             quoteFlash = QuoteFlashMark(line: id)
         }
+    }
+
+    /// Brings a line to the middle of the list: the navigator's, a quote's and a call's jump. On the phone the list
+    /// itself moves (`ChatJumpRun`), on whole pixels: a line drawn now is measured and the list glides to it; one that is
+    /// not is landed on at once, as ↓ lands a screen short of the newest. SwiftUI's animated scroll there drew every text
+    /// on screen again on every frame, and in a long Chinese answer that was most of each frame (#5076).
+    private func bringToMiddle(_ id: String) {
+        #if os(iOS) || os(visionOS)
+        if let list = pin.list, !Self.swiftUIJumps {
+            guard scratch.drawnLines.contains(id) else {
+                position.scrollTo(id: id, anchor: .center)
+                return
+            }
+            scratch.jumpFrame = nil
+            measuring = id
+            Task { @MainActor in
+                defer { if measuring == id { measuring = nil } }
+                for _ in 0..<6 { // its frame comes with the next layout
+                    try? await Task.sleep(for: .milliseconds(16))
+                    guard measuring == id, pin.list === list else { return }
+                    guard let f = scratch.jumpFrame, scratch.listFrame.height > 0 else { continue }
+                    if pin.holding { pin.release() }
+                    position = ScrollPosition(idType: String.self) // as ↓: SwiftUI would put the list back (#4788)
+                    // Upside down: a line below the middle comes up as the offset goes down, toward the newest.
+                    jumpRun.start(list, to: .offset(list.contentOffset.y + scratch.listFrame.midY - f.midY)) { _ in }
+                    return
+                }
+                position.scrollTo(id: id, anchor: .center)
+            }
+            return
+        }
+        #endif
+        withAnimation(Theme.Motion.standard) { position.scrollTo(id: id, anchor: .center) }
     }
 
     /// From a quote in a sent bubble to the message it quotes (#986): brought to the middle of the list and lit up
@@ -2200,7 +2258,7 @@ struct ChatView: View {
         setFollow { $0.read() }
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(120)) // an opened work line's steps are laid out first
-            withAnimation(Theme.Motion.standard) { position.scrollTo(id: target, anchor: .center) }
+            bringToMiddle(target)
             try? await Task.sleep(for: .milliseconds(250))
             quoteFlash = QuoteFlashMark(line: target)
         }
@@ -2255,7 +2313,7 @@ struct ChatView: View {
         Haptics.tap()
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(120)) // the opened work line's steps are laid out first
-            withAnimation(Theme.Motion.standard) { position.scrollTo(id: target, anchor: .center) }
+            bringToMiddle(target)
         }
     }
 
@@ -2623,6 +2681,7 @@ struct ChatView: View {
                     if let openRecap, openRecap.line == line.id { recapInFlow(openRecap) } else { lineView(line) }
                 }
                     .background { if quoteFlash?.line == line.id { QuoteFlash().id(quoteFlash?.id) } }
+                    .background { if measuring == line.id { JumpMeasure(scratch: scratch) } }
                     .flippedBack()
                     .debugLineY(line.id, scratch)
                     .landingFrame(line.id == landing, scratch)
@@ -3899,14 +3958,24 @@ struct ChatView: View {
                     FrameStats.shared.stop(label: "stream")
                     try? await Task.sleep(for: .seconds(2))
                     FrameStats.shared.start()
-                    // Like a reader flicking: four fast flicks back into the history, then four back to the newest.
+                    // Programmatic jumps: four of 3000 pt back into the history, then four back to the newest, as the chat
+                    // jumps (`ChatJumpRun`), or with `-showSwiftUIJumps YES` as SwiftUI's animated scroll (before #5076).
                     var y: CGFloat = 0
                     for step in 0..<8 {
                         y = max(0, y + (step < 4 ? 3000 : -3000))
-                        withAnimation(.easeOut(duration: 2.5)) { scrollList(to: y) }
+                        debugJump(to: y, seconds: 2.5)
                         try? await Task.sleep(for: .seconds(2.8))
                     }
                     FrameStats.shared.stop(label: "sweep")
+                    // Short jumps, less than a screen: the whole way animates either way (frames-hop.json).
+                    try? await Task.sleep(for: .seconds(1))
+                    FrameStats.shared.start()
+                    for step in 0..<8 {
+                        y = max(0, y + (step < 4 ? 600 : -600))
+                        debugJump(to: y, seconds: nil)
+                        try? await Task.sleep(for: .seconds(1))
+                    }
+                    FrameStats.shared.stop(label: "hop")
                     // The same distance as a finger's glide: the list's own scroll view moved every display frame at
                     // 2000 pt/s (no SwiftUI state written), four seconds back into the history and four to the newest.
                     #if os(iOS) || os(visionOS)
@@ -4059,11 +4128,15 @@ struct ChatView: View {
     static let blankLanding = UserDefaults.standard.bool(forKey: "showBlankLanding")
     /// `-showAsUnread YES`: open the chat as if its answer had not been seen (where it lands).
     static let debugAsUnread = UserDefaults.standard.bool(forKey: "showAsUnread")
+    /// `-showSwiftUIJumps YES`: the chat's jumps animate SwiftUI's scroll position, as before #5076, to measure the two
+    /// ways in one build (`-showAutoScroll`'s sweep and hops).
+    static let swiftUIJumps = UserDefaults.standard.bool(forKey: "showSwiftUIJumps")
     /// `-showEdgeScrub N`: Persona's conversation opens the right-edge navigator on the Nth newest message the user typed
     /// and keeps it open (screenshots of the new conversation layout, #1666).
     static let debugEdgeScrub = UserDefaults.standard.integer(forKey: "showEdgeScrub")
     #else
     static let debugAsUnread = false
+    static let swiftUIJumps = false
     #endif
 
     #if DEBUG && os(iOS)
@@ -6954,6 +7027,8 @@ final class ChatScratch {
     var listFrame: CGRect = .zero
     /// The bottom on screen of the line being landed on (`ChatView.landing`).
     var landingMaxY: CGFloat?
+    /// The frame on screen of the line a jump measures before gliding to it (`ChatView.measuring`).
+    var jumpFrame: CGRect?
     /// The list's horizontal offset at rest (-16: the side margins are content margins). Vertical jumps keep it:
     /// `scrollTo(y:)` set it to 0 and the page lost its margins.
     var offsetX: CGFloat = 0
@@ -6979,6 +7054,16 @@ extension View {
         #else
         self
         #endif
+    }
+}
+
+/// Reports the frame on screen of the line a jump is about to glide to (`ChatView.bringToMiddle`). In the row's
+/// background, so the row itself is not built again when the jump starts measuring it.
+private struct JumpMeasure: View {
+    let scratch: ChatScratch
+
+    var body: some View {
+        Color.clear.onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { scratch.jumpFrame = $0 }
     }
 }
 
