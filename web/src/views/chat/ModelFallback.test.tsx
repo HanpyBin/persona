@@ -85,7 +85,7 @@ describe("a refusal notice", () => {
   const legacy = items.map((i) => (i.id === "r1" ? ({ ...i, text: line, model_refusal: { ...refusal, raw: line } } as unknown as Item) : i));
   const render = (its: Item[], assistant = false) => {
     const line = chatLines(its).find((l) => l.kind === "notice")!;
-    return renderToStaticMarkup(<ChatLineView line={line} mid="m" sid="s" expandFold={async () => {}} onRetry={() => {}} assistant={assistant} />);
+    return renderToStaticMarkup(<ChatLineView line={line} mid="m" sid="s" expandFold={async () => {}} assistant={assistant} />);
   };
   const escaped = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   it("is a line of its own, not folded into the work row", () => {

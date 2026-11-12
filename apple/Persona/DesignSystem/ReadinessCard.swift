@@ -28,6 +28,9 @@ struct ReadinessCard: View {
     var dismiss: (() -> Void)?
     @State private var open = false
     @Environment(\.dynamicTypeSize) private var typeSize
+    @Environment(\.chatPin) private var pin
+    /// What the chat's pin knows the Details button by (this view's, kept while it is drawn).
+    @State private var detailsKey = "readiness-" + UUID().uuidString
 
     var body: some View {
         if AppStyle.current.usesBeautifulUI { beautiful } else { plain }
@@ -107,7 +110,8 @@ struct ReadinessCard: View {
 
     private var detailsToggle: some View {
         Button {
-            withAnimation(Theme.Motion.state) { open.toggle() }
+            // In the chat (the turn's error card) the button stays where it is and the details open under it (#3757).
+            toggleInPlace(pin, detailsKey, animation: Theme.Motion.state, closing: open) { open.toggle() }
         } label: {
             Label("Details [Readiness Card 979a33]", systemImage: open ? Theme.Icon.collapse : Theme.Icon.expand)
                 .font(Theme.Font.label).lineLimit(1)
@@ -115,6 +119,7 @@ struct ReadinessCard: View {
         .buttonStyle(.borderless)
         .foregroundStyle(.secondary)
         .accessibilityValue(open ? Text("Expanded") : Text("Collapsed [Readiness Card ee6046]"))
+        .chatPinned(detailsKey)
     }
 
     private var detailsBlock: some View {
