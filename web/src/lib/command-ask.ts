@@ -15,13 +15,7 @@ export interface CommandAsk {
   /** When the countdown runs out (ms, the hub's clock), and whether it lets the request through then. */
   deadlineAt?: number;
   deadlineAllows: boolean;
-  /** Longer than FOLDED_LINES rows at a phone's width, by a rough count: folded until "Show all". */
-  long: boolean;
 }
-
-/** The rows a long command shows until "Show all"; about how many characters of code fit a row on a phone. */
-export const FOLDED_LINES = 4;
-const ROW_CHARS = 38;
 
 /** The command prompt of a screen card's dialog; null for any other dialog, and from a hub before #5265. */
 export function commandAsk(d: ScreenDialog | undefined): CommandAsk | null {
@@ -29,7 +23,6 @@ export function commandAsk(d: ScreenDialog | undefined): CommandAsk | null {
   if (!d || !command) return null;
   const warning = d.warning?.trim();
   const at = d.deadline_at ? Date.parse(d.deadline_at) : NaN;
-  const rows = command.split("\n").reduce((n, row) => n + Math.max(1, Math.ceil(row.length / ROW_CHARS)), 0);
   const original = [warning, d.deadline?.trim()].filter(Boolean).join("\n");
   return {
     command,
@@ -38,7 +31,6 @@ export function commandAsk(d: ScreenDialog | undefined): CommandAsk | null {
     riskLine: warning ? t(d.risk === "delete" ? "chat-interactions.risk_delete" : "chat-interactions.risk_other") : undefined,
     deadlineAt: Number.isFinite(at) ? at : undefined,
     deadlineAllows: d.deadline_action === "allow",
-    long: rows > FOLDED_LINES,
   };
 }
 

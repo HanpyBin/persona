@@ -876,14 +876,29 @@ function ScreenCard({ ix }: { ix: Interaction }) {
 function CommandAskBody({ ask }: { ask: CommandAsk }) {
   const [all, setAll] = useState(false);
   const [original, setOriginal] = useState(false);
+  // "Show all" only when the four rows cut something at this width: measured, as the box's width decides it
+  const box = useRef<HTMLPreElement>(null);
+  const [cut, setCut] = useState(false);
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el || all) return;
+    const measure = () => setCut(el.scrollHeight > el.clientHeight + 1);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ask.command, all]);
   const toggle = "touch-hit mt-1 self-start text-[11.5px] font-medium whitespace-nowrap text-ink-3 transition-colors hover:text-ink";
   return (
     <div className="mb-1 flex flex-col gap-2">
       {ask.description && <p className="text-[13px] leading-relaxed whitespace-pre-wrap text-ink">{ask.description}</p>}
       <div className="flex flex-col">
         <div className="mb-1 text-[11px] font-medium text-ink-3">{t("chat-interactions.field_command")}</div>
-        <pre data-screen-command className={cx(COMMAND_BOX, ask.long && !all ? "line-clamp-4" : "max-h-72 overflow-auto")}>{ask.command}</pre>
-        {ask.long && (
+        <div className="rounded-[8px] bg-inset px-2.5 py-2 shadow-hairline">
+          <pre ref={box} data-screen-command className={cx(COMMAND_TEXT, all ? "max-h-72 overflow-auto" : "line-clamp-4")}>{ask.command}</pre>
+        </div>
+        {(cut || all) && (
           <button type="button" aria-expanded={all} onClick={() => setAll((v) => !v)} className={toggle}>
             {t(all ? "chat-interactions.collapse" : "chat-interactions.show_all")}
           </button>
@@ -908,8 +923,9 @@ function CommandAskBody({ ask }: { ask: CommandAsk }) {
   );
 }
 
-/** A command's box: code type, wrapped (a long word too), on the code boxes' surface. */
-const COMMAND_BOX = "rounded-[8px] bg-inset px-2.5 py-2 font-mono text-[11.5px] leading-[1.6] whitespace-pre-wrap break-words text-ink-2 shadow-hairline";
+/** A command in its box (the code boxes' surface around it): code type, wrapped, a long word too. The clamp is on the
+ *  text, not the padded box, so no fifth row shows in the padding. */
+const COMMAND_TEXT = "font-mono text-[11.5px] leading-[1.6] whitespace-pre-wrap break-words text-ink-2";
 
 /** The countdown Claude Code runs before it answers the prompt itself, drawn again once a second until it runs out
  *  (one timeout at a time, on the second's edge), then what happens. */

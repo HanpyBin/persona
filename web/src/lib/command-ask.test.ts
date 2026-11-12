@@ -23,7 +23,6 @@ describe("commandAsk", () => {
     expect(ask.original).toMatch(/^Dangerous rm operation not ruled out.*\nClaude Code will automatically block this request in 1:44/s);
     expect(ask.deadlineAt).toBe(Date.parse("2026-11-12T03:00:00Z"));
     expect(ask.deadlineAllows).toBe(false);
-    expect(ask.long).toBe(false);
     expect(allowDeny(hub)).toEqual({ allow: hub.options![0], deny: hub.options![1] });
   });
 
@@ -43,11 +42,6 @@ describe("commandAsk", () => {
     expect(commandAsk({ ...hub, risk: undefined })!.riskLine).toBe(t("chat-interactions.risk_other"));
     expect(commandAsk({ ...hub, warning: undefined, deadline: undefined })!.riskLine).toBeUndefined();
     expect(commandAsk({ ...hub, warning: undefined, deadline: undefined })!.original).toBeUndefined();
-  });
-
-  it("folds a long command", () => {
-    expect(commandAsk({ ...hub, command: "echo one two three; ".repeat(12) })!.long).toBe(true);
-    expect(commandAsk({ ...hub, command: [1, 2, 3, 4, 5].map((n) => `step ${n}`).join("\n") })!.long).toBe(true);
   });
 });
 
