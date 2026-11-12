@@ -1729,6 +1729,7 @@ Server → client:
 | `agents` | `session_ids` (personal Agent session ids, `<source>:<sessionKey>`, whose content changed; `[]` means the list itself changed): an extension's source reported changes (`agentsrc.updated`), a send went out, a source was removed, or a conversation was removed from or restored to the list; clients re-fetch `GET /api/v1/agents/sessions` (a bounded reader from that collection's own `since` checkpoint) ([extensions.md](../extensions/extensions.md) "Personal Agent sources", "Removing a personal Agent from the list" below) |
 | `agents.prefs` | No payload: the personal Agent list preferences changed (`PUT /api/v1/agents/prefs`, a conversation hidden or unhidden); clients re-read `GET /api/v1/agents/prefs` ("Personal Agent list preferences" below) |
 | `items` | `machine_id`, `session_id`, `items`, plus this batch's position in the transcript (see "Continuity of items" below): `history`, `to_seq`, `from_seq` (only on continuation batches). Only pushed to clients subscribed to that session; lines with no item (ai-title and the like) also get an empty `items`, so the App knows those lines have been seen |
+| `message_send_state` | `machine_id`, `session_id`, `client_msg_id`, `state` (`processing` / `delivered` / `failed` / `unknown`), `at` (UTC RFC3339Nano): a transport receipt for `/sessions/{mid}/{sid}/messages`, only to that session's subscribers. Processing precedes manager preparation and node delivery; it is not a durable queue or execution state. Final HTTP remains authoritative. Not in the event log; reconnect/retry the original operation ID to reconcile. No feature negotiation; older clients ignore the unknown type. See "Message feedback (#5258)" below. |
 | `delta` | `machine_id`, `session_id`, `text` (the whole text the headless assistant is generating; an empty string means the turn is over. A Claude session Persona started sends it too: the message Claude is showing in its terminal, as far as the transcript does not have it yet, "" once it does; whole lines every 0.1–1 s; see `docs/integrations/claude-integration.md` "Live replies (MessageDisplay)". The live text is never the source: the transcript's items replace it). About one every 80 ms; the App draws each chat at most 5 times a second, the first one after a pause immediately and then the latest; an empty string is drawn immediately; anything not yet drawn is dropped when the message lands in the transcript or on reconnect (`DeltaPacer`) |
 | `live` | `machine_id`, `session_id`, `live` (`SessionLive` or `null`): the status line of a working Claude, only sent to connections subscribed to that session that declared `session_live`; see "Live status" below |
 | `screen` | `machine_id`, `session_id`, `text`, `status`, `ts` (the node no longer samples the screen per subscription: the terminal page reads `/screen` itself on demand, and old Apps not receiving this doesn't matter) |
@@ -2226,6 +2227,36 @@ and the hub also had to wait for the small model to come up with a tab name firs
   `codex_launcher` (a shell function that runs Codex), `codex_resume` (a Codex session that cannot be resumed from the phone: something has it open, or there is no record of it; see `docs/integrations/codex.md` "Resuming from the phone"). See `docs/integrations/codex.md` ("Creating from the phone").
 
 ### Sending messages
+
+#### Message feedback (#5258)
+
+A send has three distinct boundaries: the client has local input, the hub has received the request, and the node has
+accepted the input. None of these alone proves that the model has begun answering.
+
+- Show **Sending** locally as soon as the user sends, before any network or durable-outbox work.
+- Subscribe to the target session before posting the message. For a request with `client_msg_id`, the hub sends
+  `message_send_state` with `state: processing` after basic admission and before manager parameter preparation or
+  terminal/process startup. Show **Processing** immediately. The existing operation middleware may first wait on its
+  database admission; this receipt is not an early HTTP success, a durable queue guarantee, or permission to resend.
+- Keep this per-message state separate from `Session.status`. An already working or blocked turn must not be changed
+  by a new send, and a stale session-list snapshot must not erase the pending receipt. Match the machine, session and
+  message ID; ignore unrelated receipts. The existing conversation/outbox state owns draft and failure recovery.
+- The final event is `delivered`, `failed` or `unknown`. `delivered` hands feedback to authoritative execution/queued
+  state, not to Done; no first token is needed. `failed` removes that send's Processing overlay and exposes the existing
+  HTTP error and recovery. `unknown` retains the existing delivery-check guard. Receipt alone must not enable Interrupt
+  as if it cancelled a not-yet-delivered HTTP flight: the hub deliberately continues that flight after disconnection.
+  Keep the existing execution/delivery gate for Stop; no pending-send cancellation API is introduced here.
+  Transcript echo may arrive before the
+  final HTTP response; it must not resurrect an already acknowledged bubble or end a still-running turn.
+- This live event is not replayed on reconnect. A missing event does not prove failure: reconcile the original operation
+  through its HTTP receipt or retry the same unchanged ID, as below. A concurrent retry joins the same send flight;
+  completed HTTP replays do not broadcast an older terminal event over a newer attempt.
+- A client talking to an older hub keeps its Sending/outbox feedback until the existing HTTP and transcript evidence
+  arrives. No client may pretend that local enqueue alone was a hub receipt.
+
+Apple integration uses the same event and boundaries; no Apple code changes are included in #5258. A new main
+conversation started through a creation endpoint has no target session subscription yet: keep local Sending/Preparing
+until that endpoint's existing result binds it, then use the ordinary session flow.
 
 Typing into someone else's terminal is the riskiest thing this App does. Before typing into a running Agent's pane, the node reads the screen once (`server/internal/node/sendsafe.go`,
 `server/internal/screen`), and in the following cases **types nothing** and returns 409:
