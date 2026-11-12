@@ -388,17 +388,16 @@ struct OneSidebarFoot: View {
                 toPersona()
                 padRouter?.show(.newConversation)
             } label: {
-                Label("New Chat [Quick Actions ea4b29]", systemImage: Theme.Icon.compose)
-                    .font(Theme.Font.bodyStrong)
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                    .padding(.horizontal, Theme.Space.xl)
-                    .scaledFrame(height: Theme.Size.avatarL)
-                    .background(Theme.accent, in: .capsule)
-                    .contentShape(.capsule)
+                // Its name while it fits, else its icon alone: at the system's width on the open Duo on its side (a
+                // quarter of the screen) the name was cut to "…" (#4206).
+                ViewThatFits(in: .horizontal) {
+                    newChatLabel.labelStyle(.titleAndIcon)
+                    newChatLabel.labelStyle(.iconOnly)
+                }
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("sidebar-new")
+            .layoutPriority(1) // offered the row's room before the spacer, so the name shows wherever it fits
             Spacer(minLength: Theme.Space.s)
             HStack(spacing: 0) {
                 footButton(Theme.Icon.search, label: String(localized: "Search Chats [Assistant Sidebar 55c9e4]"), id: "sidebar-search") { fullSearch = true }
@@ -417,6 +416,18 @@ struct OneSidebarFoot: View {
                 model.openAssistantConversation(key)
             }
         }
+    }
+
+    private var newChatLabel: some View {
+        Label("New Chat [Quick Actions ea4b29]", systemImage: Theme.Icon.compose)
+            .font(Theme.Font.bodyStrong)
+            .foregroundStyle(.white)
+            .lineLimit(1)
+            .fixedSize()
+            .padding(.horizontal, Theme.Space.xl)
+            .scaledFrame(height: Theme.Size.avatarL)
+            .background(Theme.accent, in: .capsule)
+            .contentShape(.capsule)
     }
 
     /// Persona's page in the detail column (not an agent, not Messages), for what it is asked next; an overlaid column
