@@ -28,7 +28,8 @@ import (
 // the state below, and a window starts with it as it would be — the background-task notifications already
 // shown (a repeat is dropped) and the calls they name, the reports subagents handed back before their
 // notification, and the last "! cmd" input (its output line becomes the call) are read from the earlier lines that
-// mention them, as is ultracode's pending command (its delayed attachment repeats command output).
+// mention them, as is ultracode's pending command (its delayed attachment repeats command output), and the request
+// whose usage the lines just before put on items (a reply's blocks are lines of their own; item_usage.go).
 // Those lines are found by a byte search while counting lines, so a Claude window may start at any line; a
 // Codex rollout records an item twice only within its turn, so its windows start at a turn (task_started).
 
@@ -320,7 +321,7 @@ func (f *File) startsTurn(_ int, line []byte, _ bool) bool {
 // seeded is the parser state for a window starting at line b whose bytes are window: what the earlier lines leave
 // behind that changes what later lines turn into. Notifications already shown (a repeat is dropped), the calls
 // they name and the reports handed back: only the earlier lines for a task the window mentions are read. The pending "! cmd": the last earlier line that is a "! cmd"
-// input or output decides it.
+// input or output decides it. The request whose usage items already carry: the lines just before (seedUsage).
 func (f *File) seeded(fh *os.File, w *window, b int, end int64, window []byte) Meta {
 	readLine := func(n int) []byte {
 		line := make([]byte, w.lineStart(n+1, end)-w.starts[n-1])
@@ -373,9 +374,11 @@ func (f *File) seeded(fh *os.File, w *window, b int, end int64, window []byte) M
 			ParseLine(n, line, &ultra)
 		}
 	}
+	usage, codexTotal := f.seedUsage(readLine, func(n int) int64 { return w.lineStart(n+1, end) - w.starts[n-1] }, b, w.codex)
 	return Meta{Sidechain: f.meta.Sidechain, Codex: w.codex, notified: scratch.notified, taskCalls: scratch.taskCalls,
 		handbacks: scratch.handbacks, agentCalls: scratch.agentCalls, bashInput: bash,
-		Ultracode: ultra.Ultracode, UltracodeAt: ultra.UltracodeAt, UltracodeSince: ultra.UltracodeSince, ultracodeCommand: ultra.ultracodeCommand}
+		Ultracode: ultra.Ultracode, UltracodeAt: ultra.UltracodeAt, UltracodeSince: ultra.UltracodeSince, ultracodeCommand: ultra.ultracodeCommand,
+		usage: usage, codexTotal: codexTotal}
 }
 
 var taskIDRe = lazyre.New(`<task-id>([^<]{1,200})</task-id>`)
