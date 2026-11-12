@@ -347,6 +347,18 @@ For every component: use the design-system one, not a lookalike. Counts are appr
   **No matching commands**, 40 px, centered, `ink-3`. No key hint line. Ranking, keys and deviations: `docs/web/web.md`
   ("Input (Prompt Bar)").
 - Editing state (web, #4503): editing the last message puts its words and quotes back into the box under a one-line bar at the box's top, above the context chips and quote bars. The bar has an accent pencil, **Editing last message** (`ink-2`, medium), a truncating hint (`ink-3`, precise pointers only) and a × with the quote bar's 24 px look. It is the only sign of the state, and the text field stays the same field. The irreversible step (the rewind) waits for an explicit send, which the bar's hint names. Esc or × leaves with nothing changed (`docs/web/web.md` "Pages", **Edit last message**).
+- Queued messages (web, #5327): drawn as cindy's pending queue at the owner's request (where cindy and the older design
+  differ, cindy wins for this area). They sit in the composer's `top` slot, first in the card, flush with its border and
+  edges, with a `line` hairline between them and the input; the card's own border and focus ring hold both. List: at
+  most 196 px, then it scrolls; padding 4 px sides, 6 px top. Row: 8 px radius, 2 px vertical padding, 6 px gap, one
+  line of 13 px / 1.25 text, `ink-2` at rest and `ink` with the `hover` fill while hovered or focused; no visible
+  number (labels carry the index). Left, a 20 px drag handle (`grip` icon, 12 px, `ink-3`) shown with the row's actions;
+  right, 20 px round buttons with a `line` ring on `surface` (↑ Send now 12 px, pencil and trash 11 px), shown on hover
+  or focus and always on a screen without hover, a spinner in their place while the row's request is out. A row from
+  another conversation has a send mark and **Another chat** (semibold 13 px, at most 120 px) before its words and no
+  handle or buttons. Four rows or fewer show in full; from five, three and a centered 12 px **N more** / **Show less**
+  with a chevron under a `line` divider. On a phone on its side the queue is one "N queued" line beside the run's status
+  that opens the same rows. Spec: `docs/web/web.md` ("Queued messages").
 - Duplicates: four composer implementations exist (DS-19).
 
 ### 3.2 Message bubbles
@@ -796,6 +808,8 @@ or Android's toast (`JToastHost`, which draws the button in the accent, as iOS).
 remains eligible; Undo cannot overwrite it. Web uses `Button` with
 44 px grid-based minimum targets and stacks the action group at narrow widths. Android reuses `DraftDecisionButtons`
 with the existing 48 dp button token and stacks the entire group at large text sizes or narrow widths, primary first.
+A message card in Persona's conversation on iOS and Android's Glass style adds **Edit** beside Send: the drafted reply
+reads as text until Edit opens it for typing, and **Done** closes it (iOS `MessageCard`, Android `DraftDecisionButtons(edit)`).
 The original card's not-sent receipt remains inspectable. This deliberately does not reuse Inbox completion, which
 would suppress future progress replies for the same source. The API contract is in `docs/assistant/agent-work.md`.
 
