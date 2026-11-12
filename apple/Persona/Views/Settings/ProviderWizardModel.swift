@@ -91,6 +91,8 @@ enum LauncherName {
     /// api_key (x-api-key) | bearer.
     var auth = "api_key"
     var apiKey = ""
+    /// The key field takes a secret provider's reference (docs/extensions/secret-providers.md "Launcher keys").
+    var apiKeyByReference = false
     /// Typed headers, "Name: value" a line. Empty keeps what the hub has unless `clearHeaders`.
     var headers = ""
     /// Clear Headers: the stored headers go when saved.
@@ -156,6 +158,8 @@ enum LauncherName {
         }
     }
     var presetKey = ""
+    /// The preset's key field takes a secret provider's reference.
+    var presetKeyByReference = false
     /// Empty: the hub names it after the provider.
     var presetName = ""
     /// Empty: the hub uses the preset's (「智谱 GLM」); any language.
@@ -184,7 +188,7 @@ enum LauncherName {
     var presetNameProblem: String? { LauncherName.problem(presetName) }
     private var trimmedKey: String { presetKey.trimmingCharacters(in: .whitespacesAndNewlines) }
     /// A key long enough to be worth testing on its own: a test costs a request, so not on every keystroke.
-    var keyTestable: Bool { (preset?.testable ?? false) && trimmedKey.count >= 8 }
+    var keyTestable: Bool { (preset?.testable ?? false) && !presetKeyByReference && trimmedKey.count >= 8 }
     /// The key test says the provider does not serve this region (#4482): no key will work here, only another
     /// provider, so the wizard offers that instead of testing again (#4526).
     var regionBlocked: Bool { keyTest.map { !$0.ok && $0.code == "region_blocked" } ?? false }
@@ -204,6 +208,7 @@ enum LauncherName {
         kind = url.trimmingCharacters(in: CharacterSet(charactersIn: "/ ")) == Self.anthropicURL ? .anthropic : .custom
         baseURL = kind == .custom ? url : ""
         auth = e.bearerAuth ? "bearer" : "api_key"
+        apiKeyByReference = e.keyReference != nil
         models = e.models ?? []
         defaultModel = e.model ?? ""
         if !defaultModel.isEmpty, !models.contains(where: { $0.id == defaultModel }) { models.insert(ProviderModel(id: defaultModel), at: 0) }
@@ -237,6 +242,11 @@ enum LauncherName {
 
     var isNew: Bool { existing == nil }
     var hasStoredKey: Bool { existing?.hasKey == true }
+    /// The hub takes a provider's key as a secret provider's reference (`launcher_secret_references`).
+    var keyReferences: Bool { deps.features().contains("launcher_secret_references") }
+    /// A reference is typed that is not saved yet: Test Connection and Get Model List wait for the save, which checks that
+    /// it resolves; a probe would hand its value to the address in the request. Once saved, the provider is probed by name.
+    var referencePending: Bool { apiKeyByReference && !key.isEmpty }
     var hasStoredHeaders: Bool { existing?.hasHeaders == true && !clearHeaders }
     var hasStoredEnv: Bool { existing?.hasEnv == true && !clearEnv }
 
@@ -269,7 +279,7 @@ enum LauncherName {
     /// The model Test Connection asks for: the default, else the first picked or listed.
     var testModel: String { [defaultModel, models.first?.id ?? "", discovered.first?.id ?? ""].first { !$0.isEmpty } ?? "" }
 
-    var canTest: Bool { connectionReady && !testModel.isEmpty && !testing }
+    var canTest: Bool { connectionReady && !testModel.isEmpty && !testing && !referencePending }
 
     var canSave: Bool { connectionReady && models.contains { $0.id == defaultModel } && proxyProblem == nil && scopeProblem == nil && !saving }
 
@@ -308,7 +318,7 @@ enum LauncherName {
     func model(_ id: String) -> ProviderModel? { models.first { $0.id == id } ?? discovered.first { $0.id == id } }
 
     private var probe: LauncherProbe {
-        LauncherProbe(name: existing?.name, baseURL: address, auth: authMode, apiKey: key.isEmpty ? nil : key,
+        LauncherProbe(name: existing?.name, baseURL: address, auth: authMode, apiKey: key.isEmpty || apiKeyByReference ? nil : key,
                       headers: headersValue, model: testModel.isEmpty ? nil : testModel)
     }
 
@@ -324,7 +334,7 @@ enum LauncherName {
     }
 
     func discover() async {
-        guard connectionReady, !discovering, let api = deps.api() else { return }
+        guard connectionReady, !referencePending, !discovering, let api = deps.api() else { return }
         discovering = true
         defer { discovering = false; discoveredOnce = true }
         do {
@@ -396,11 +406,12 @@ enum LauncherName {
         var input = LauncherInput(name: trimmedName, baseURL: address, model: defaultModel, smallModel: t(smallModel), subagentModel: t(subagentModel),
                              customModel: e?.customModel ?? "", customModelName: e?.customModelName ?? "",
                              customModelDescription: e?.customModelDescription ?? "", args: e?.args ?? [],
-                             apiKey: key.isEmpty ? nil : key, kind: e?.kind ?? "launcher", api: "messages", auth: authMode,
+                             apiKey: key.isEmpty || apiKeyByReference ? nil : key, kind: e?.kind ?? "launcher", api: "messages", auth: authMode,
                              models: models, opusModel: t(opusModel), sonnetModel: t(sonnetModel), haikuModel: t(haikuModel),
                              fableModel: t(fableModel), subagentForce: subagentForce, headers: headersValue, env: envValue, proxy: proxyValue,
                              noProxy: noProxyValue, timeoutMS: Int(t(timeoutMS)) ?? 0, compactWindow: Int(t(compactWindow)) ?? 0,
                              maxContext: Int(t(maxContext)) ?? 0, effort: t(effort))
+        if apiKeyByReference, !key.isEmpty { input.apiKeyReference = key }
         if scopeShown { scope.apply(to: &input, old: e, machines: deps.machines(), kind: input.kind ?? "launcher") }
         return input
     }
@@ -480,7 +491,8 @@ enum LauncherName {
         let assigning = p.runsClaude && assign
         var input = LauncherInput(name: presetName.trimmingCharacters(in: .whitespaces), baseURL: "", model: m == p.defaultModel ? "" : m,
                                   smallModel: "", subagentModel: "", customModel: "", customModelName: "", customModelDescription: "",
-                                  args: [], apiKey: trimmedKey, preset: p.id,
+                                  args: [], apiKey: presetKeyByReference ? nil : trimmedKey,
+                                  apiKeyReference: presetKeyByReference ? trimmedKey : nil, preset: p.id,
                                   displayName: presetDisplayName.trimmingCharacters(in: .whitespaces),
                                   assign: assigning ? Self.assignPurposes : nil)
         if scopeShown { scope.apply(to: &input, old: nil, machines: deps.machines(), assign: assigning, kind: p.kind) }

@@ -262,15 +262,6 @@ nonisolated struct ExtensionSecret: Codable, Hashable, Sendable, Identifiable {
     var id: String { name }
 }
 
-/// A secret provider's reference a setting holds: whose it is, the reference and what it names in words.
-nonisolated struct SecretReference: Codable, Hashable, Sendable {
-    var provider: String
-    var providerName: String
-    var reference: String
-    var title: String?
-    private enum CodingKeys: String, CodingKey { case provider, reference, title, providerName = "provider_name" }
-}
-
 /// A setting that holds one of a provider's references: another extension's secret, or a model provider's key (on one
 /// computer when `machine` is set).
 nonisolated struct ExtensionSecretUser: Codable, Hashable, Sendable, Identifiable {
@@ -451,6 +442,13 @@ enum ExtensionText {
     }
 
     /// A secret's row: set (with its last four characters when the hub gives them, #5906), or not set (required).
+    /// Where a reference's value comes from: "From <provider> · <item>".
+    static func referenceState(_ r: SecretReference) -> String {
+        let from = String(localized: "From \(r.providerName.isEmpty ? r.provider : r.providerName)", comment: "A secret that holds a secret provider's reference")
+        guard let title = r.title, !title.isEmpty else { return from }
+        return from + " · " + title
+    }
+
     static func secretState(_ s: ExtensionSecret) -> String {
         if let r = s.reference { return String(localized: "From \(r.providerName.isEmpty ? r.provider : r.providerName)", comment: "A secret that holds a secret provider's reference") }
         guard s.set else { return s.required == true ? String(localized: "Not set (required)") : String(localized: "Not set") }

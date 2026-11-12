@@ -30028,6 +30028,29 @@
       },
       "extractionState" : "manual"
     },
+    "Checked when you save it: the reference must resolve. The connection test runs after that.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Checked when you save it: the reference must resolve. The connection test runs after that."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存時に参照から値を取れるか確認します。接続テストは保存後に行います。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存时检查引用能否取到值，保存后再测连接。"
+          }
+        }
+      }
+    },
     "Checking" : {
       "localizations" : {
         "en" : {
@@ -65388,6 +65411,29 @@
         }
       },
       "extractionState" : "manual"
+    },
+    "Its provider gives the key whenever this provider needs it. Persona keeps only the reference.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Its provider gives the key whenever this provider needs it. Persona keeps only the reference."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "必要なときにプロバイダーがキーを渡します。Persona は参照だけを保存します。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "需要时由它的提供方给出 Key，Persona 只保存引用。"
+          }
+        }
+      }
     },
     "Its provider gives the value whenever this extension needs it. Persona keeps only the reference.": {
       "extractionState": "manual",
