@@ -6,7 +6,9 @@ import { CONTEXT_RE, FILE_RE, PERSONA_SERVERS, canonicalTool } from "./compatibi
 import { t } from "../i18n";
 import { errorSignature, isRetryText, parseAPIError, type APIErrorInfo } from "./api-errors";
 import { foldCompactions, isCompaction } from "./compaction";
+import { engineSwitchOf, type EngineSwitch } from "./engine-switch";
 import { injectedOf } from "./injected";
+import { markModelChanges, type ModelChange } from "./model-change";
 import { sourceKey, sourceOf, userSourceSentinel } from "./message-source";
 import { attachedAgentNotices } from "./task-association";
 import type { Injected, Item, MessageSource } from "./types";
@@ -64,6 +66,8 @@ export interface Context {
   title?: string;
   url?: string;
   text: string;
+  /** Its other attributes as written (a forward's `msg` and metadata, a workspace's `machine`); absent when it has none. */
+  attrs?: Record<string, string>;
 }
 
 export interface Segment {
@@ -79,6 +83,14 @@ export interface Segment {
   folds: Item[];
   /** Part of a supervision round: its visibility tools stay outside the ordinary work fold. */
   supervision?: boolean;
+  /** Its reply came from another model than the previous visible reply (lib/model-change.ts): a divider before it. */
+  modelChange?: ModelChange;
+  /** Its message is the first the conversation's new engine got (#5054, lib/engine-switch.ts): the switch divider
+   *  before it, with the handoff its block carried (never a context chip). */
+  engineSwitch?: EngineSwitch;
+  /** The exchange ended in a model API error or an interruption after everything in it (turnLines, lineError): its last
+   *  words are not a finished reply, and say so (cindy's "This reply did not complete", #5314). */
+  cut?: boolean;
 }
 
 function blockOrder(a: Item, b: Item) {
@@ -125,8 +137,15 @@ export function withoutFolded(have: Item[], page: Item[]): Item[] {
 
 const ATTR_RE = /(\w+)="([^"]*)"/g;
 
+const NAMED_ENTITIES: Record<string, string> = { quot: '"', apos: "'", lt: "<", gt: ">", amp: "&" };
+
+/** One pass, so an escaped entity stays itself; numeric ones too (Go's html.EscapeString writes `&#34;` and `&#39;`). */
 function unescapeAttr(s: string) {
-  return s.replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+  return s.replace(/&(quot|apos|lt|gt|amp|#\d+|#[xX][0-9a-fA-F]+);/g, (m, e: string) => {
+    if (e[0] !== "#") return NAMED_ENTITIES[e];
+    const code = e[1] === "x" || e[1] === "X" ? parseInt(e.slice(2), 16) : Number(e.slice(1));
+    return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : m;
+  });
 }
 
 /** A tag's `name="value"` attributes, unescaped. */
@@ -190,8 +209,8 @@ export function parseUserText(raw: string): { text: string; contexts: Context[];
   const files: AttachedFile[] = [];
   const photos: string[] = [];
   let text = withoutViewErrors(raw).replace(CONTEXT_RE, (_, attrs: string, body: string) => {
-    const a = tagAttrs(attrs);
-    contexts.push({ kind: a.kind ?? "context", title: a.title, url: a.url, text: body.trim() });
+    const { kind, title, url, ...rest } = tagAttrs(attrs);
+    contexts.push({ kind: kind ?? "context", title, url, text: body.trim(), ...(Object.keys(rest).length ? { attrs: rest } : {}) });
     return "";
   });
   text = text.replace(FILE_RE, (_, attrs: string) => {
@@ -266,7 +285,13 @@ export function segments(items: Item[], results?: ReadonlyMap<string, Item>): Se
       else {
         const p = parseUserText(it.text ?? "");
         cur.user!.text = cur.user!.text ? `${cur.user!.text}\n${p.text}` : p.text;
-        cur.user!.contexts.push(...p.contexts.filter((c) => c.kind !== "message-source"));
+        for (const c of p.contexts) {
+          if (c.kind === "message-source") continue;
+          // a real switch is the divider, not a chip; a block that only looks like one (pasted, naming no engines) stays a chip
+          const sw = engineSwitchOf(c);
+          if (sw) cur.engineSwitch ??= sw;
+          else cur.user!.contexts.push(c);
+        }
         if (p.files.length) cur.user!.files = [...(cur.user!.files ?? []), ...p.files];
         if (p.photos.length) cur.user!.photos = [...new Set([...(cur.user!.photos ?? []), ...p.photos])];
       }
@@ -827,7 +852,7 @@ export function buildBlocks(items: Item[], background = false): Block[] {
         // e.g. a background command finishing after a recap: part of the (next) work, never its own line
         cur = newTurn(it.id);
         add(cur, it);
-      } else if (!it.task && (it.text ?? "").includes("中断")) { // i18n-ignore: the transcript's interrupt notice
+      } else if (isInterruptNotice(it)) {
         cur.trailing.push(it);
       } else {
         add(cur, it);
@@ -839,6 +864,11 @@ export function buildBlocks(items: Item[], background = false): Block[] {
   }
   close();
   return blocks;
+}
+
+/** The transcript's "Interrupted" notice: a line of its own after the exchange it stopped. */
+function isInterruptNotice(it: Item): boolean {
+  return it.kind === "notice" && !it.task && (it.text ?? "").includes("中断"); // i18n-ignore: the transcript's interrupt notice
 }
 
 export type ChatLine =
@@ -876,6 +906,9 @@ function turnLines(t: Turn, live: boolean, results?: ReadonlyMap<string, Item>):
     ordered = ordered.slice(1);
   }
   const segs = segments(ordered, results);
+  // stopped after everything it did (not an exchange that went on after it): its last words are not a finished reply
+  const end = segs.at(-1), at = t.ordered.at(-1)?.seq ?? 0;
+  if (end && !live && t.trailing.some((n) => isInterruptNotice(n) && n.seq > at)) end.cut = true;
   segs.forEach((seg, k) => {
     if (k === 0 && !seg.user && wokeAt) seg.start = wokeAt;
     const last = k === segs.length - 1;
@@ -935,7 +968,7 @@ export function chatLines(items: Item[], opts: ChatLinesOptions = {}): ChatLine[
   // Working with nothing of this run yet (the last thing is a recap): retain the supervision round's visibility.
   if (opts.live && !liveId) append([{ kind: "segment", id: "live", seg: { id: "live", steps: [], tools: 0, thoughts: 0, replies: 0, folds: [] }, live: true }], [], true);
   flush();
-  const lines = foldRecaps(foldAPIErrors(out));
+  const lines = markModelChanges(foldRecaps(foldAPIErrors(out)));
   if (background) hideScheduledPrompts(lines);
   let previous: string | undefined;
   for (const line of lines) {
@@ -968,7 +1001,9 @@ function lineError(l: ChatLine): { item: Item; info: APIErrorInfo; rest: ChatLin
   if (l.kind !== "segment" || !l.seg.answer) return null;
   const info = parseAPIError(l.seg.answer.text);
   if (!info) return null;
-  const seg = { ...l.seg, answer: undefined };
+  const seg: Segment = { ...l.seg, answer: undefined };
+  // the error came after everything else the exchange did: the words before it are cut short (Segment.cut)
+  if (!l.live && exchangeSteps(l.seg).at(-1)?.id === l.seg.answer.id) seg.cut = true;
   const empty = !seg.user && !seg.steps.length && !l.live;
   return { item: l.seg.answer, info, rest: empty ? null : { ...l, seg } };
 }
