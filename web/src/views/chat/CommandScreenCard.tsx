@@ -17,7 +17,7 @@ import { Card, CloseBlockedAgent, OptionLabel, resolve, useCardKeys } from "./In
 
 export function CommandScreenCard({ ix }: { ix: Interaction }) {
   const d = ix.dialog;
-  const ask = commandAsk(d)!;
+  const ask = commandAsk(d) ?? { command: d?.command ?? "", deadlineAllows: false };
   const pair = allowDeny(d);
   const options = d?.options ?? [];
   const [busy, setBusy] = useState<string | null>(null);

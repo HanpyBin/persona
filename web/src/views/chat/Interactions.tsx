@@ -748,9 +748,9 @@ export function CloseBlockedAgent({ ix, disabled }: { ix: Interaction; disabled:
 const CommandScreenCard = lazyPage(() => import("./CommandScreenCard").then((m) => m.CommandScreenCard), { idle: true });
 
 function ScreenCard({ ix }: { ix: Interaction }) {
-  const d = ix.dialog;
-  if (!d?.command?.trim() || d.multi || d.options?.some((o) => o.kind)) return <PlainScreenCard ix={ix} />;
-  return <Suspense fallback={<PlainScreenCard ix={ix} />}><CommandScreenCard ix={ix} /></Suspense>;
+  // The hub sets `command` only on a shell command's permission prompt (one choice, no free-text field).
+  const plain = <PlainScreenCard ix={ix} />;
+  return ix.dialog?.command ? <Suspense fallback={plain}><CommandScreenCard ix={ix} /></Suspense> : plain;
 }
 
 function PlainScreenCard({ ix }: { ix: Interaction }) {
