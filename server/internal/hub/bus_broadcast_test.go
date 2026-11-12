@@ -296,6 +296,29 @@ func TestABroadcastCannotSpeakForTheHub(t *testing.T) {
 	}
 }
 
+// A receipt is the hub's transport statement, never an extension's event. Both
+// legacy permissive reports and explicit declarations must reject a forgery,
+// including one targeting a session the sending manager really owns.
+func TestMessageSendStateBroadcastIsHubOnly(t *testing.T) {
+	for _, declared := range []bool{false, true} {
+		t.Run(map[bool]string{false: "legacy report", true: "declared extension event"}[declared], func(t *testing.T) {
+			h, _, manager := pathsHub(t, quiet, quiet)
+			h.keepExtReport("m-0b0b0b", &extwire.Report{EventsDeclared: declared,
+				APIs: []extwire.APIPrefix{{Prefix: "fixture", Events: []string{"message_send_state"}}}})
+			if !h.ownsRef("m-0b0b0b", "mb", "b1") {
+				t.Fatal("fixture does not own the forged receipt's target")
+			}
+			app := wsApp(t, h)
+			got := broadcastsTo(t, app, manager,
+				`{"type":"message_send_state","machine_id":"mb","session_id":"b1","client_msg_id":"fixture-message","state":"processing","at":"2026-01-01T00:00:00Z","note":"FORGED_RECEIPT"}`,
+				`{"type":"inbox","machine_id":"mb","note":"LEGITIMATE_EVENT"}`)
+			if marked(got, "FORGED_RECEIPT") || !marked(got, "LEGITIMATE_EVENT") {
+				t.Fatalf("receipt trust boundary: %v", got)
+			}
+		})
+	}
+}
+
 // The hub reads a broadcast with exact keys, as the apps do: a key that differs from type, machine_id, session_id or
 // conversation only by case, or any key twice in an object, at any depth, drops the message; what the apps get is the
 // message as the hub read it.
