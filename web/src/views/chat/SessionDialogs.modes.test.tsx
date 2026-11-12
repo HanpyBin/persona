@@ -27,6 +27,16 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it("rolls back an optimistic pick when the hub explicitly refuses it", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ code: "timeout", error: "Request timed out" }), { status: 502, headers: { "Content-Type": "application/json" } })));
+  const session = { machine_id: "m", session_id: "s", title: "Probe", status: "idle", model: "old-model" } as Session;
+  upsertSession(session);
+  await expect(applyModes(() => session, { model: "new-model" })).resolves.toBe(false);
+  expect(getSession("m", "s")?.model).toBe("old-model");
+  expect(toast).toHaveBeenCalledWith("Couldn't change: The request timed out. The computer may be busy or the network unstable. Check whether it went through, then try again later.", "error");
+  expect(toast).not.toHaveBeenCalledWith(expect.stringContaining("may have been applied"), "error");
+});
+
 it("ends an unconfirmed model write with a reason without rolling back a change that may have run", async () => {
   const session = { machine_id: "m", session_id: "s", title: "Probe", status: "idle", model: "old-model" } as Session;
   upsertSession(session);
