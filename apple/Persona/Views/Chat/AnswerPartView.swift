@@ -162,7 +162,7 @@ struct AnswerPartsLift: View {
                 .liftPressedPart(true, whole: true)
         }
         ForEach(parts.indices, id: \.self) { n in
-            if whole || grown || n <= pressed {
+            if whole || grown || n <= pressed || n == parts.count - 1 {
                 let key = AnswerPartMemo.key(message, n)
                 let text = RowMemo.assistant(key) { _ in AssistantRowText(parts[n].text) }
                 AnswerPartWords(text: text, key: key, message: message)
@@ -172,6 +172,8 @@ struct AnswerPartsLift: View {
                 // The lift's first frame lays out the pressed part alone, as lifting a part did (#5291): the parts
                 // under it hold their place as tall as the card, so the copy opens at the pressed part as it will be
                 // (shorter, the scroll view would show the parts above it, laid out too), and come in the next frame.
+                // The last part is itself from the start: what follows the pressed part never ends shorter than it
+                // began (the copy would move to its new end, the card with it), and it is laid out only if it shows.
                 Color.clear.containerRelativeFrame(.vertical)
             }
         }
