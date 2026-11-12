@@ -5,7 +5,7 @@
 // fields: the card stays the terminal's question with its numbered options. The hub is faked (apiOp).
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 vi.hoisted(() => {
   window.matchMedia ??= ((query: string) => ({ matches: false, media: query, onchange: null, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, dispatchEvent: () => false })) as typeof window.matchMedia;
 });
@@ -41,6 +41,12 @@ const card = (deadlineIn: number): Interaction => ({
     deadline_action: "deny", deadline_at: new Date(Date.now() + deadlineIn * 1000).toISOString(),
     options: [{ key: "1", label: "Yes" }, { key: "2", label: "No" }],
   },
+});
+
+// The card's chunk loads when the first card shows (lazyPage); its first import, transformed under a busy machine, took
+// longer than body() waits. In before the tests, it resolves at once.
+beforeAll(async () => {
+  await import("./CommandScreenCard");
 });
 
 /** The plain words' own chunk (lazyPage) is in and drawn. */
