@@ -43,6 +43,11 @@ const card = (deadlineIn: number): Interaction => ({
   },
 });
 
+/** The plain words' own chunk (lazyPage) is in and drawn. */
+const body = async () => {
+  for (let i = 0; i < 20 && !host.querySelector("[data-screen-command]"); i++) await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
+};
+
 const button = (label: string) => [...host.querySelectorAll("button")].find((b) => b.textContent?.trim() === label) as HTMLButtonElement;
 
 beforeEach(() => {
@@ -60,15 +65,16 @@ afterEach(() => {
 });
 
 describe("a command's permission prompt", () => {
-  it("says what is asked in plain words, with Claude Code's own words one tap away", () => {
+  it("says what is asked in plain words, with Claude Code's own words one tap away", async () => {
     act(() => root.render(<InteractionCard ix={card(104)} />));
-    expect(host.textContent).toContain(t("chat-interactions.command_title", { agent: "Claude" }));
+    await body();
+    expect(host.textContent).toContain(t("chat-commandask.title", { agent: "Claude" }));
     expect(host.textContent).not.toContain("Do you want to proceed?");
     expect(host.textContent).toContain("Count the example names in first-screen chunks");
     expect(host.querySelector("[data-screen-command]")?.textContent).toBe("cd ./dist && ls");
-    expect(host.querySelector("[data-screen-risk]")?.textContent).toBe(t("chat-interactions.risk_delete"));
+    expect(host.querySelector("[data-screen-risk]")?.textContent).toBe(t("chat-commandask.risk_delete"));
     expect(host.textContent).not.toContain("Dangerous rm operation");
-    act(() => button(t("chat-interactions.show_original")).click());
+    act(() => button(t("chat-commandask.show_original")).click());
     expect(host.textContent).toContain("Dangerous rm operation not ruled out");
     expect(host.textContent).toContain("will automatically block this request in 1:44");
     // No numbered Yes / No rows: Deny and Allow.
@@ -77,22 +83,25 @@ describe("a command's permission prompt", () => {
   });
 
   it("counts down, then says what happens", async () => {
+    await act(async () => { await import("./CommandScreenCard"); }); // its chunk in before the clock is faked
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     act(() => root.render(<InteractionCard ix={card(104)} />));
+    await flush();
     const line = () => host.querySelector("[data-screen-countdown]")?.textContent;
-    expect(line()).toBe(t("chat-interactions.countdown_deny", { time: "1:44" }));
+    expect(line()).toBe(t("chat-commandask.countdown_deny", { time: "1:44" }));
     // A tick a second, each after the redraw the one before made.
     const seconds = async (n: number) => {
       for (let i = 0; i < n; i++) await act(async () => { vi.advanceTimersByTime(1000); });
     };
     await seconds(3);
-    expect(line()).toBe(t("chat-interactions.countdown_deny", { time: "1:41" }));
+    expect(line()).toBe(t("chat-commandask.countdown_deny", { time: "1:41" }));
     await seconds(101);
-    expect(line()).toBe(t("chat-interactions.countdown_over_deny"));
+    expect(line()).toBe(t("chat-commandask.countdown_over_deny"));
   });
 
   it("answers Allow and Deny with the prompt's own options", async () => {
     act(() => root.render(<InteractionCard ix={card(104)} />));
+    await body();
     act(() => button(t("chat-interactions.allow")).click());
     await flush();
     expect(calls.at(-1)?.body).toMatchObject({ option: "1" });

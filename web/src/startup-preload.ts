@@ -177,9 +177,13 @@ export async function brotliCopies(dir: string, files: string[]): Promise<{ file
  * no first-screen code or words; the lazy wizard's pieces shared through views/settings/ProviderFields.tsx changed how
  * Rollup names the shared chunks' exports, which renamed App's imports and moved App 138 B as counted, its length
  * unchanged: ja 595,110 B on main at d7908558d to 595,248 B, 40 B of it in the room main had; take it back when App's
- * imports are renamed back). Raise it on purpose, in the change that needs it.
+ * imports are renamed back). And 147 B for Claude Code's command prompt in plain words (#5266: ja 595,395 B against
+ * 595,073 B on main at 200c73f4a, +322 B, of which 175 B fit the room main had: the screen card sending a command prompt
+ * to its own chunk, loaded at idle, and the card, title, Deny / Allow and the shared pieces that chunk takes from App;
+ * the card's body, its words (chat-commandask) and lib/command-ask*.ts load with the chunk). Raise it on purpose, in the
+ * change that needs it.
  */
-export const FIRST_SCREEN_BUDGET = 595_248;
+export const FIRST_SCREEN_BUDGET = 595_395;
 
 // The hash in a built file's name: the 8 characters of Rollup's [hash] (url-safe base64) between "-" and the
 // extension, as vite.config.ts names every chunk and asset ("assets/[name]-[hash].js", "[name]-[hash][extname]").

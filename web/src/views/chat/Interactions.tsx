@@ -1,9 +1,8 @@
 // What the agent is waiting on (questions, plans, permissions, terminal dialogs, MCP forms and links), as Beautiful UI's Approval Card.
-import { createContext, Fragment, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { createContext, Fragment, Suspense, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { answerCard, usePendingLine } from "../../lib/card-answer";
 import { cardKeyAction, focusComposer } from "../../lib/card-keys";
-import { allowDeny, commandAsk, countdownLine, type CommandAsk } from "../../lib/command-ask";
-import { agentLabel } from "../../lib/mentions";
+import { lazyPage } from "../../lib/lazy-page";
 import { delegateLines, isDelegating, recommendedLabels, type DelegatedAnswer } from "../../lib/delegate";
 import { Choice, DigitHint } from "./Choice";
 import { DelegatedCard } from "./Delegated";
@@ -49,7 +48,7 @@ export async function resolve(ix: Interaction, body: Record<string, unknown>) {
  * to the composer and never answers. `focused` is when — and only when — the card's key hints (option digits, the Enter
  * badge) are drawn: a card at rest looks exactly as before. Spread `root` on the card's root element (Card does).
  */
-function useCardKeys({ enter, digit }: { enter?: () => boolean | void; digit?: (n: number) => boolean } = {}) {
+export function useCardKeys({ enter, digit }: { enter?: () => boolean | void; digit?: (n: number) => boolean } = {}) {
   const ref = useRef<HTMLDivElement | null>(null);
   const [focused, setFocused] = useState(false);
   const at = useRef({ enter, digit });
@@ -108,7 +107,7 @@ const SendingAnswer = createContext("");
  *  says so for every kind but a tool approval, whose body already has that line (PermissionBody). */
 const AskedFrom = createContext("");
 
-function Card({ title, kicker, onDismiss, busy, children, footer, looking = false, cardKeys }: { title: string; kicker: string; onDismiss?: () => void; busy?: boolean; children: React.ReactNode; footer: React.ReactNode; looking?: boolean; cardKeys?: CardKeys }) {
+export function Card({ title, kicker, onDismiss, busy, children, footer, looking = false, cardKeys }: { title: string; kicker: string; onDismiss?: () => void; busy?: boolean; children: React.ReactNode; footer: React.ReactNode; looking?: boolean; cardKeys?: CardKeys }) {
   const asked = useContext(AskedByVoice);
   const sending = useContext(SendingAnswer);
   const from = useContext(AskedFrom);
@@ -162,7 +161,7 @@ function Card({ title, kicker, onDismiss, busy, children, footer, looking = fals
 }
 
 /** A terminal dialog's option: its words without the "(Recommended)" suffix, the "Recommended" tag instead. */
-function OptionLabel({ label }: { label: string }) {
+export function OptionLabel({ label }: { label: string }) {
   const shown = optionDisplay(label);
   return (
     <span className="block text-[13px] text-ink">
@@ -722,7 +721,7 @@ function SecretHandoffCard({ ix }: { ix: Interaction }) {
   );
 }
 
-function CloseBlockedAgent({ ix, disabled }: { ix: Interaction; disabled: boolean }) {
+export function CloseBlockedAgent({ ix, disabled }: { ix: Interaction; disabled: boolean }) {
   const session = useStore(() => getSession(ix.machine_id, ix.session_id));
   const [confirming, setConfirming] = useState(false);
   const [closing, setClosing] = useState(false);
@@ -744,7 +743,17 @@ function CloseBlockedAgent({ ix, disabled }: { ix: Interaction; disabled: boolea
   </div>;
 }
 
+/** Claude Code asking to run a command (#5266), said in plain words: its own chunk, loaded at idle, since most chats never
+ *  show one. Until it is in, the card is the terminal's question as before. */
+const CommandScreenCard = lazyPage(() => import("./CommandScreenCard").then((m) => m.CommandScreenCard), { idle: true });
+
 function ScreenCard({ ix }: { ix: Interaction }) {
+  const d = ix.dialog;
+  if (!d?.command?.trim() || d.multi || d.options?.some((o) => o.kind)) return <PlainScreenCard ix={ix} />;
+  return <Suspense fallback={<PlainScreenCard ix={ix} />}><CommandScreenCard ix={ix} /></Suspense>;
+}
+
+function PlainScreenCard({ ix }: { ix: Interaction }) {
   const input = useRef<HTMLInputElement>(null);
   useLayoutEffect(() => {
     const el = input.current;
@@ -753,9 +762,6 @@ function ScreenCard({ ix }: { ix: Interaction }) {
     };
   }, []);
   const d = ix.dialog;
-  // A command's permission prompt (#5266): what it asks in plain words, its Yes / No as Allow / Deny.
-  const ask = commandAsk(d);
-  const pair = allowDeny(d);
   const [text, setText] = useState("");
   const [typing, setTyping] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -775,34 +781,21 @@ function ScreenCard({ ix }: { ix: Interaction }) {
       return true;
     },
     enter: () => {
-      if (busy !== null) return false;
-      // Enter allows, as on the permission card; Deny stays an explicit press
-      if (pair) return void go({ option: pair.allow.key }, pair.allow.key);
-      if ((d?.options?.length ?? 0) > 0) return false;
+      if (busy !== null || (d?.options?.length ?? 0) > 0) return false;
       void go({ text, keys: ["enter"] }, "text");
     },
   });
   if (d?.multi) return <MultiScreenCard ix={ix} />;
   return (
     <Card
-      kicker={ask ? t("chat-interactions.permission_kicker") : d?.header || t("chat-interactions.screen_kicker")}
-      title={ask ? t("chat-interactions.command_title", { agent: agentLabel({ agent: ix.agent, agent_label: ix.agent_label }) }) : d?.question || t("chat-interactions.screen_title")}
+      kicker={d?.header || t("chat-interactions.screen_kicker")}
+      title={d?.question || t("chat-interactions.screen_title")}
       cardKeys={keys}
       onDismiss={() => go({ dismiss: true }, "dismiss")}
       busy={busy !== null}
       footer={<div className="flex w-full min-w-0 flex-col gap-2">
         <div className="flex min-w-0 items-center gap-2">
-        {pair ? (
-          <span className="flex w-full items-center justify-between gap-2">
-            <Button tone="quiet" busy={busy === pair.deny.key} disabled={busy !== null} onClick={() => go({ option: pair.deny.key }, pair.deny.key)}>
-              {t("chat-interactions.deny")}
-            </Button>
-            <Button tone="primary" busy={busy === pair.allow.key} disabled={busy !== null} onClick={() => go({ option: pair.allow.key }, pair.allow.key)}>
-              {t("chat-interactions.allow")}
-              {keys.focused && <Kbd>Enter</Kbd>}
-            </Button>
-          </span>
-        ) : d?.options?.length ? (
+        {d?.options?.length ? (
           <span className="text-[11.5px] text-ink-3">{t("chat-interactions.screen_hint")}</span>
         ) : (
           <>
@@ -828,8 +821,8 @@ function ScreenCard({ ix }: { ix: Interaction }) {
         <CloseBlockedAgent ix={ix} disabled={busy !== null} />
       </div>}
     >
-      {ask ? <CommandAskBody ask={ask} /> : d?.detail && <p className="mb-2 text-[12.5px] leading-relaxed whitespace-pre-wrap text-ink-2">{d.detail}</p>}
-      {pair ? null : d?.options?.length ? (
+      {d?.detail && <p className="mb-2 text-[12.5px] leading-relaxed whitespace-pre-wrap text-ink-2">{d.detail}</p>}
+      {d?.options?.length ? (
         <div className="flex flex-col gap-0.5">
           {d.options.map((o, i) =>
             o.kind === "type_something" && typing === o.key ? (
@@ -869,81 +862,6 @@ function ScreenCard({ ix }: { ix: Interaction }) {
         <pre className="max-h-56 overflow-auto rounded-[8px] bg-[#1b1c1f] px-3 py-2 font-mono text-[11.5px] leading-[1.5] whitespace-pre text-[#e6e7e9]">{ix.screen}</pre>
       )}
     </Card>
-  );
-}
-
-/** A command's permission prompt read off the terminal, in plain words (#5266): the agent's own words for it, the command
- *  (a long one folded until "Show all"), the warning in plain words with Claude Code's own under "Show original", and the
- *  countdown running. The iPhone's ScreenCommandAskBody says the same. */
-function CommandAskBody({ ask }: { ask: CommandAsk }) {
-  const [all, setAll] = useState(false);
-  const [original, setOriginal] = useState(false);
-  // "Show all" only when the four rows cut something at this width: measured, as the box's width decides it
-  const box = useRef<HTMLPreElement>(null);
-  const [cut, setCut] = useState(false);
-  useLayoutEffect(() => {
-    const el = box.current;
-    if (!el || all) return;
-    const measure = () => setCut(el.scrollHeight > el.clientHeight + 1);
-    measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [ask.command, all]);
-  const toggle = "touch-hit mt-1 self-start text-[11.5px] font-medium whitespace-nowrap text-ink-3 transition-colors hover:text-ink";
-  return (
-    <div className="mb-1 flex flex-col gap-2">
-      {ask.description && <p className="text-[13px] leading-relaxed whitespace-pre-wrap text-ink">{ask.description}</p>}
-      <div className="flex flex-col">
-        <div className="mb-1 text-[11px] font-medium text-ink-3">{t("chat-interactions.field_command")}</div>
-        <div className="rounded-[8px] bg-inset px-2.5 py-2 shadow-hairline">
-          <pre ref={box} data-screen-command className={cx(COMMAND_TEXT, all ? "max-h-72 overflow-auto" : "line-clamp-4")}>{ask.command}</pre>
-        </div>
-        {(cut || all) && (
-          <button type="button" aria-expanded={all} onClick={() => setAll((v) => !v)} className={toggle}>
-            {t(all ? "chat-interactions.collapse" : "chat-interactions.show_all")}
-          </button>
-        )}
-      </div>
-      {ask.riskLine && (
-        <div className="flex flex-col">
-          <p data-screen-risk className="flex items-start gap-1.5 text-[12.5px] leading-snug font-medium text-orange">
-            <Icon name="warning" size={13} className="mt-px shrink-0" />
-            {ask.riskLine}
-          </p>
-          {ask.original && (
-            <button type="button" aria-expanded={original} onClick={() => setOriginal((v) => !v)} className={toggle}>
-              {t(original ? "chat-interactions.hide_original" : "chat-interactions.show_original")}
-            </button>
-          )}
-          {original && <p className="mt-1 text-[12px] leading-relaxed whitespace-pre-wrap text-ink-3">{ask.original}</p>}
-        </div>
-      )}
-      {ask.deadlineAt !== undefined && <Countdown ask={ask} />}
-    </div>
-  );
-}
-
-/** A command in its box (the code boxes' surface around it): code type, wrapped, a long word too. The clamp is on the
- *  text, not the padded box, so no fifth row shows in the padding. */
-const COMMAND_TEXT = "font-mono text-[11.5px] leading-[1.6] whitespace-pre-wrap break-words text-ink-2";
-
-/** The countdown Claude Code runs before it answers the prompt itself, drawn again once a second until it runs out
- *  (one timeout at a time, on the second's edge), then what happens. */
-function Countdown({ ask }: { ask: CommandAsk }) {
-  const [now, setNow] = useState(() => Date.now());
-  const end = ask.deadlineAt;
-  useEffect(() => {
-    if (end === undefined || now >= end) return;
-    const id = setTimeout(() => setNow(Date.now()), (end - now) % 1000 || 1000);
-    return () => clearTimeout(id);
-  }, [now, end]);
-  return (
-    <p data-screen-countdown role="timer" className="flex items-center gap-1.5 text-[12px] font-medium text-ink-3 tabular-nums">
-      <Icon name="clock" size={12} stroke={2.2} className="shrink-0" />
-      {countdownLine(ask, now)}
-    </p>
   );
 }
 

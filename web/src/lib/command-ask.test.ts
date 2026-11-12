@@ -1,7 +1,8 @@
 // The screen card's plain words for Claude Code's command prompt (#5266), from the dialog the hub reads (#5265).
 import { describe, expect, it } from "vitest";
 import { t } from "../i18n";
-import { allowDeny, commandAsk, countdownLine } from "./command-ask";
+import { allowDeny, commandAsk } from "./command-ask";
+import { countdownLine, originalWords, riskLine } from "./command-ask-lines";
 import type { ScreenDialog } from "./types";
 
 const hub: ScreenDialog = {
@@ -19,8 +20,8 @@ describe("commandAsk", () => {
     const ask = commandAsk(hub)!;
     expect(ask.command).toBe("cd ./dist && ls");
     expect(ask.description).toBe("Count the example names in first-screen chunks");
-    expect(ask.riskLine).toBe(t("chat-interactions.risk_delete"));
-    expect(ask.original).toMatch(/^Dangerous rm operation not ruled out.*\nClaude Code will automatically block this request in 1:44/s);
+    expect(riskLine(ask)).toBe(t("chat-commandask.risk_delete"));
+    expect(originalWords(ask)).toMatch(/^Dangerous rm operation not ruled out.*\nClaude Code will automatically block this request in 1:44/s);
     expect(ask.deadlineAt).toBe(Date.parse("2026-11-12T03:00:00Z"));
     expect(ask.deadlineAllows).toBe(false);
     expect(allowDeny(hub)).toEqual({ allow: hub.options![0], deny: hub.options![1] });
@@ -39,9 +40,9 @@ describe("commandAsk", () => {
   });
 
   it("says a warning it has no words for only as a warning", () => {
-    expect(commandAsk({ ...hub, risk: undefined })!.riskLine).toBe(t("chat-interactions.risk_other"));
-    expect(commandAsk({ ...hub, warning: undefined, deadline: undefined })!.riskLine).toBeUndefined();
-    expect(commandAsk({ ...hub, warning: undefined, deadline: undefined })!.original).toBeUndefined();
+    expect(riskLine(commandAsk({ ...hub, risk: undefined })!)).toBe(t("chat-commandask.risk_other"));
+    expect(riskLine(commandAsk({ ...hub, warning: undefined, deadline: undefined })!)).toBeUndefined();
+    expect(originalWords(commandAsk({ ...hub, warning: undefined, deadline: undefined })!)).toBeUndefined();
   });
 });
 
@@ -49,11 +50,11 @@ describe("countdownLine", () => {
   const end = Date.parse("2026-11-12T03:00:00Z");
   it("counts down to the end, then says what happens", () => {
     const ask = commandAsk(hub)!;
-    expect(countdownLine(ask, end - 104_000)).toBe(t("chat-interactions.countdown_deny", { time: "1:44" }));
-    expect(countdownLine(ask, end - 500)).toBe(t("chat-interactions.countdown_deny", { time: "0:01" }));
-    expect(countdownLine(ask, end)).toBe(t("chat-interactions.countdown_over_deny"));
+    expect(countdownLine(ask, end - 104_000)).toBe(t("chat-commandask.countdown_deny", { time: "1:44" }));
+    expect(countdownLine(ask, end - 500)).toBe(t("chat-commandask.countdown_deny", { time: "0:01" }));
+    expect(countdownLine(ask, end)).toBe(t("chat-commandask.countdown_over_deny"));
     const allow = commandAsk({ ...hub, deadline_action: "allow" })!;
-    expect(countdownLine(allow, end - 61_000)).toBe(t("chat-interactions.countdown_allow", { time: "1:01" }));
+    expect(countdownLine(allow, end - 61_000)).toBe(t("chat-commandask.countdown_allow", { time: "1:01" }));
     expect(countdownLine(commandAsk({ ...hub, deadline_at: undefined })!, end)).toBeNull();
   });
 });

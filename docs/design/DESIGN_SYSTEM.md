@@ -895,8 +895,9 @@ Kinds: questions, plan approvals, tool approvals, secret entry, MCP forms, and w
   the time with `Text(timerInterval:)` and redraws once at the end (`TimelineView(.explicit)`), with no timer of its own;
   the web redraws the line once a second while it is shown. The prompt's Yes / No are Deny / Allow (primary); a prompt
   with more choices keeps their labels as numbered rows. Components: `ScreenCommandAskBody`, `ScreenCountdown` (iOS,
-  default style and Beautiful UI), `CommandAskBody`, `Countdown` (web `views/chat/Interactions.tsx`); the rules in
-  `apple/Shared/CommandAsk.swift` and `web/src/lib/command-ask.ts`.
+  default style and Beautiful UI), `CommandScreenCard` (web `web/src/views/chat/CommandScreenCard.tsx`, its own chunk
+  loaded at idle; until it is in the card is the terminal's question as before); the rules in
+  `apple/Shared/CommandAsk.swift`, `web/src/lib/command-ask.ts` and `web/src/lib/command-ask-lines.ts`.
 - **Buttons**: for a tool approval, in this order: Deny, Always Allow for This Session, Allow Once (primary). High-risk actions offer no "always" and ask twice.
 - **Secret hand-off (#3962)**: the card that hands a provider's secret values to one Agent run is a permission card with the tool
   approval's title ("Waiting for your approval") and buttons (Deny, Always allow, Allow); its body names each variable with the
