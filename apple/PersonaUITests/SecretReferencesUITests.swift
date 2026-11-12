@@ -21,9 +21,11 @@ final class SecretReferencesUITests: XCTestCase {
             app.launchArguments = ["-pairURL", pair, "-tab", "settings", "-ui.scheme", scheme, "-openExtension", "example-notes"]
             app.launchPinned()
             dismissSystemAlerts(wait: 4)
+            // The page first; its rows below the fold exist only once scrolled to.
+            XCTAssertTrue(app.switches["plugin-enabled"].waitForExistence(timeout: 20), app.debugDescription)
             let secret = app.buttons["plugin-secret-api_key"]
-            XCTAssertTrue(secret.waitForExistence(timeout: 20), app.debugDescription)
-            for _ in 0..<8 where !secret.isHittable { app.swipeUp() }
+            for _ in 0..<10 where !(secret.exists && secret.isHittable) { app.swipeUp() }
+            XCTAssertTrue(secret.waitForExistence(timeout: 5), app.debugDescription)
             XCTAssertTrue(secret.label.contains("Example Vault"), secret.label)
             shot(app, "secret-row-" + scheme)
             secret.tap()
@@ -38,9 +40,10 @@ final class SecretReferencesUITests: XCTestCase {
             app.launchArguments = ["-pairURL", pair, "-tab", "settings", "-ui.scheme", scheme, "-openExtension", "example-vault"]
             app.launchPinned()
             dismissSystemAlerts(wait: 2)
+            XCTAssertTrue(app.switches["plugin-enabled"].waitForExistence(timeout: 20), app.debugDescription)
             let rule = app.descendants(matching: .any)["handoff-rule"].firstMatch
-            XCTAssertTrue(rule.waitForExistence(timeout: 20), app.debugDescription)
-            for _ in 0..<8 where !rule.isHittable { app.swipeUp() }
+            for _ in 0..<10 where !(rule.exists && rule.isHittable) { app.swipeUp() }
+            XCTAssertTrue(rule.waitForExistence(timeout: 5), app.debugDescription)
             rule.swipeLeft()
             let remove = app.buttons["移除"].firstMatch
             XCTAssertTrue(remove.waitForExistence(timeout: 5), app.debugDescription)
