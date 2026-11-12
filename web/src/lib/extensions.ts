@@ -494,6 +494,12 @@ export function pickerChoices(f: ExtensionField, current: Json | undefined, mach
   return out;
 }
 
+/** Where a reference's value comes from, in words: "From <provider> · <item>". */
+export function referenceState(r: SecretReference): string {
+  const from = t("lib-extensions.from_provider", { provider: r.provider_name || r.provider });
+  return r.title ? `${from} · ${r.title}` : from;
+}
+
 export function secretState(s: ExtensionSecret): string {
   if (s.reference) return t("lib-extensions.from_provider", { provider: s.reference.provider_name || s.reference.provider });
   if (s.set) return s.hint ? t("lib-extensions.is_set_hint", { hint: s.hint }) : t("lib-extensions.is_set");

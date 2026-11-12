@@ -1,10 +1,11 @@
 // The provider wizard's form pieces (#2455): a labelled input, a secret one (keys, headers: never offered to the
 // browser's password manager, shown only on request), and the "Advanced" disclosure.
 import { useId, useState } from "react";
-import { Collapse, cx, SECRET_INPUT } from "../../ui/atoms";
+import { Collapse, cx, SECRET_INPUT, Switch } from "../../ui/atoms";
 import { Icon } from "../../ui/icons";
 import { inputClass, textareaClass } from "../assistant/parts";
 import { t } from "../../i18n";
+import { referenceState, type SecretReference } from "../../lib/extensions";
 
 export const INPUT = inputClass;
 /** A field's look without its size, for the inline ones (SMALL: in a model row). */
@@ -80,6 +81,50 @@ export function SecretField({ label, value, onChange, hint, placeholder, multili
         {toggle}
       </div>
     </Labelled>
+  );
+}
+
+/** A model provider's key, or a secret provider's reference in its place (docs/extensions/secret-providers.md "Launcher
+ *  keys"): a "Use a reference" switch over the field where the hub takes references (`onByReference`), the reference in
+ *  plain text, and what a stored reference names. As an extension's secret does (settings/Extensions.tsx). */
+export function KeyField({ label, value, onChange, hint, placeholder, byReference, onByReference, stored }: {
+  label: React.ReactNode;
+  value: string;
+  onChange: (v: string) => void;
+  hint?: React.ReactNode;
+  placeholder?: string;
+  byReference: boolean;
+  /** Absent: the hub takes no references, so there is no switch. */
+  onByReference?: (on: boolean) => void;
+  /** The stored key is this reference. */
+  stored?: SecretReference | null;
+}) {
+  const id = useId();
+  const noteId = useId();
+  const toggle = onByReference && (
+    <div className="flex items-center justify-between gap-2 text-[12.5px] text-ink-2">
+      <span>{t("settings-providerfields.use_reference")}</span>
+      <Switch label={t("settings-providerfields.use_reference")} on={byReference} onChange={onByReference} />
+    </div>
+  );
+  if (!byReference) {
+    return (
+      <div className="flex flex-col gap-1.5">
+        {toggle}
+        <SecretField label={label} value={value} onChange={onChange} hint={hint} placeholder={placeholder} />
+      </div>
+    );
+  }
+  const note = stored ? `${referenceState(stored)}. ${t("settings-providerfields.reference_hint")}` : t("settings-providerfields.reference_hint");
+  return (
+    <div className="flex flex-col gap-1.5">
+      {toggle}
+      <Labelled label={label} hint={hint ? <span className="flex flex-col gap-0.5"><span>{note}</span>{hint}</span> : note} htmlFor={id} describedById={noteId}>
+        <input id={id} aria-describedby={noteId} type="text" value={value} onChange={(e) => onChange(e.target.value)}
+          placeholder={stored?.reference || t("settings-providerfields.reference_placeholder")} autoComplete="off" spellCheck={false}
+          data-key-reference className={cx(INPUT, "font-mono")} />
+      </Labelled>
+    </div>
   );
 }
 
