@@ -176,7 +176,7 @@ function RefusalNotice({ item, plain }: { item: Item; plain?: boolean }) {
         {plain ? (
           <>
             <span className="font-semibold text-ink">
-              {fallback ? t("chat-modelfallback.plain_refused_switched", { model: replyModelName(f.fallback!) }) : t("chat-modelfallback.plain_refused")}
+              {fallback ? t("chat-modelfallback.plain_refused_switched", { model: replyModelName(f.fallback!) }) : t("chat-modelfallback.refusal_title")}
             </span>
             <details data-testid="refusal-details" className="text-ink-3">
               <summary className="cursor-pointer select-none">{t("chat-modelfallback.details")}</summary>

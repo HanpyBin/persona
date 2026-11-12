@@ -119,7 +119,7 @@ describe("a refusal notice", () => {
       expect(details).toContain(part);
     }
     const plain = render(items.map((i) => (i.id === "r1" ? { ...i, model_refusal: { subtype: "model_refusal_future", text: "future words" } } : i)), true);
-    expect(plain).toContain("上游拒绝了这次请求。");
+    expect(plain).toContain("上游拒绝了这次请求<");
     expect(plain).not.toContain("已改用");
     expect(render(items)).not.toContain("<details"); // an Agents conversation shows it all
   });
