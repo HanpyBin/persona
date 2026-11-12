@@ -179,10 +179,16 @@ extension LanguageStore {
 /// the unit-test host. A `LocalizedStringResource` parameter, so the compiler still extracts the literals passed in.
 nonisolated func interfaceText(_ resource: LocalizedStringResource) -> String {
     var resource = resource
-    #if WIDGET_EXTENSION
-    resource.locale = LanguageStore.drawingLocale
-    #else
-    resource.locale = .interface
-    #endif
+    resource.locale = interfaceTextLocale
     return String(localized: resource)
+}
+
+/// The locale `interfaceText` resolves in. A lookup with an explicit locale reads the bundle's tables each time (1–2 ms);
+/// words drawn on every redraw keep what they resolved per locale, as `StateName.text` does (#5438).
+nonisolated var interfaceTextLocale: Locale {
+    #if WIDGET_EXTENSION
+    LanguageStore.drawingLocale
+    #else
+    .interface
+    #endif
 }

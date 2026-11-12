@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// The one set of names for an agent's and a task's state on iOS, Mac, the watch and the widgets (#3960; docs/protocol/i18n.md
 /// "Agent states", docs/protocol/agent-states.md), as the web has in `web/src/lib/state-labels.ts` (#3415): every screen takes
@@ -18,7 +19,19 @@ nonisolated enum StateName: String, CaseIterable, Sendable {
     /// A to-do or task whose agent ended its turn but waits to be brought back: its background work, or the hub's wake-up (#3274).
     case taskWaiting
 
+    /// Resolved once per interface locale: these words are drawn on every redraw of the Agents list, its filter chips and
+    /// row badges, and each `interfaceText` lookup reads the localization tables (#5438).
     var text: String {
+        let key = interfaceTextLocale.identifier + "|" + rawValue
+        if let known = Self.resolved.withLock({ $0[key] }) { return known }
+        let text = resolve()
+        Self.resolved.withLock { $0[key] = text }
+        return text
+    }
+
+    private static let resolved = OSAllocatedUnfairLock(initialState: [String: String]())
+
+    private func resolve() -> String {
         switch self {
         case .needsYou: interfaceText("Needs You [State Names]")
         case .working: interfaceText("Working [State Names]")
