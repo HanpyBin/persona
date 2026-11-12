@@ -17197,7 +17197,8 @@ PLUGINS["example-gateway"] = {
            {"plugin": "example-gateway", "plugin_name": "Example 网关面板", "id": "notes", "title": "笔记（组件 v3）", "placement": "plugin_page", "size": "full"}]}
 # MOCK_SECRET_HANDOFF=1 (with MOCK_EXTENSIONS=1): secret references (docs/extensions/secret-providers.md). Example Notes'
 # API key holds a reference of a made-up provider, Example Vault, whose page lists who uses its references and one Always
-# rule; Persona's main conversation waits on a hand-off card (secret_handoff) for an Agent on the MacBook.
+# rule; Persona's main conversation waits on a hand-off card (secret_handoff) for an Agent on the MacBook. The model
+# provider Example 网关 (gateway) keeps its key as one of Example Vault's references, the server's own key as another.
 SECRET_HANDOFF = os.environ.get("MOCK_SECRET_HANDOFF") == "1"
 if SECRET_HANDOFF and PLUGINS_MODE:
     PLUGINS["example-notes"]["secrets"][0].update({"set": True, "reference": {
